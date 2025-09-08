@@ -1,0 +1,92 @@
+// FractalMaterial.usf
+// Combined fractal shader functions for use in material custom nodes
+
+struct FractalFunctions
+{
+    float FractalDE(float3 pos, float w)
+    {
+        float3 z = pos;
+        float dr = 1.0;
+        float r = 0.0;
+        float Power = 8.0; // Default power for Mandelbulb
+
+        for (int i = 0; i < 20; i++) // Iterations = 20
+        {
+            r = length(z);
+            if (r > 4.0) break; // Bailout = 4.0
+
+            // Spherical coordinates
+            float theta = acos(z.z / r);
+            float phi = atan2(z.y, z.x);
+            dr = pow(r, Power - 1.0) * Power * dr + 1.0;
+
+            // Scale and rotate
+            float zr = pow(r, Power);
+            theta *= Power;
+            phi *= Power;
+
+            z = zr * float3(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
+            z += pos;
+        }
+
+        return 0.5 * log(r) * r / dr;
+    }
+
+    float3 EstimateNormal(float3 p, float w) 
+    {
+        float eps = 0.001;
+        return normalize(float3(
+            FractalDE(p + float3(eps, 0, 0), w) - FractalDE(p - float3(eps, 0, 0), w),
+            FractalDE(p + float3(0, eps, 0), w) - FractalDE(p - float3(0, eps, 0), w),
+            FractalDE(p + float3(0, 0, eps), w) - FractalDE(p - float3(0, 0, eps), w)
+        ));
+    }
+
+    float RaymarchFractal(float3 RayOrigin, float3 RayDir, float w, out float3 Normal)
+    {
+        float totalDist = 0.0;
+        for (int step = 0; step < 128; step++) // MAX_STEPS = 128
+        {
+            float3 pos = RayOrigin + RayDir * totalDist;
+            float dist = FractalDE(pos, w);
+
+            if (dist < 0.001) // HIT_THRESHOLD = 0.001
+            {
+                Normal = EstimateNormal(pos, w);
+                return totalDist;
+            }
+
+            totalDist += dist;
+            if (totalDist > 1000.0) break; // FAR_PLANE = 1000.0
+        }
+        Normal = float3(0, 0, 0);
+        return -1.0; // No hit
+    }
+
+    float3 RenderFractal(float2 ScreenUV, float3 CameraOrigin, float3 CameraForward, float w)
+    {
+        // Reconstruct the world space ray direction from the camera vectors and screen UVs
+        float3 CameraUp = float3(0,0,1); // Assuming standard Z-up
+        float3 CameraRight = cross(CameraForward, CameraUp);
+        CameraUp = cross(CameraRight, CameraForward); // Re-orthogonalize
+
+        // The field of view is approximated here. 1.0 is a decent guess for a standard FOV.
+        float3 RayDir = normalize(CameraForward + (ScreenUV.x * 2 - 1) * CameraRight * 1.0 - (ScreenUV.y * 2 - 1) * CameraUp * 1.0);
+
+        float3 Normal;
+        float dist = RaymarchFractal(CameraOrigin, RayDir, w, Normal);
+
+        if (dist > 0)
+        {
+            // Simple lighting
+            float3 LightDir = normalize(float3(0.8, 0.8, 0.5));
+            float diffuse = saturate(dot(Normal, LightDir)) * 0.7 + 0.3;
+            
+            return abs(Normal) * diffuse;
+        }
+        else
+        {
+            return float3(0, 0, 0);
+        }
+    }
+};

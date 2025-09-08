@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using UnrealBuildTool;
+using System.IO;
 
 public class Fractal : ModuleRules
 {
@@ -13,7 +14,10 @@ public class Fractal : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"InputCore",
-			"ProceduralMeshComponent"
+			"ProceduralMeshComponent",
+			"RenderCore",
+			"RHI",
+			"Projects"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });

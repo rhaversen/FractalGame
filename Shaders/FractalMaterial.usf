@@ -3,12 +3,11 @@
 
 struct FractalFunctions
 {
-    float FractalDE(float3 pos, float w)
+    float FractalDE(float3 pos, float Power)
     {
         float3 z = pos;
         float dr = 1.0;
         float r = 0.0;
-        float Power = 8.0; // Default power for Mandelbulb
 
         for (int i = 0; i < 20; i++) // Iterations = 20
         {
@@ -32,27 +31,27 @@ struct FractalFunctions
         return 0.5 * log(r) * r / dr;
     }
 
-    float3 EstimateNormal(float3 p, float w) 
+    float3 EstimateNormal(float3 p, float Power) 
     {
         float eps = 0.001;
         return normalize(float3(
-            FractalDE(p + float3(eps, 0, 0), w) - FractalDE(p - float3(eps, 0, 0), w),
-            FractalDE(p + float3(0, eps, 0), w) - FractalDE(p - float3(0, eps, 0), w),
-            FractalDE(p + float3(0, 0, eps), w) - FractalDE(p - float3(0, 0, eps), w)
+            FractalDE(p + float3(eps, 0, 0), Power) - FractalDE(p - float3(eps, 0, 0), Power),
+            FractalDE(p + float3(0, eps, 0), Power) - FractalDE(p - float3(0, eps, 0), Power),
+            FractalDE(p + float3(0, 0, eps), Power) - FractalDE(p - float3(0, 0, eps), Power)
         ));
     }
 
-    float RaymarchFractal(float3 RayOrigin, float3 RayDir, float w, out float3 Normal)
+    float RaymarchFractal(float3 RayOrigin, float3 RayDir, float Power, out float3 Normal)
     {
         float totalDist = 0.0;
         for (int step = 0; step < 128; step++) // MAX_STEPS = 128
         {
             float3 pos = RayOrigin + RayDir * totalDist;
-            float dist = FractalDE(pos, w);
+            float dist = FractalDE(pos, Power);
 
             if (dist < 0.001) // HIT_THRESHOLD = 0.001
             {
-                Normal = EstimateNormal(pos, w);
+                Normal = EstimateNormal(pos, Power);
                 return totalDist;
             }
 
@@ -63,30 +62,52 @@ struct FractalFunctions
         return -1.0; // No hit
     }
 
-    float3 RenderFractal(float2 ScreenUV, float3 CameraOrigin, float3 CameraForward, float w)
+    // Post-process version that uses UE5's built-in camera parameters
+    float3 RenderFractalPostProcess(float2 ScreenPosition)
     {
-        // Reconstruct the world space ray direction from the camera vectors and screen UVs
-        float3 CameraUp = float3(0,0,1); // Assuming standard Z-up
-        float3 CameraRight = cross(CameraForward, CameraUp);
-        CameraUp = cross(CameraRight, CameraForward); // Re-orthogonalize
-
-        // The field of view is approximated here. 1.0 is a decent guess for a standard FOV.
-        float3 RayDir = normalize(CameraForward + (ScreenUV.x * 2 - 1) * CameraRight * 1.0 - (ScreenUV.y * 2 - 1) * CameraUp * 1.0);
-
+        // Get camera origin
+        float3 CameraOrigin = LWCHackToFloat(ResolvedView.WorldCameraOrigin);
+        
+        // Convert screen position to clip space
+        float2 ClipXY = ScreenPosition * 2.0 - 1.0;
+        
+        // Use the inverse projection approach that should work in UE5
+        float4 ClipPos = float4(ClipXY, 1.0, 1.0);
+        float4 ViewPos = mul(ClipPos, ResolvedView.ClipToView);
+        ViewPos.xyz /= ViewPos.w;
+        
+        // Transform view direction to world space
+        float3 WorldDir = normalize(mul(ViewPos.xyz, (float3x3)ResolvedView.ViewToTranslatedWorld));
+        
+        // Now that ray casting works, let's implement the fractal!
+        // Scale down camera position to fractal space
+        float3 rayOrigin = CameraOrigin * 0.01; // Scale factor for fractal
+        float3 rayDir = WorldDir;
+        
+        float Power = 8.0;
         float3 Normal;
-        float dist = RaymarchFractal(CameraOrigin, RayDir, w, Normal);
+        float dist = RaymarchFractal(rayOrigin, rayDir, Power, Normal);
 
-        if (dist > 0)
+        if (dist > 0.0)
         {
-            // Simple lighting
-            float3 LightDir = normalize(float3(0.8, 0.8, 0.5));
-            float diffuse = saturate(dot(Normal, LightDir)) * 0.7 + 0.3;
+            // We hit the fractal!
+            float3 hitPos = rayOrigin + rayDir * dist;
             
-            return abs(Normal) * diffuse;
+            // Simple lighting
+            float3 lightDir = normalize(float3(0.8, 0.8, 0.5));
+            float diffuse = saturate(dot(Normal, lightDir)) * 0.7 + 0.3;
+            
+            // Color based on normal and position
+            float3 color = abs(Normal) * diffuse;
+            color = lerp(color, float3(1.0, 0.5, 0.2), 0.3); // Add orange tint
+            
+            return color;
         }
         else
         {
-            return float3(0, 0, 0);
+            // Background gradient based on ray direction
+            float gradient = dot(rayDir, float3(0, 0, 1)) * 0.5 + 0.5;
+            return lerp(float3(0.05, 0.05, 0.15), float3(0.2, 0.1, 0.4), gradient);
         }
     }
 };

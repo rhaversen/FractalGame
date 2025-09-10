@@ -1,18 +1,19 @@
-// FractalMaterial.usf
-// Combined fractal shader functions for use in material custom nodes
+// Post-process mandelbulb fractal rendering shader functions for use in material custom node
 
 struct FractalFunctions
 {
-    float FractalDE(float3 pos, float Power)
+    static float FractalDE(float3 pos, float Power)
     {
         float3 z = pos;
         float dr = 1.0;
         float r = 0.0;
+        float iterations = 20;
+        float bailout = 4.0;
 
-        for (int i = 0; i < 20; i++) // Iterations = 20
+        for (int i = 0; i < iterations; i++)
         {
             r = length(z);
-            if (r > 4.0) break; // Bailout = 4.0
+            if (r > bailout) break;
 
             // Spherical coordinates
             float theta = acos(z.z / r);
@@ -31,7 +32,7 @@ struct FractalFunctions
         return 0.5 * log(r) * r / dr;
     }
 
-    float3 EstimateNormal(float3 p, float Power) 
+    static float3 EstimateNormal(float3 p, float Power) 
     {
         float eps = 0.001;
         return normalize(float3(
@@ -41,56 +42,56 @@ struct FractalFunctions
         ));
     }
 
-    float RaymarchFractal(float3 RayOrigin, float3 RayDir, float Power, out float3 Normal)
+    static float RaymarchFractal(float3 RayOrigin, float3 RayDir, float Power, out float3 Normal)
     {
         float totalDist = 0.0;
-        for (int step = 0; step < 128; step++) // MAX_STEPS = 128
+        int maxSteps = 128;
+        float hitThreshold = 0.001;
+
+        for (int step = 0; step < maxSteps; step++)
         {
             float3 pos = RayOrigin + RayDir * totalDist;
             float dist = FractalDE(pos, Power);
 
-            if (dist < 0.001) // HIT_THRESHOLD = 0.001
+            if (dist < hitThreshold)
             {
                 Normal = EstimateNormal(pos, Power);
                 return totalDist;
             }
 
             totalDist += dist;
-            if (totalDist > 1000.0) break; // FAR_PLANE = 1000.0
+            if (totalDist > 1000.0) break;
         }
         Normal = float3(0, 0, 0);
-        return -1.0; // No hit
+        return -1.0;
     }
 
-    // Post-process version that uses UE5's built-in camera parameters
-    float3 RenderFractalPostProcess(float2 ScreenPosition)
+    static float3 RenderFractalPostProcess(float2 screenUV)
     {
-        // Get camera origin
-        float3 CameraOrigin = LWCHackToFloat(ResolvedView.WorldCameraOrigin);
+        // Get camera parameters
+        float3 cameraOrigin = LWCHackToFloat(ResolvedView.WorldCameraOrigin);
         
-        // Convert screen position to clip space
-        float2 ClipXY = ScreenPosition * 2.0 - 1.0;
+        // Convert screen UV to clip space
+        float2 clipXY = screenUV * 2.0 - 1.0;
+        clipXY.y = -clipXY.y; // Flip Y for clip space
         
-        // Use the inverse projection approach that should work in UE5
-        float4 ClipPos = float4(ClipXY, 1.0, 1.0);
-        float4 ViewPos = mul(ClipPos, ResolvedView.ClipToView);
-        ViewPos.xyz /= ViewPos.w;
+        float4 clipPos = float4(clipXY, 1.0, 1.0);
+        float4 viewPos = mul(clipPos, ResolvedView.ClipToView);
+        viewPos.xyz /= viewPos.w;
         
         // Transform view direction to world space
-        float3 WorldDir = normalize(mul(ViewPos.xyz, (float3x3)ResolvedView.ViewToTranslatedWorld));
+        float3 worldDir = normalize(mul(viewPos.xyz, (float3x3)ResolvedView.ViewToTranslatedWorld));
         
-        // Now that ray casting works, let's implement the fractal!
-        // Scale down camera position to fractal space
-        float3 rayOrigin = CameraOrigin * 0.01; // Scale factor for fractal
-        float3 rayDir = WorldDir;
+        // Scale down the camera origin for better framing
+        float3 rayOrigin = cameraOrigin * 0.01;
+        float3 rayDir = worldDir;
         
         float Power = 8.0;
         float3 Normal;
         float dist = RaymarchFractal(rayOrigin, rayDir, Power, Normal);
 
-        if (dist > 0.0)
+        if (dist > 0.0) // Hit
         {
-            // We hit the fractal!
             float3 hitPos = rayOrigin + rayDir * dist;
             
             // Simple lighting
@@ -99,11 +100,11 @@ struct FractalFunctions
             
             // Color based on normal and position
             float3 color = abs(Normal) * diffuse;
-            color = lerp(color, float3(1.0, 0.5, 0.2), 0.3); // Add orange tint
+            color = lerp(color, float3(1.0, 0.5, 0.2), 0.3);
             
             return color;
         }
-        else
+        else // Miss
         {
             // Background gradient based on ray direction
             float gradient = dot(rayDir, float3(0, 0, 1)) * 0.5 + 0.5;
@@ -111,3 +112,8 @@ struct FractalFunctions
         }
     }
 };
+
+// Usage in material custom node:
+// #include "/Project/FractalMaterial.usf"
+// FractalFunctions FF;
+// return FF.RenderFractalPostProcess(ScreenPosition);

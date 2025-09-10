@@ -1,13 +1,28 @@
 // Post-process mandelbulb fractal rendering shader functions for use in material custom node
 
+
 struct FractalFunctions
 {
+    // Compute world-space size of a screen pixel at given distance
+    static float ComputePixelSizeWS(float distance)
+    {
+        float2 invRes = ResolvedView.ViewSizeAndInvSize.zw; // invRes = (1/width, 1/height)
+        float fovY = 2.0 * atan(1.0 / ResolvedView.ClipToView._11); // approximate vertical FOV
+        float pixelAng = fovY * invRes.y;
+        return tan(pixelAng * 0.5) * distance * 2.0;
+    }
     static float FractalDE(float3 pos, float Power)
     {
         float3 z = pos;
         float dr = 1.0;
         float r = 0.0;
-        float iterations = 20;
+        // adapt iteration count based on distance from camera for detail control
+        float distCam = length(pos - LWCHackToFloat(ResolvedView.WorldCameraOrigin));
+        float pixelWS = ComputePixelSizeWS(distCam);
+        int MinIter = 8;
+        int MaxIter = 120;
+        float detailT = saturate(1.0 - pixelWS * 50.0); // bias: closer => more detail
+        int iterations = clamp(int(lerp(float(MinIter), float(MaxIter), detailT)), MinIter, MaxIter);
         float bailout = 4.0;
 
         for (int i = 0; i < iterations; i++)
@@ -45,22 +60,24 @@ struct FractalFunctions
     static float RaymarchFractal(float3 RayOrigin, float3 RayDir, float Power, out float3 Normal)
     {
         float totalDist = 0.0;
-        int maxSteps = 128;
-        float hitThreshold = 0.001;
+        // unlimited steps for infinite exploration; rely on pixel-size threshold
+        float maxDistance = 1000.0;
 
-        for (int step = 0; step < maxSteps; step++)
+        for (int step = 0; step < 10000; step++) // large cap to avoid infinite loop
         {
             float3 pos = RayOrigin + RayDir * totalDist;
             float dist = FractalDE(pos, Power);
 
-            if (dist < hitThreshold)
+            // determine pixel-space threshold for convergence
+            float pixelThresh = ComputePixelSizeWS(totalDist);
+            if (dist < pixelThresh)
             {
                 Normal = EstimateNormal(pos, Power);
                 return totalDist;
             }
 
             totalDist += dist;
-            if (totalDist > 1000.0) break;
+            if (totalDist > maxDistance) break;
         }
         Normal = float3(0, 0, 0);
         return -1.0;
@@ -83,7 +100,7 @@ struct FractalFunctions
         float3 worldDir = normalize(mul(viewPos.xyz, (float3x3)ResolvedView.ViewToTranslatedWorld));
         
         // Scale down the camera origin for better framing
-        float3 rayOrigin = cameraOrigin * 0.01;
+        float3 rayOrigin = cameraOrigin * 0.001;
         float3 rayDir = worldDir;
         
         float Power = 8.0;

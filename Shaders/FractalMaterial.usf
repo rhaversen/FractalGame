@@ -3,29 +3,25 @@
 
 struct FractalFunctions
 {
-    // Compute world-space size of a screen pixel at given distance
-    static float ComputePixelSizeWS(float distance)
+    // Computes the world-space radius that a sphere must have to appear 1 pixel tall on screen at a given distance.
+    static float GetPixelWorldRadius(float distance)
     {
-        float2 invRes = ResolvedView.ViewSizeAndInvSize.zw; // invRes = (1/width, 1/height)
-        float fovY = 2.0 * atan(1.0 / ResolvedView.ClipToView._11); // approximate vertical FOV
-        float pixelAng = fovY * invRes.y;
-        return tan(pixelAng * 0.5) * distance * 2.0;
+        // This is derived from the projection formula: pixel_size = (world_radius / distance) * screen_height / tan(fov/2)
+        // Solving for world_radius when pixel_size = 1 gives:
+        return distance * ResolvedView.ClipToView._22 / ResolvedView.ViewSizeAndInvSize.y;
     }
+
+    // Calculates the Distance Estimate (DE) for a point in space to the Mandelbulb set.
+    // The DE is the radius of a sphere centered at 'pos' that is guaranteed not to touch the fractal.
     static float FractalDE(float3 pos, float Power)
     {
         float3 z = pos;
         float dr = 1.0;
         float r = 0.0;
-        // adapt iteration count based on distance from camera for detail control
-        float distCam = length(pos - LWCHackToFloat(ResolvedView.WorldCameraOrigin));
-        float pixelWS = ComputePixelSizeWS(distCam);
-        int MinIter = 8;
-        int MaxIter = 120;
-        float detailT = saturate(1.0 - pixelWS * 50.0); // bias: closer => more detail
-        int iterations = clamp(int(lerp(float(MinIter), float(MaxIter), detailT)), MinIter, MaxIter);
         float bailout = 4.0;
+        int MaxIter = 120; // A fixed max iteration count is sufficient here.
 
-        for (int i = 0; i < iterations; i++)
+        for (int i = 0; i < MaxIter; i++)
         {
             r = length(z);
             if (r > bailout) break;
@@ -57,30 +53,33 @@ struct FractalFunctions
         ));
     }
 
+    // Performs the raymarching process to find an intersection with the fractal.
     static float RaymarchFractal(float3 RayOrigin, float3 RayDir, float Power, out float3 Normal)
     {
         float totalDist = 0.0;
-        // unlimited steps for infinite exploration; rely on pixel-size threshold
         float maxDistance = 1000.0;
 
-        for (int step = 0; step < 10000; step++) // large cap to avoid infinite loop
+        for (int step = 0; step < 256; step++) // Use a reasonable max step count
         {
             float3 pos = RayOrigin + RayDir * totalDist;
-            float dist = FractalDE(pos, Power);
+            float distEstimate = FractalDE(pos, Power);
 
-            // determine pixel-space threshold for convergence
-            float pixelThresh = ComputePixelSizeWS(totalDist);
-            if (dist < pixelThresh)
+            // Define a precision threshold based on the pixel size at the current distance.
+            // We are "close enough" when the distance estimate is a small fraction of a pixel's size.
+            float precision = GetPixelWorldRadius(totalDist) * 0.1;
+
+            if (distEstimate < precision)
             {
                 Normal = EstimateNormal(pos, Power);
-                return totalDist;
+                return totalDist; // Hit!
             }
 
-            totalDist += dist;
-            if (totalDist > maxDistance) break;
+            // Advance the ray by the safe distance estimate.
+            totalDist += distEstimate;
+            if (totalDist > maxDistance) break; // We've gone too far.
         }
         Normal = float3(0, 0, 0);
-        return -1.0;
+        return -1.0; // Miss.
     }
 
     static float3 RenderFractalPostProcess(float2 screenUV)

@@ -1,132 +1,132 @@
 // Post-process mandelbulb fractal rendering shader functions for use in material custom node
 
-
 struct FractalFunctions
 {
-    // Computes the world-space radius that a sphere must have to appear 1 pixel tall on screen at a given distance.
-    static float GetPixelWorldRadius(float distance)
-    {
-        // This is derived from the projection formula: pixel_size = (world_radius / distance) * screen_height / tan(fov/2)
-        // Solving for world_radius when pixel_size = 1 gives:
-        return distance * ResolvedView.ClipToView._22 / ResolvedView.ViewSizeAndInvSize.y;
-    }
+	// Computes the world-space radius that a sphere must have to appear 1 pixel tall on screen at a given distance.
+	static float GetPixelWorldRadius(float distance)
+	{
+		// This is derived from the projection formula: pixel_size = (world_radius / distance) * screen_height / tan(fov/2)
+		// Solving for world_radius when pixel_size = 1 gives:
+		return distance * ResolvedView.ClipToView._22 / ResolvedView.ViewSizeAndInvSize.y;
+	}
 
-    // Calculates the Distance Estimate (DE) for a point in space to the Mandelbulb set.
-    // The DE is the radius of a sphere centered at 'pos' that is guaranteed not to touch the fractal.
-    static float FractalDE(float3 pos, float Power)
-    {
-        float3 z = pos;
-        float dr = 1.0;
-        float r = 0.0;
-        float bailout = 4.0;
-        int MaxIter = 120; // A fixed max iteration count is sufficient here.
+	// Calculates the Distance Estimate (DE) for a point in space to the Mandelbulb set.
+	// The DE is the radius of a sphere centered at 'pos' that is guaranteed not to touch the fractal.
+	static float FractalDE(float3 pos, float Power)
+	{
+		float3 z = pos;
+		float dr = 1.0;
+		float r = 0.0;
+		float bailout = 4.0;
+		int MaxIter = 120; // A fixed max iteration count is sufficient here.
 
-        for (int i = 0; i < MaxIter; i++)
-        {
-            r = length(z);
-            if (r > bailout) break;
+		for (int i = 0; i < MaxIter; i++)
+		{
+			r = length(z);
+			if (r > bailout)
+				break;
 
-            // Spherical coordinates
-            float theta = acos(z.z / r);
-            float phi = atan2(z.y, z.x);
-            dr = pow(r, Power - 1.0) * Power * dr + 1.0;
+			// Spherical coordinates
+			float theta = acos(z.z / r);
+			float phi = atan2(z.y, z.x);
+			dr = pow(r, Power - 1.0) * Power * dr + 1.0;
 
-            // Scale and rotate
-            float zr = pow(r, Power);
-            theta *= Power;
-            phi *= Power;
+			// Scale and rotate
+			float zr = pow(r, Power);
+			theta *= Power;
+			phi *= Power;
 
-            z = zr * float3(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
-            z += pos;
-        }
+			z = zr * float3(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
+			z += pos;
+		}
 
-        return 0.5 * log(r) * r / dr;
-    }
+		return 0.5 * log(r) * r / dr;
+	}
 
-    static float3 EstimateNormal(float3 p, float Power) 
-    {
-        float eps = 0.001;
-        return normalize(float3(
-            FractalDE(p + float3(eps, 0, 0), Power) - FractalDE(p - float3(eps, 0, 0), Power),
-            FractalDE(p + float3(0, eps, 0), Power) - FractalDE(p - float3(0, eps, 0), Power),
-            FractalDE(p + float3(0, 0, eps), Power) - FractalDE(p - float3(0, 0, eps), Power)
-        ));
-    }
+	static float3 EstimateNormal(float3 p, float Power)
+	{
+		float eps = 0.001;
+		return normalize(float3(
+			FractalDE(p + float3(eps, 0, 0), Power) - FractalDE(p - float3(eps, 0, 0), Power),
+			FractalDE(p + float3(0, eps, 0), Power) - FractalDE(p - float3(0, eps, 0), Power),
+			FractalDE(p + float3(0, 0, eps), Power) - FractalDE(p - float3(0, 0, eps), Power)));
+	}
 
-    // Performs the raymarching process to find an intersection with the fractal.
-    static float RaymarchFractal(float3 RayOrigin, float3 RayDir, float Power, out float3 Normal)
-    {
-        float totalDist = 0.0;
-        float maxDistance = 1000.0;
+	// Performs the raymarching process to find an intersection with the fractal.
+	static float RaymarchFractal(float3 RayOrigin, float3 RayDir, float Power, out float3 Normal)
+	{
+		float totalDist = 0.0;
+		float maxDistance = 1000.0;
 
-        for (int step = 0; step < 256; step++) // Use a reasonable max step count
-        {
-            float3 pos = RayOrigin + RayDir * totalDist;
-            float distEstimate = FractalDE(pos, Power);
+		for (int step = 0; step < 256; step++) // Use a reasonable max step count
+		{
+			float3 pos = RayOrigin + RayDir * totalDist;
+			float distEstimate = FractalDE(pos, Power);
 
-            // Define a precision threshold based on the pixel size at the current distance.
-            // We are "close enough" when the distance estimate is a small fraction of a pixel's size.
-            float precision = GetPixelWorldRadius(totalDist) * 0.1;
+			// Define a precision threshold based on the pixel size at the current distance.
+			// We are "close enough" when the distance estimate is a small fraction of a pixel's size.
+			float precision = GetPixelWorldRadius(totalDist) * 0.1;
 
-            if (distEstimate < precision)
-            {
-                Normal = EstimateNormal(pos, Power);
-                return totalDist; // Hit!
-            }
+			if (distEstimate < precision)
+			{
+				Normal = EstimateNormal(pos, Power);
+				return totalDist; // Hit!
+			}
 
-            // Advance the ray by the safe distance estimate.
-            totalDist += distEstimate;
-            if (totalDist > maxDistance) break; // We've gone too far.
-        }
-        Normal = float3(0, 0, 0);
-        return -1.0; // Miss.
-    }
+			// Advance the ray by the safe distance estimate.
+			totalDist += distEstimate;
+			if (totalDist > maxDistance)
+				break; // We've gone too far.
+		}
+		Normal = float3(0, 0, 0);
+		return -1.0; // Miss.
+	}
 
-    static float3 RenderFractalPostProcess(float2 screenUV)
-    {
-        // Get camera parameters
-        float3 cameraOrigin = LWCHackToFloat(ResolvedView.WorldCameraOrigin);
-        
-        // Convert screen UV to clip space
-        float2 clipXY = screenUV * 2.0 - 1.0;
-        clipXY.y = -clipXY.y; // Flip Y for clip space
-        
-        float4 clipPos = float4(clipXY, 1.0, 1.0);
-        float4 viewPos = mul(clipPos, ResolvedView.ClipToView);
-        viewPos.xyz /= viewPos.w;
-        
-        // Transform view direction to world space
-        float3 worldDir = normalize(mul(viewPos.xyz, (float3x3)ResolvedView.ViewToTranslatedWorld));
-        
-        // Scale down the camera origin for better framing
-        float3 rayOrigin = cameraOrigin * 0.001;
-        float3 rayDir = worldDir;
-        
-        float Power = 8.0;
-        float3 Normal;
-        float dist = RaymarchFractal(rayOrigin, rayDir, Power, Normal);
+	static float3 RenderFractalPostProcess(float2 screenUV)
+	{
+		// Get camera parameters
+		float3 cameraOrigin = LWCHackToFloat(ResolvedView.WorldCameraOrigin);
 
-        if (dist > 0.0) // Hit
-        {
-            float3 hitPos = rayOrigin + rayDir * dist;
-            
-            // Simple lighting
-            float3 lightDir = normalize(float3(0.8, 0.8, 0.5));
-            float diffuse = saturate(dot(Normal, lightDir)) * 0.7 + 0.3;
-            
-            // Color based on normal and position
-            float3 color = abs(Normal) * diffuse;
-            color = lerp(color, float3(1.0, 0.5, 0.2), 0.3);
-            
-            return color;
-        }
-        else // Miss
-        {
-            // Background gradient based on ray direction
-            float gradient = dot(rayDir, float3(0, 0, 1)) * 0.5 + 0.5;
-            return lerp(float3(0.05, 0.05, 0.15), float3(0.2, 0.1, 0.4), gradient);
-        }
-    }
+		// Convert screen UV to clip space
+		float2 clipXY = screenUV * 2.0 - 1.0;
+		clipXY.y = -clipXY.y; // Flip Y for clip space
+
+		float4 clipPos = float4(clipXY, 1.0, 1.0);
+		float4 viewPos = mul(clipPos, ResolvedView.ClipToView);
+		viewPos.xyz /= viewPos.w;
+
+		// Transform view direction to world space
+		float3 worldDir = normalize(mul(viewPos.xyz, (float3x3)ResolvedView.ViewToTranslatedWorld));
+
+		// Scale down the camera origin for better framing
+		float3 rayOrigin = cameraOrigin * 0.001;
+		float3 rayDir = worldDir;
+
+		float Power = 8.0;
+		float3 Normal;
+		float dist = RaymarchFractal(rayOrigin, rayDir, Power, Normal);
+
+		if (dist > 0.0) // Hit
+		{
+			float3 hitPos = rayOrigin + rayDir * dist;
+
+			// Simple lighting
+			float3 lightDir = normalize(float3(0.8, 0.8, 0.5));
+			float diffuse = saturate(dot(Normal, lightDir)) * 0.7 + 0.3;
+
+			// Color based on normal and position
+			float3 color = abs(Normal) * diffuse;
+			color = lerp(color, float3(1.0, 0.5, 0.2), 0.3);
+
+			return color;
+		}
+		else // Miss
+		{
+			// Background gradient based on ray direction
+			float gradient = dot(rayDir, float3(0, 0, 1)) * 0.5 + 0.5;
+			return lerp(float3(0.05, 0.05, 0.15), float3(0.2, 0.1, 0.4), gradient);
+		}
+	}
 };
 
 // Usage in material custom node:

@@ -57,11 +57,25 @@ struct FractalFunctions
 	{
 		float totalDist = 0.0;
 		float maxDistance = 1000.0;
+		int maxSteps = 500;
+		int steps = 0;
 
 		while (totalDist < maxDistance)
 		{
+			steps++;
 			float3 pos = RayOrigin + RayDir * totalDist;
 			float distEstimate = FractalDE(pos, Power);
+
+			if (totalDist > 10.0) // Bailout for points far away
+			{
+				break;
+			}
+
+			// Check for maximum steps
+			if (steps >= maxSteps)
+			{
+				break;
+			}
 
 			// Define a precision threshold based on the pixel size at the current distance.
 			// We are "close enough" when the distance estimate is a small fraction of a pixel's size.

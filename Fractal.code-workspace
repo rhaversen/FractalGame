@@ -37,7 +37,7 @@
 					"Fractal",
 					"Win64",
 					"Debug",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -54,7 +54,7 @@
 					"Fractal",
 					"Win64",
 					"Debug",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -74,7 +74,7 @@
 					"Fractal",
 					"Win64",
 					"Debug",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -91,7 +91,7 @@
 					"Fractal",
 					"Win64",
 					"DebugGame",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -108,7 +108,7 @@
 					"Fractal",
 					"Win64",
 					"DebugGame",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -128,7 +128,7 @@
 					"Fractal",
 					"Win64",
 					"DebugGame",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -145,7 +145,7 @@
 					"Fractal",
 					"Win64",
 					"Development",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -162,7 +162,7 @@
 					"Fractal",
 					"Win64",
 					"Development",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -182,7 +182,7 @@
 					"Fractal",
 					"Win64",
 					"Development",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -199,7 +199,7 @@
 					"Fractal",
 					"Win64",
 					"Test",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -216,7 +216,7 @@
 					"Fractal",
 					"Win64",
 					"Test",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -236,7 +236,7 @@
 					"Fractal",
 					"Win64",
 					"Test",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -253,7 +253,7 @@
 					"Fractal",
 					"Win64",
 					"Shipping",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -270,7 +270,7 @@
 					"Fractal",
 					"Win64",
 					"Shipping",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -290,7 +290,7 @@
 					"Fractal",
 					"Win64",
 					"Shipping",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -307,7 +307,7 @@
 					"FractalEditor",
 					"Win64",
 					"Debug",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -324,7 +324,7 @@
 					"FractalEditor",
 					"Win64",
 					"Debug",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -344,7 +344,7 @@
 					"FractalEditor",
 					"Win64",
 					"Debug",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -361,7 +361,7 @@
 					"FractalEditor",
 					"Win64",
 					"DebugGame",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -378,7 +378,7 @@
 					"FractalEditor",
 					"Win64",
 					"DebugGame",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -398,7 +398,7 @@
 					"FractalEditor",
 					"Win64",
 					"DebugGame",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -415,7 +415,7 @@
 					"FractalEditor",
 					"Win64",
 					"Development",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -432,7 +432,7 @@
 					"FractalEditor",
 					"Win64",
 					"Development",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -452,7 +452,7 @@
 					"FractalEditor",
 					"Win64",
 					"Development",
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-waitmutex"
 				],
 				"problemMatcher": "$msCompile",
@@ -469,7 +469,7 @@
 			{
 				"name": "Launch Fractal (Debug)",
 				"request": "launch",
-				"program": "C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Binaries\\Win64\\UnrealGame-Win64-Debug.exe",
+				"program": "C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Binaries\\Win64\\UnrealGame-Win64-Debug.exe",
 				"preLaunchTask": "Fractal Win64 Debug Build",
 				"args": [
 				],
@@ -487,7 +487,7 @@
 			{
 				"name": "Launch Fractal (DebugGame)",
 				"request": "launch",
-				"program": "C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Binaries\\Win64\\UnrealGame-Win64-DebugGame.exe",
+				"program": "C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Binaries\\Win64\\UnrealGame-Win64-DebugGame.exe",
 				"preLaunchTask": "Fractal Win64 DebugGame Build",
 				"args": [
 				],
@@ -505,7 +505,7 @@
 			{
 				"name": "Launch Fractal (Development)",
 				"request": "launch",
-				"program": "C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Binaries\\Win64\\UnrealGame.exe",
+				"program": "C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Binaries\\Win64\\UnrealGame.exe",
 				"preLaunchTask": "Fractal Win64 Development Build",
 				"args": [
 				],
@@ -523,7 +523,7 @@
 			{
 				"name": "Launch Fractal (Test)",
 				"request": "launch",
-				"program": "C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Binaries\\Win64\\UnrealGame-Win64-Test.exe",
+				"program": "C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Binaries\\Win64\\UnrealGame-Win64-Test.exe",
 				"preLaunchTask": "Fractal Win64 Test Build",
 				"args": [
 				],
@@ -541,7 +541,7 @@
 			{
 				"name": "Launch Fractal (Shipping)",
 				"request": "launch",
-				"program": "C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Binaries\\Win64\\UnrealGame-Win64-Shipping.exe",
+				"program": "C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Binaries\\Win64\\UnrealGame-Win64-Shipping.exe",
 				"preLaunchTask": "Fractal Win64 Shipping Build",
 				"args": [
 				],
@@ -562,7 +562,7 @@
 				"program": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Binaries\\Win64\\UnrealEditor-Win64-Debug.exe",
 				"preLaunchTask": "FractalEditor Win64 Debug Build",
 				"args": [
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject"
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject"
 				],
 				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
 				"stopAtEntry": false,
@@ -581,7 +581,7 @@
 				"program": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Binaries\\Win64\\UnrealEditor-Win64-DebugGame.exe",
 				"preLaunchTask": "FractalEditor Win64 DebugGame Build",
 				"args": [
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject"
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject"
 				],
 				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
 				"stopAtEntry": false,
@@ -600,7 +600,7 @@
 				"program": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Binaries\\Win64\\UnrealEditor.exe",
 				"preLaunchTask": "FractalEditor Win64 Development Build",
 				"args": [
-					"C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject"
+					"C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject"
 				],
 				"cwd": "C:\\Program Files\\Epic Games\\UE_5.6",
 				"stopAtEntry": false,
@@ -622,7 +622,7 @@
 				"args": [
 					"-projectfiles",
 					"-vscode",
-					"-project=C:\\Users\\rhave\\Documents\\Unreal Projects\\Fractal\\Fractal.uproject",
+					"-project=C:\\Users\\rhave\\Documents\\Unreal Projects\\FractalGame\\Fractal.uproject",
 					"-game",
 					"-engine",
 					"-dotnet"

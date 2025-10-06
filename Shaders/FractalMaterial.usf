@@ -43,17 +43,8 @@ struct FractalFunctions
 		return 0.5 * log(r) * r / dr;
 	}
 
-	static float3 EstimateNormal(float3 p, float Power)
-	{
-		float eps = 0.001;
-		return normalize(float3(
-			FractalDE(p + float3(eps, 0, 0), Power) - FractalDE(p - float3(eps, 0, 0), Power),
-			FractalDE(p + float3(0, eps, 0), Power) - FractalDE(p - float3(0, eps, 0), Power),
-			FractalDE(p + float3(0, 0, eps), Power) - FractalDE(p - float3(0, 0, eps), Power)));
-	}
-
 	// Performs the raymarching process to find an intersection with the fractal.
-	static float RaymarchFractal(float3 RayOrigin, float3 RayDir, float Power, out float3 Normal)
+	static float RaymarchFractal(float3 RayOrigin, float3 RayDir, float Power, out int OutSteps)
 	{
 		float totalDist = 0.0;
 		float maxDistance = 1000.0;
@@ -84,7 +75,7 @@ struct FractalFunctions
 
 			if (distEstimate < precision)
 			{
-				Normal = EstimateNormal(pos, Power);
+				OutSteps = steps;
 				return totalDist; // Hit!
 			}
 
@@ -94,7 +85,7 @@ struct FractalFunctions
 			float stepSize = max(distEstimate, adaptiveMinStep);
 			totalDist += stepSize;
 		}
-		Normal = float3(0, 0, 0);
+		OutSteps = steps;
 		return -1.0; // Miss.
 	}
 
@@ -119,21 +110,23 @@ struct FractalFunctions
 		float3 rayDir = worldDir;
 
 		float Power = 8.0;
-		float3 Normal;
-		float dist = RaymarchFractal(rayOrigin, rayDir, Power, Normal);
+		int steps;
+		float dist = RaymarchFractal(rayOrigin, rayDir, Power, steps);
 
 		if (dist > 0.0) // Hit
 		{
 			float3 hitPos = rayOrigin + rayDir * dist;
 
-			// Simple lighting
-			float3 lightDir = normalize(float3(0.8, 0.8, 0.5));
-			float diffuse = saturate(dot(Normal, lightDir)) * 0.7 + 0.3;
-
-			// Color based on normal and position
-			float3 color = abs(Normal) * diffuse;
-			color = lerp(color, float3(1.0, 0.5, 0.2), 0.3);
-
+			// Color based on step count - normalize to 0-1 range
+			float stepFactor = saturate(steps / 500.0);
+			
+			// Create a color gradient based on steps
+			float3 color = lerp(
+				float3(0.1, 0.2, 0.5),  // Blue for few steps
+				float3(1.0, 0.5, 0.1),  // Orange for many steps
+				stepFactor
+			);
+			
 			return color;
 		}
 		else // Miss

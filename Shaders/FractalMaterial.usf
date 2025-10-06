@@ -58,14 +58,15 @@ struct FractalFunctions
 		float totalDist = 0.0;
 		float maxDistance = 1000.0;
 
-		for (int step = 0; step < 256; step++) // Use a reasonable max step count
+		while (totalDist < maxDistance)
 		{
 			float3 pos = RayOrigin + RayDir * totalDist;
 			float distEstimate = FractalDE(pos, Power);
 
 			// Define a precision threshold based on the pixel size at the current distance.
 			// We are "close enough" when the distance estimate is a small fraction of a pixel's size.
-			float precision = GetPixelWorldRadius(totalDist) * 0.1;
+			float currentPixelSize = GetPixelWorldRadius(totalDist);
+			float precision = currentPixelSize * 0.1;
 
 			if (distEstimate < precision)
 			{
@@ -73,10 +74,11 @@ struct FractalFunctions
 				return totalDist; // Hit!
 			}
 
-			// Advance the ray by the safe distance estimate.
-			totalDist += distEstimate;
-			if (totalDist > maxDistance)
-				break; // We've gone too far.
+			// Advance the ray by the safe distance estimate, but enforce a minimum step size
+			// relative to the current pixel size to prevent getting stuck near grazing surfaces.
+			float adaptiveMinStep = currentPixelSize * 0.5;
+			float stepSize = max(distEstimate, adaptiveMinStep);
+			totalDist += stepSize;
 		}
 		Normal = float3(0, 0, 0);
 		return -1.0; // Miss.

@@ -82,11 +82,60 @@ void AFractalPlayerController::Tick(float DeltaTime)
 		const FVector Vel = P->GetVelocity();
 		const float VelMag = Vel.Size();
 		const FVector3d LocalPos = (FVector3d(Loc) - FVector3d(FractalCenter)) / FMath::Max(FractalScale, KINDA_SMALL_NUMBER);
-		const FString Msg = FString::Printf(
-			TEXT("Fractal: Dist=%.6f  Vel=%.6f  Max=%.6f  Acc=%.6f  TTS=%.2f  MinSpeed=%.2f  LocalPos=(%.6f,%.6f,%.6f)"),
-			static_cast<float>(Dist), VelMag, Move->MaxSpeed, Move->Acceleration, (float)TimeToSurfaceSeconds, SpeedConstraints::MinSpeed,
-			static_cast<float>(LocalPos.X), static_cast<float>(LocalPos.Y), static_cast<float>(LocalPos.Z));
-		GEngine->AddOnScreenDebugMessage((uint64)((PTRINT)this), 0.0f, FColor::Cyan, Msg, true, FVector2D(1.0f, 1.0f));
+		
+		const float ClampedTTS = FMath::Clamp(TimeToSurfaceSeconds, 0.1, 3.0);
+		const float SpeedPercent = FMath::Clamp(100.0f * (1.0f - (ClampedTTS - 0.1f) / 2.9f), 0.0f, 100.0f);
+		
+		const float SafeDist = FMath::Max(static_cast<float>(Dist), 0.001f);
+		const float LogDist = FMath::LogX(10.0f, SafeDist);
+		const float LogMin = FMath::LogX(10.0f, 0.001f);
+		const float LogMax = FMath::LogX(10.0f, 1000.0f);
+		const float ZoomLevel = FMath::Clamp((1.0f - ((LogDist - LogMin) / (LogMax - LogMin))) * 100.0f, 0.0f, 100.0f);
+		
+		const FColor HeaderColor = FColor(100, 200, 255);
+		const FColor BarColor = FColor(0, 255, 150);
+		const FColor PosColor = FColor(200, 150, 200);
+		
+		int32 LineKey = (int32)((PTRINT)this);
+		
+		auto CreateBar = [](float Percent, int32 Width = 30) -> FString
+		{
+			int32 Filled = FMath::RoundToInt((Percent / 100.0f) * Width);
+			Filled = FMath::Clamp(Filled, 0, Width);
+			FString Bar = TEXT("[");
+			for (int32 i = 0; i < Width; ++i)
+			{
+				Bar += (i < Filled) ? TEXT("I") : TEXT(" ");
+			}
+			Bar += TEXT("]");
+			return Bar;
+		};
+		
+		GEngine->AddOnScreenDebugMessage(LineKey++, 0.0f, HeaderColor, 
+			TEXT("+--------------------------------------------+"), true, FVector2D(1.3f, 1.3f));
+		
+		const FString ZoomBar = CreateBar(ZoomLevel, 30);
+		GEngine->AddOnScreenDebugMessage(LineKey++, 0.0f, FColor(255, 150, 50), 
+			FString::Printf(TEXT("| Zoom  %s %.0f%%"), *ZoomBar, ZoomLevel), 
+			true, FVector2D(1.3f, 1.3f));
+		
+		const FString SpeedBar = CreateBar(SpeedPercent, 30);
+		GEngine->AddOnScreenDebugMessage(LineKey++, 0.0f, BarColor, 
+			FString::Printf(TEXT("| Speed %s %.0f%%"), *SpeedBar, SpeedPercent), 
+			true, FVector2D(1.3f, 1.3f));
+		
+		GEngine->AddOnScreenDebugMessage(LineKey++, 0.0f, PosColor, 
+			FString::Printf(TEXT("| X: %+.4f"), static_cast<float>(LocalPos.X)), 
+			true, FVector2D(1.3f, 1.3f));
+		GEngine->AddOnScreenDebugMessage(LineKey++, 0.0f, PosColor, 
+			FString::Printf(TEXT("| Y: %+.4f"), static_cast<float>(LocalPos.Y)), 
+			true, FVector2D(1.3f, 1.3f));
+		GEngine->AddOnScreenDebugMessage(LineKey++, 0.0f, PosColor, 
+			FString::Printf(TEXT("| Z: %+.4f"), static_cast<float>(LocalPos.Z)), 
+			true, FVector2D(1.3f, 1.3f));
+		
+		GEngine->AddOnScreenDebugMessage(LineKey++, 0.0f, HeaderColor, 
+			TEXT("+--------------------------------------------+"), true, FVector2D(1.3f, 1.3f));
 	}
 }
 

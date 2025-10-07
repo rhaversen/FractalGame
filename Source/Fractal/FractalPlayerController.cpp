@@ -42,11 +42,10 @@ void AFractalPlayerController::Tick(float DeltaTime)
 		return;
 	}
 
-	// Target speed so time to reach surface ~ TimeToSurfaceSeconds
-	double TargetSpeed = TimeToSurfaceSeconds > 0.0 ? Dist / TimeToSurfaceSeconds : Dist; // cm/s
-
-	// Clamp only by MaxSpeed cap; allow arbitrarily small speeds if DE is tiny
-	TargetSpeed = FMath::Min(static_cast<float>(TargetSpeed), MaxSpeed);
+	// At very small distances the old 0.001 cm/s min produced sub-float per-frame motion (~microns) that collapsed to zero velocity.
+	const double MinSpeed = 1.0; // cm/s floor
+	double TargetSpeed = (TimeToSurfaceSeconds > 0.0) ? Dist / TimeToSurfaceSeconds : Dist;
+	TargetSpeed = FMath::Clamp(TargetSpeed, MinSpeed, static_cast<double>(MaxSpeed));
 
 	Move->MaxSpeed = static_cast<float>(TargetSpeed);
 	// Keep acceleration/deceleration proportional to maintain feel
@@ -59,8 +58,8 @@ void AFractalPlayerController::Tick(float DeltaTime)
 		const float VelMag = Vel.Size();
 		const FVector3d LocalPos = (FVector3d(Loc) - FVector3d(FractalCenter)) / FMath::Max(FractalScale, KINDA_SMALL_NUMBER);
 		const FString Msg = FString::Printf(
-			TEXT("Fractal: Dist=%.3f cm  Target=%.1f cm/s  MaxSpeed=%.1f  Vel=%.1f cm/s  LocalPos=(%.4f,%.4f,%.4f)"),
-			static_cast<float>(Dist), static_cast<float>(TargetSpeed), Move->MaxSpeed, VelMag,
+			TEXT("Fractal: Dist=%.6f cm  Vel=%.6f cm/s  Max=%.6f cm/s  TTS=%.2f s  LocalPos=(%.6f,%.6f,%.6f)"),
+			static_cast<float>(Dist), VelMag, Move->MaxSpeed, (float)TimeToSurfaceSeconds,
 			static_cast<float>(LocalPos.X), static_cast<float>(LocalPos.Y), static_cast<float>(LocalPos.Z));
 		GEngine->AddOnScreenDebugMessage((uint64)((PTRINT)this), 0.0f, FColor::Cyan, Msg, true, FVector2D(1.0f, 1.0f));
 	}
@@ -82,6 +81,17 @@ void AFractalPlayerController::SetupInputComponent()
     // Also support default UE axis names so mouse look works without remapping
     InputComponent->BindAxis(TEXT("Turn"), this, &AFractalPlayerController::Pan);
     InputComponent->BindAxis(TEXT("LookUp"), this, &AFractalPlayerController::Tilt);
+
+	// Mouse wheel adjusts TimeToSurfaceSeconds (clamped 1..10)
+	{
+		FInputAxisBinding& Wheel = InputComponent->BindAxis(TEXT("MouseWheel"));
+		Wheel.AxisDelegate.GetDelegateForManualSet().BindLambda([this](float Value)
+		{
+			if (FMath::IsNearlyZero(Value)) return;
+			const double Old = TimeToSurfaceSeconds;
+			TimeToSurfaceSeconds = FMath::Clamp(TimeToSurfaceSeconds - Value * 0.25, 0.1, 10.0);
+		});
+	}
 }
 
 

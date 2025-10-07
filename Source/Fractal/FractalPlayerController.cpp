@@ -10,6 +10,20 @@ namespace {
 	static FTransform GInitialPawnTransform;
 	static double GInitialTTS = 0.0;
 	static bool GHaveInitial = false;
+
+	struct SpeedConstraints
+	{
+		static constexpr float AccelPerSpeed = 3.0f;
+		static constexpr float MinAccel = 2.0f;
+		static constexpr float MinSpeed = 0.05;
+	};
+
+	float ComputeTargetSpeed(double DistanceToCM, double TimeToSurfaceSeconds, float MaxSpeed)
+	{
+		double RawSpeed = DistanceToCM / FMath::Max(TimeToSurfaceSeconds, (double)KINDA_SMALL_NUMBER);
+		RawSpeed = FMath::Clamp(RawSpeed, (double)SpeedConstraints::MinSpeed, (double)MaxSpeed);
+		return static_cast<float>(RawSpeed);
+	}
 }
 
 AFractalPlayerController::AFractalPlayerController()
@@ -21,7 +35,6 @@ void AFractalPlayerController::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	// Capture initial state once
 	if (!GHaveInitial)
 	{
 		if (APawn* PInit = GetPawn())
@@ -43,32 +56,23 @@ void AFractalPlayerController::Tick(float DeltaTime)
 		return;
 	}
 
-	// Try to find a FloatingPawnMovement to control speed
 	UFloatingPawnMovement* Move = P->FindComponentByClass<UFloatingPawnMovement>();
 	if (!Move)
 	{
 		return;
 	}
 
-	// Compute distance to fractal surface from camera location (matches shader logic)
 	const FVector Loc = (PlayerCameraManager) ? PlayerCameraManager->GetCameraLocation() : P->GetActorLocation();
-	double Dist = DistanceToFractal(Loc); // in cm
+	double Dist = DistanceToFractal(Loc);
 
-	// Guard against invalid/degenerate values
 	if (!FMath::IsFinite(Dist) || Dist < 0.0)
 	{
 		return;
 	}
 
-	// At very small distances the old 0.001 cm/s min produced sub-float per-frame motion (~microns) that collapsed to zero velocity.
-	const double MinSpeed = 1.0; // cm/s floor
-	double TargetSpeed = (TimeToSurfaceSeconds > 0.0) ? Dist / TimeToSurfaceSeconds : Dist;
-	TargetSpeed = FMath::Clamp(TargetSpeed, MinSpeed, static_cast<double>(MaxSpeed));
+	Move->MaxSpeed = ComputeTargetSpeed(Dist, TimeToSurfaceSeconds, MaxSpeed);
+	Move->Acceleration = FMath::Max(Move->MaxSpeed * SpeedConstraints::AccelPerSpeed, SpeedConstraints::MinAccel);
 
-	Move->MaxSpeed = static_cast<float>(TargetSpeed);
-	// Keep acceleration proportional to speed
-	Move->Acceleration = Move->MaxSpeed * 3.0f;
-	// Stronger deceleration at low target speeds: as speed ratio drops, boost increases (up to 6x here)
 	const float SpeedRatio = Move->MaxSpeed / FMath::Max(static_cast<float>(MaxSpeed), KINDA_SMALL_NUMBER);
 	const float DecelBoost = 1.f + (1.f - SpeedRatio) * 5.f;
 	Move->Deceleration = Move->Acceleration * DecelBoost;
@@ -79,13 +83,11 @@ void AFractalPlayerController::Tick(float DeltaTime)
 		const float VelMag = Vel.Size();
 		const FVector3d LocalPos = (FVector3d(Loc) - FVector3d(FractalCenter)) / FMath::Max(FractalScale, KINDA_SMALL_NUMBER);
 		const FString Msg = FString::Printf(
-			TEXT("Fractal: Dist=%.6f cm  Vel=%.6f cm/s  Max=%.6f cm/s  TTS=%.2f s  LocalPos=(%.6f,%.6f,%.6f)"),
-			static_cast<float>(Dist), VelMag, Move->MaxSpeed, (float)TimeToSurfaceSeconds,
+			TEXT("Fractal: Dist=%.6f  Vel=%.6f  Max=%.6f  Acc=%.6f  TTS=%.2f  MinSpeed=%.2f  LocalPos=(%.6f,%.6f,%.6f)"),
+			static_cast<float>(Dist), VelMag, Move->MaxSpeed, Move->Acceleration, (float)TimeToSurfaceSeconds, SpeedConstraints::MinSpeed,
 			static_cast<float>(LocalPos.X), static_cast<float>(LocalPos.Y), static_cast<float>(LocalPos.Z));
 		GEngine->AddOnScreenDebugMessage((uint64)((PTRINT)this), 0.0f, FColor::Cyan, Msg, true, FVector2D(1.0f, 1.0f));
 	}
-
-	// Velocity will be clamped by UFloatingPawnMovement to MaxSpeed during its update.
 }
 
 void AFractalPlayerController::SetupInputComponent()

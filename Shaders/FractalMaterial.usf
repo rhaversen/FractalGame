@@ -1,7 +1,7 @@
 // Post-process mandelbulb fractal rendering shader functions for use in material custom node
 
-#define FRACTAL_MAX_STEPS 250
-#define FRACTAL_MAX_DISTANCE 10.0
+#define FRACTAL_MAX_STEPS 500
+#define FRACTAL_MAX_DISTANCE 5.0
 #define FRACTAL_POWER 8.0
 
 #define HIT_STATUS_NONE 0

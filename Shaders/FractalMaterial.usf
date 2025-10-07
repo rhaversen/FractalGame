@@ -1,12 +1,19 @@
 // Post-process mandelbulb fractal rendering shader functions for use in material custom node
 
 #define FRACTAL_MAX_STEPS 250
+#define FRACTAL_MAX_DISTANCE 10.0
 #define FRACTAL_POWER 8.0
+
+#define HIT_STATUS_NONE 0
+#define HIT_STATUS_HIT 1
+#define HIT_STATUS_MISS_DISTANCE 2
+#define HIT_STATUS_MISS_STEPS 3
 
 struct MarchResult
 {
 	float distance;
 	int steps;
+	int hitStatus;
 };
 
 struct FractalFunctions
@@ -60,10 +67,9 @@ struct FractalFunctions
 	static MarchResult MarchFractal(float3 RayOrigin, float3 RayDir, float subdivisionFactor, float startDistance, int startSteps)
 	{
 		float totalDist = startDistance;
-		float maxDistance = 10.0;
 		int steps = startSteps;
 
-		while (totalDist < maxDistance && steps < FRACTAL_MAX_STEPS)
+		while (totalDist < FRACTAL_MAX_DISTANCE && steps < FRACTAL_MAX_STEPS)
 		{
 			steps++;
 			float3 pos = RayOrigin + RayDir * totalDist;
@@ -90,6 +96,7 @@ struct FractalFunctions
 				MarchResult result;
 				result.distance = totalDist;
 				result.steps = steps;
+				result.hitStatus = HIT_STATUS_HIT;
 				return result;
 			}
 
@@ -100,6 +107,7 @@ struct FractalFunctions
 		MarchResult result;
 		result.distance = totalDist;
 		result.steps = steps;
+		result.hitStatus = (totalDist >= FRACTAL_MAX_DISTANCE) ? HIT_STATUS_MISS_DISTANCE : HIT_STATUS_MISS_STEPS;
 		return result;
 	}
 
@@ -147,16 +155,20 @@ struct FractalFunctions
 		float range3 = saturate((t - vibrantBluePos) / (brightBluePos - vibrantBluePos));
 		float3 fractalColor = lerp(lerp(lerp(almostBlack, deepBlue, range1), vibrantBlue, range2), brightBlue, range3);
 
-		// Determine hit or miss
-		if (finalResult.distance > 0.0)
+		if (finalResult.hitStatus == HIT_STATUS_HIT)
 		{
-			// Miss - apply fog based on how close we got
-			float fogAmount = pow(stepFactor, 0.1);
+			// Direct hit: show fractal color
+			return fractalColor;
+		}
+		else if (finalResult.hitStatus == HIT_STATUS_MISS_DISTANCE)
+		{
+			// Missed due to distance: blend fractal color with scene color based on distance to create fog effect
+			float fogAmount = saturate(finalResult.distance / FRACTAL_MAX_DISTANCE);
 			return lerp(sceneColor, fractalColor, fogAmount);
 		}
-		else
+		else if (finalResult.hitStatus == HIT_STATUS_MISS_STEPS)
 		{
-			// Hit
+			// Missed due to max steps: show fractal color (TODO: Find a better way to handle this case, use depth?)
 			return fractalColor;
 		}
 	}

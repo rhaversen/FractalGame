@@ -162,8 +162,8 @@ struct FractalFunctions
 		}
 		else if (finalResult.hitStatus == HIT_STATUS_MISS_DISTANCE)
 		{
-			// Missed due to distance: blend fractal color with scene color based on distance to create fog effect
-			float fogAmount = saturate(finalResult.distance / FRACTAL_MAX_DISTANCE);
+			// Missed due to distance: blend fractal color with scene color based on steps taken
+			float fogAmount = pow(stepFactor, 0.1);
 			return lerp(sceneColor, fractalColor, fogAmount);
 		}
 		else if (finalResult.hitStatus == HIT_STATUS_MISS_STEPS)

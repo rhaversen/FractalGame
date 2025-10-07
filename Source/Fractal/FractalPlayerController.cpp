@@ -5,6 +5,13 @@
 #include "GameFramework/FloatingPawnMovement.h"
 #include "Engine/Engine.h"
 
+// Persistent initial state for reset
+namespace {
+	static FTransform GInitialPawnTransform;
+	static double GInitialTTS = 0.0;
+	static bool GHaveInitial = false;
+}
+
 AFractalPlayerController::AFractalPlayerController()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -13,6 +20,17 @@ AFractalPlayerController::AFractalPlayerController()
 void AFractalPlayerController::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	// Capture initial state once
+	if (!GHaveInitial)
+	{
+		if (APawn* PInit = GetPawn())
+		{
+			GInitialPawnTransform = PInit->GetActorTransform();
+			GInitialTTS = TimeToSurfaceSeconds;
+			GHaveInitial = true;
+		}
+	}
 
 	if (!bScaleSpeedByDE)
 	{
@@ -81,18 +99,42 @@ void AFractalPlayerController::SetupInputComponent()
 	InputComponent->BindAxis(TEXT("Pan"), this, &AFractalPlayerController::Pan);
 	InputComponent->BindAxis(TEXT("Tilt"), this, &AFractalPlayerController::Tilt);
 	InputComponent->BindAxis(TEXT("Roll"), this, &AFractalPlayerController::Roll);
-    // Also support default UE axis names so mouse look works without remapping
-    InputComponent->BindAxis(TEXT("Turn"), this, &AFractalPlayerController::Pan);
-    InputComponent->BindAxis(TEXT("LookUp"), this, &AFractalPlayerController::Tilt);
+	InputComponent->BindAxis(TEXT("Turn"), this, &AFractalPlayerController::Pan);
+	InputComponent->BindAxis(TEXT("LookUp"), this, &AFractalPlayerController::Tilt);
 
-	// Mouse wheel adjusts TimeToSurfaceSeconds (clamped 1..10)
 	{
 		FInputAxisBinding& Wheel = InputComponent->BindAxis(TEXT("MouseWheel"));
 		Wheel.AxisDelegate.GetDelegateForManualSet().BindLambda([this](float Value)
 		{
 			if (FMath::IsNearlyZero(Value)) return;
-			const double Old = TimeToSurfaceSeconds;
 			TimeToSurfaceSeconds = FMath::Clamp(TimeToSurfaceSeconds - Value * 0.25, 0.1, 10.0);
+		});
+	}
+
+	// R key resets pawn transform and TimeToSurfaceSeconds
+	{
+		FInputAxisBinding& Reset = InputComponent->BindAxis(TEXT("ResetCamera"));
+		Reset.AxisDelegate.GetDelegateForManualSet().BindLambda([this](float Value)
+		{
+			if (FMath::IsNearlyZero(Value)) return;
+			if (!GHaveInitial)
+			{
+				if (APawn* PInit = GetPawn())
+				{
+					GInitialPawnTransform = PInit->GetActorTransform();
+					GInitialTTS = TimeToSurfaceSeconds;
+					GHaveInitial = true;
+				}
+			}
+			if (APawn* P = GetPawn())
+			{
+				P->SetActorTransform(GInitialPawnTransform);
+				if (UFloatingPawnMovement* Move = P->FindComponentByClass<UFloatingPawnMovement>())
+				{
+					Move->Velocity = FVector::ZeroVector;
+				}
+			}
+			TimeToSurfaceSeconds = GInitialTTS;
 		});
 	}
 }

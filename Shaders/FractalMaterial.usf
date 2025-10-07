@@ -1,5 +1,8 @@
 // Post-process mandelbulb fractal rendering shader functions for use in material custom node
 
+#define FRACTAL_MAX_STEPS 250
+#define FRACTAL_POWER 8.0
+
 struct MarchResult
 {
 	float distance;
@@ -18,13 +21,14 @@ struct FractalFunctions
 
 	// Calculates the Distance Estimate (DE) for a point in space to the Mandelbulb set.
 	// The DE is the radius of a sphere centered at 'pos' that is guaranteed not to touch the fractal.
-	static float FractalDE(float3 pos, float Power)
+	// Based on: http://blog.hvidtfeldts.net/index.php/2011/09/distance-estimated-3d-fractals-v-the-mandelbulb-different-de-approximations/
+	static float FractalDE(float3 pos)
 	{
 		float3 z = pos;
 		float dr = 1.0;
 		float r = 0.0;
-		float bailout = 4.0;
-		int MaxIter = 120; // A fixed max iteration count is sufficient here.
+		float bailout = 2.0;
+		int MaxIter = 100;
 
 		for (int i = 0; i < MaxIter; i++)
 		{
@@ -32,17 +36,18 @@ struct FractalFunctions
 			if (r > bailout)
 				break;
 
-			// Spherical coordinates
+			// Convert to polar coordinates
 			float theta = acos(z.z / r);
 			float phi = atan2(z.y, z.x);
-			dr = pow(r, Power - 1.0) * Power * dr + 1.0;
+			dr = pow(r, FRACTAL_POWER - 1.0) * FRACTAL_POWER * dr + 1.0;
 
-			// Scale and rotate
-			float zr = pow(r, Power);
-			theta *= Power;
-			phi *= Power;
+			// Scale and rotate the point
+			float zr = pow(r, FRACTAL_POWER);
+			theta *= FRACTAL_POWER;
+			phi *= FRACTAL_POWER;
 
-			z = zr * float3(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
+			// Convert back to cartesian coordinates
+			z = zr * float3(sin(theta) * cos(phi), sin(phi) * sin(theta), cos(theta));
 			z += pos;
 		}
 
@@ -52,18 +57,17 @@ struct FractalFunctions
 	// Marching function that can do cone marching (subdivisionFactor > 0) or ray marching (subdivisionFactor = 0)
 	// subdivisionFactor: 0 = precise ray marching, >0 = cone marching with that many pixels bundled
 	// startDistance & startSteps: allows continuing from where a previous march left off
-	static MarchResult MarchFractal(float3 RayOrigin, float3 RayDir, float Power, float subdivisionFactor, float startDistance, int startSteps)
+	static MarchResult MarchFractal(float3 RayOrigin, float3 RayDir, float subdivisionFactor, float startDistance, int startSteps)
 	{
 		float totalDist = startDistance;
 		float maxDistance = 10.0;
-		int maxSteps = 500;
 		int steps = startSteps;
 
-		while (totalDist < maxDistance && steps < maxSteps)
+		while (totalDist < maxDistance && steps < FRACTAL_MAX_STEPS)
 		{
 			steps++;
 			float3 pos = RayOrigin + RayDir * totalDist;
-			float distEstimate = FractalDE(pos, Power);
+			float distEstimate = FractalDE(pos);
 
 			// Calculate precision threshold based on whether we're cone marching or ray marching
 			float pixelSize = GetPixelWorldRadius(totalDist);
@@ -71,18 +75,18 @@ struct FractalFunctions
 			
 			if (subdivisionFactor > 0.0)
 			{
-				// Cone marching: stop at cone radius or pixel size, whichever is smaller
+				// Cone marching: stop at cone radius or pixel size, whichever is larger
 				float coneRadius = pixelSize * subdivisionFactor;
-				threshold = min(coneRadius * 1.25, pixelSize);
+				threshold = max(coneRadius * 1.25, pixelSize);
 			}
 			else
 			{
-				// Ray marching: threshold is a small fraction of pixel size
-				threshold = pixelSize * 0.1;
+				// Ray marching: threshold is pixel size
+				threshold = pixelSize;
 			}
 
 			// Check if we've hit the fractal
-			if (distEstimate < threshold)
+			if (distEstimate <= threshold)
 			{
 				MarchResult result;
 				result.distance = totalDist;
@@ -95,7 +99,6 @@ struct FractalFunctions
 			if (subdivisionFactor == 0.0)
 			{
 				// Ray marching: enforce minimum step size to avoid getting stuck
-				float pixelSize = GetPixelWorldRadius(totalDist);
 				float adaptiveMinStep = pixelSize * 0.5;
 				stepSize = max(distEstimate, adaptiveMinStep);
 			}
@@ -128,18 +131,16 @@ struct FractalFunctions
 		// Scale down the camera origin for better framing
 		float3 rayOrigin = cameraOrigin * 0.001;
 		float3 rayDir = worldDir;
-
-		float Power = 8.0;
 		
 		// First pass: Cone march with subdivision factor of 12 (bundle ~12 pixels per cone)
 		float subdivisionFactor = 12.0;
-		MarchResult coneResult = MarchFractal(rayOrigin, rayDir, Power, subdivisionFactor, 0.0, 0);
+		MarchResult coneResult = MarchFractal(rayOrigin, rayDir, subdivisionFactor, 0.0, 0);
 		
 		// Second pass: Ray march from where cone marching left off (subdivisionFactor = 0 for precise marching)
-		MarchResult finalResult = MarchFractal(rayOrigin, rayDir, Power, 0.0, coneResult.distance, coneResult.steps);
+		MarchResult finalResult = MarchFractal(rayOrigin, rayDir, 0.0, coneResult.distance, coneResult.steps);
 
 		// Calculate color based on total steps taken
-		float stepFactor = saturate(finalResult.steps / 500.0);
+		float stepFactor = saturate(finalResult.steps / float(FRACTAL_MAX_STEPS));
 		float t = sqrt(stepFactor);
 		
 		// Gradient color stops: position -> color

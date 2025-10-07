@@ -48,9 +48,12 @@ void AFractalPlayerController::Tick(float DeltaTime)
 	TargetSpeed = FMath::Clamp(TargetSpeed, MinSpeed, static_cast<double>(MaxSpeed));
 
 	Move->MaxSpeed = static_cast<float>(TargetSpeed);
-	// Keep acceleration/deceleration proportional to maintain feel
+	// Keep acceleration proportional to speed
 	Move->Acceleration = Move->MaxSpeed * 3.0f;
-	Move->Deceleration = Move->Acceleration;
+	// Stronger deceleration at low target speeds: as speed ratio drops, boost increases (up to 6x here)
+	const float SpeedRatio = Move->MaxSpeed / FMath::Max(static_cast<float>(MaxSpeed), KINDA_SMALL_NUMBER);
+	const float DecelBoost = 1.f + (1.f - SpeedRatio) * 5.f;
+	Move->Deceleration = Move->Acceleration * DecelBoost;
 
 	if (bShowFractalDebug && GEngine)
 	{

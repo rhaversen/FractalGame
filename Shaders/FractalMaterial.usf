@@ -138,8 +138,7 @@ struct FractalFunctions
 		else
 		{
 			// Miss - fog intensity scales with step count (more steps = closer to fractal)
-			// Use quadratic falloff for stronger fog near fractal
-			float fogAmount = stepFactor * stepFactor;
+			float fogAmount = pow(stepFactor, 0.1);
 			return lerp(sceneColor, fractalColor, fogAmount);
 		}
 	}

@@ -75,9 +75,8 @@ struct FractalFunctions
 			
 			if (subdivisionFactor > 0.0)
 			{
-				// Cone marching: stop at cone radius or pixel size, whichever is larger
-				float coneRadius = pixelSize * subdivisionFactor;
-				threshold = max(coneRadius * 1.25, pixelSize);
+				// Cone marching: larger threshold based on cone radius
+				threshold = pixelSize * subdivisionFactor;
 			}
 			else
 			{
@@ -94,15 +93,8 @@ struct FractalFunctions
 				return result;
 			}
 
-			// Advance by the distance estimate (with adaptive min step for ray marching)
-			float stepSize = distEstimate;
-			if (subdivisionFactor == 0.0)
-			{
-				// Ray marching: enforce minimum step size to avoid getting stuck
-				float adaptiveMinStep = pixelSize * 0.5;
-				stepSize = max(distEstimate, adaptiveMinStep);
-			}
-			totalDist += stepSize;
+			// Advance by the distance estimate
+			totalDist += distEstimate;
 		}
 
 		MarchResult result;

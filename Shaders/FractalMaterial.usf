@@ -135,11 +135,16 @@ struct FractalFunctions
 			// Too much detail (grazing edge / fine structure)
 			return fractalColor;
 		}
-		else
+		else if (dist == -1.0)
 		{
 			// Miss - fog intensity scales with step count (more steps = closer to fractal)
 			float fogAmount = pow(stepFactor, 0.1);
 			return lerp(sceneColor, fractalColor, fogAmount);
+		}
+		else
+		{
+			// Fallback (should not occur)
+			return sceneColor;
 		}
 	}
 };

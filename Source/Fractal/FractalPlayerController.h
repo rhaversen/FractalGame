@@ -67,4 +67,7 @@ private:
 	// Debug visualization
 	UPROPERTY(EditAnywhere, Category = "Fractal DE|Debug")
 	bool bShowFractalDebug = true;
+
+	// Help display toggle
+	bool bShowHelp = false;
 };

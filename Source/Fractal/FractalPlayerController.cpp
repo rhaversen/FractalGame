@@ -77,65 +77,62 @@ void AFractalPlayerController::Tick(float DeltaTime)
 	const float DecelBoost = 1.f + (1.f - SpeedRatio) * 5.f;
 	Move->Deceleration = Move->Acceleration * DecelBoost;
 
-	if (bShowFractalDebug && GEngine)
+	// Unified debug + help rendering (engine draws newest lines at the top, so we push in reverse)
+	if (GEngine)
 	{
-		const FVector Vel = P->GetVelocity();
-		const float VelMag = Vel.Size();
+		struct FLine { FString Text; FColor Color; };
+		TArray<FLine> Lines; Lines.Reserve(64);
 		const FVector3d LocalPos = (FVector3d(Loc) - FVector3d(FractalCenter)) / FMath::Max(FractalScale, KINDA_SMALL_NUMBER);
-		
 		const float ClampedTTS = FMath::Clamp(TimeToSurfaceSeconds, 0.1, 3.0);
 		const float SpeedPercent = FMath::Clamp(100.0f * (1.0f - (ClampedTTS - 0.1f) / 2.9f), 0.0f, 100.0f);
-		
 		const float SafeDist = FMath::Max(static_cast<float>(Dist), 0.001f);
 		const float LogDist = FMath::LogX(10.0f, SafeDist);
 		const float LogMin = FMath::LogX(10.0f, 0.001f);
 		const float LogMax = FMath::LogX(10.0f, 1000.0f);
 		const float ZoomLevel = FMath::Clamp((1.0f - ((LogDist - LogMin) / (LogMax - LogMin))) * 100.0f, 0.0f, 100.0f);
-		
-		const FColor HeaderColor = FColor(100, 200, 255);
-		const FColor BarColor = FColor(0, 255, 150);
-		const FColor PosColor = FColor(200, 150, 200);
-		
-		int32 LineKey = (int32)((PTRINT)this);
-		
-		auto CreateBar = [](float Percent, int32 Width = 30) -> FString
-		{
-			int32 Filled = FMath::RoundToInt((Percent / 100.0f) * Width);
-			Filled = FMath::Clamp(Filled, 0, Width);
-			FString Bar = TEXT("[");
-			for (int32 i = 0; i < Width; ++i)
+		const FColor BarColor(0,255,150);
+		const FColor PosColor(200,150,200);
+		const FColor ZoomColor(255,150,50);
+			auto CreateBar = [](float Percent, int32 Width = 20) -> FString
 			{
-				Bar += (i < Filled) ? TEXT("I") : TEXT(" ");
-			}
-			Bar += TEXT("]");
-			return Bar;
-		};
-		
-		GEngine->AddOnScreenDebugMessage(LineKey++, 0.0f, HeaderColor, 
-			TEXT("+--------------------------------------------+"), true, FVector2D(1.3f, 1.3f));
-		
-		const FString ZoomBar = CreateBar(ZoomLevel, 30);
-		GEngine->AddOnScreenDebugMessage(LineKey++, 0.0f, FColor(255, 150, 50), 
-			FString::Printf(TEXT("| Zoom  %s %.0f%%"), *ZoomBar, ZoomLevel), 
-			true, FVector2D(1.3f, 1.3f));
-		
-		const FString SpeedBar = CreateBar(SpeedPercent, 30);
-		GEngine->AddOnScreenDebugMessage(LineKey++, 0.0f, BarColor, 
-			FString::Printf(TEXT("| Speed %s %.0f%%"), *SpeedBar, SpeedPercent), 
-			true, FVector2D(1.3f, 1.3f));
-		
-		GEngine->AddOnScreenDebugMessage(LineKey++, 0.0f, PosColor, 
-			FString::Printf(TEXT("| X: %+.4f"), static_cast<float>(LocalPos.X)), 
-			true, FVector2D(1.3f, 1.3f));
-		GEngine->AddOnScreenDebugMessage(LineKey++, 0.0f, PosColor, 
-			FString::Printf(TEXT("| Y: %+.4f"), static_cast<float>(LocalPos.Y)), 
-			true, FVector2D(1.3f, 1.3f));
-		GEngine->AddOnScreenDebugMessage(LineKey++, 0.0f, PosColor, 
-			FString::Printf(TEXT("| Z: %+.4f"), static_cast<float>(LocalPos.Z)), 
-			true, FVector2D(1.3f, 1.3f));
-		
-		GEngine->AddOnScreenDebugMessage(LineKey++, 0.0f, HeaderColor, 
-			TEXT("+--------------------------------------------+"), true, FVector2D(1.3f, 1.3f));
+				int32 Filled = FMath::RoundToInt((Percent / 100.f) * Width);
+				Filled = FMath::Clamp(Filled, 0, Width);
+				FString S("");
+				for (int32 i=0;i<Filled;++i){ S += TEXT("#"); }
+				// No closing bracket or padding; caller will append percent directly after last hash/space
+				S += TEXT(" ");
+				return S;
+			};
+		if (bShowFractalDebug)
+		{
+			Lines.Add({FString::Printf(TEXT("Zoom  %s%.0f%%"), *CreateBar(ZoomLevel), ZoomLevel), ZoomColor});
+			Lines.Add({FString::Printf(TEXT("Speed %s%.0f%%"), *CreateBar(SpeedPercent), SpeedPercent), BarColor});
+			Lines.Add({FString::Printf(TEXT("Pos   X:%+.4f Y:%+.4f Z:%+.4f"), (float)LocalPos.X,(float)LocalPos.Y,(float)LocalPos.Z), PosColor});
+		}
+		// Help or hint appended below (so inserted earlier in array for bottom placement when reversed)
+		if (bShowHelp)
+		{
+			const FColor TitleColor(255,220,100);
+			const FColor KeyColor(150,255,200);
+			const FColor LabelColor(180,180,180);
+			Lines.Add({TEXT("") , LabelColor});
+			Lines.Add({TEXT("Controls"), TitleColor});
+			Lines.Add({TEXT("Move: W, A, S, D"), KeyColor});
+			Lines.Add({TEXT("Vertical: Space, Shift"), KeyColor});
+			Lines.Add({TEXT("Roll: Q, E"), KeyColor});
+			Lines.Add({TEXT("Speed: Mouse Wheel"), KeyColor});
+			Lines.Add({TEXT("Reset view: R"), KeyColor});
+		}
+		else
+		{
+			Lines.Add({TEXT("(Hold H for controls)"), FColor(140,140,140)});
+		}
+		// Emit in reverse so first logical line ends up at top on screen
+		int32 BaseKey = (int32)((PTRINT)this);
+		for (int32 i = Lines.Num()-1; i >=0; --i)
+		{
+			GEngine->AddOnScreenDebugMessage(BaseKey + i, 0.0f, Lines[i].Color, Lines[i].Text, true, FVector2D(1.2f,1.2f));
+		}
 	}
 }
 
@@ -186,6 +183,15 @@ void AFractalPlayerController::SetupInputComponent()
 				}
 			}
 			TimeToSurfaceSeconds = GInitialTTS;
+		});
+	}
+
+	// H key shows help while held
+	{
+		FInputAxisBinding& Help = InputComponent->BindAxis(TEXT("ToggleHelp"));
+		Help.AxisDelegate.GetDelegateForManualSet().BindLambda([this](float Value)
+		{
+			bShowHelp = !FMath::IsNearlyZero(Value);
 		});
 	}
 }

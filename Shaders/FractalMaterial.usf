@@ -111,11 +111,19 @@ struct FractalFunctions
 
 		// Calculate step-based color
 		float stepFactor = saturate(steps / 500.0);
-		float3 fractalColor = lerp(
-			float3(0.1, 0.2, 0.5),  // Blue (few steps)
-			float3(1.0, 0.5, 0.1),  // Orange (many steps)
-			stepFactor
-		);
+		float t = sqrt(stepFactor);
+		
+		// Gradient color stops: position -> color
+		float  almostBlackPos = 0.0;   float3 almostBlack = float3(0.0, 0.0, 0.05);    // Very few steps
+		float  deepBluePos = 0.15;     float3 deepBlue = float3(0.05, 0.15, 0.3);      // Low detail areas
+		float  vibrantBluePos = 0.4;   float3 vibrantBlue = float3(0.2, 0.4, 0.8);     // Medium detail
+		float  brightBluePos = 1.0;    float3 brightBlue = float3(0.6, 0.8, 1.0);      // Many steps
+		
+		// Blend through gradient stops
+		float range1 = saturate((t - almostBlackPos) / (deepBluePos - almostBlackPos));
+		float range2 = saturate((t - deepBluePos) / (vibrantBluePos - deepBluePos));
+		float range3 = saturate((t - vibrantBluePos) / (brightBluePos - vibrantBluePos));
+		float3 fractalColor = lerp(lerp(lerp(almostBlack, deepBlue, range1), vibrantBlue, range2), brightBlue, range3);
 
 		if (dist > 0.0)
 		{

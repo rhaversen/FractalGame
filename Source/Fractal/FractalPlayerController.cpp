@@ -14,14 +14,17 @@ namespace {
 
 	struct SpeedConstraints
 	{
-		static constexpr float AccelPerSpeed = 0.5f;   // Acceleration scales with max speed
-		static constexpr float MinAccel = 2.0f;        // Any lower and player can get stuck
-		static constexpr float DecelPerSpeed = 0.1f;   // Slight deceleration scales with max speed
-		static constexpr float MinDecel = 0.1f;        // Slight constant deceleration to help stop at small speeds
+		// Acceleration: applied when input aligns with current velocity direction
+		static constexpr float AccelPerSpeed = 0.5f;   // Scales with max speed for consistent feel across zoom levels
+		static constexpr float MinAccel = 2.0f;        // Minimum to prevent player getting stuck
 		
-		// Directional braking when input opposes current velocity
-		static constexpr float BrakePerSpeed = 0.5f;   // Braking force scales with max speed (higher = easier turns)
-		static constexpr float MinBrake = 0.1f;        // Minimum braking force for low speeds
+		// Natural deceleration: applied when no input is given to gradually slow movement
+		static constexpr float DecelPerSpeed = 0.1f;   // Scales with max speed for gradual braking at any zoom level
+		static constexpr float MinDecel = 0.1f;        // Minimum to ensure eventual stop at very low speeds
+		
+		// Directional braking: applied when input opposes current velocity for responsive direction changes
+		static constexpr float BrakePerSpeed = 0.5f;   // Scales with max speed to enable sharp turns at any zoom level
+		static constexpr float MinBrake = 0.1f;        // Minimum ensures direction changes work even when nearly stationary
 	};
 
 	// Compute target speed from percentage and distance using logarithmic time-to-surface approach

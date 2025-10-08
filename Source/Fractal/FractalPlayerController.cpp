@@ -17,7 +17,11 @@ namespace {
 		static constexpr float AccelPerSpeed = 0.5f;   // Acceleration scales with max speed
 		static constexpr float MinAccel = 2.0f;        // Any lower and player can get stuck
 		static constexpr float DecelPerSpeed = 0.1f;   // Slight deceleration scales with max speed
-		static constexpr float MinDecel = 1.0f;        // Slight constant deceleration to help stop at small speeds
+		static constexpr float MinDecel = 0.1f;        // Slight constant deceleration to help stop at small speeds
+		
+		// Directional braking when input opposes current velocity
+		static constexpr float BrakePerSpeed = 0.5f;   // Braking force scales with max speed (higher = easier turns)
+		static constexpr float MinBrake = 0.1f;        // Minimum braking force for low speeds
 	};
 
 	// Compute target speed from percentage and distance using logarithmic time-to-surface approach
@@ -76,11 +80,6 @@ void AFractalPlayerController::Tick(float DeltaTime)
 		}
 	}
 
-	if (!bScaleSpeedByDE)
-	{
-		return;
-	}
-
 	APawn* P = GetPawn();
 	if (!P)
 	{
@@ -89,6 +88,11 @@ void AFractalPlayerController::Tick(float DeltaTime)
 
 	UFloatingPawnMovement* Move = P->FindComponentByClass<UFloatingPawnMovement>();
 	if (!Move)
+	{
+		return;
+	}
+
+	if (!bScaleSpeedByDE)
 	{
 		return;
 	}
@@ -109,6 +113,45 @@ void AFractalPlayerController::Tick(float DeltaTime)
 	Move->MaxSpeed = MaxAllowedSpeed;
 	Move->Acceleration = ScaledAccel;
 	Move->Deceleration = ScaledDecel;
+	
+	// Apply accumulated movement input directly to velocity
+	if (!AccumulatedMovementInput.IsNearlyZero())
+	{
+		const FVector NormalizedInput = AccumulatedMovementInput.GetClampedToMaxSize(1.0f);
+		const FVector DesiredAcceleration = NormalizedInput * ScaledAccel;
+		Move->Velocity += DesiredAcceleration * DeltaTime;
+		
+		// Apply directional braking: reduce velocity components that oppose the input direction
+		if (!Move->Velocity.IsNearlyZero())
+		{
+			const float ScaledBrake = FMath::Max(SpeedConstraints::BrakePerSpeed * MaxAllowedSpeed, SpeedConstraints::MinBrake);
+			
+			// Project velocity onto input direction to find aligned and opposed components
+			const FVector VelocityNorm = Move->Velocity.GetSafeNormal();
+			const float Alignment = FVector::DotProduct(VelocityNorm, NormalizedInput);
+			
+			// If alignment is negative, we're moving opposite to input (apply more brake)
+			// If alignment is positive but < 1, we're moving at an angle (apply proportional brake)
+			// Alignment ranges from -1 (opposite) to +1 (same direction)
+			if (Alignment < 0.999f) // Only brake if not already perfectly aligned
+			{
+				// Opposition factor: 0 when aligned, 1 when perpendicular, 2 when opposite
+				const float OppositionFactor = 1.0f - Alignment;
+				
+				// Apply braking force proportional to opposition and current speed
+				const FVector BrakingForce = -VelocityNorm * ScaledBrake * OppositionFactor * DeltaTime;
+				Move->Velocity += BrakingForce;
+				
+				// Prevent braking from reversing direction (only slow down, don't flip)
+				if (FVector::DotProduct(Move->Velocity, VelocityNorm) < 0.0f)
+				{
+					Move->Velocity = FVector::ZeroVector;
+				}
+			}
+		}
+		
+		AccumulatedMovementInput = FVector::ZeroVector;
+	}
 	
 	// Clamp velocity to max allowed speed (FloatingPawnMovement doesn't do this automatically)
 	const float CurrentSpeed = Move->Velocity.Size();
@@ -220,21 +263,21 @@ void AFractalPlayerController::MoveForward(float Value)
 {
 	APawn* P = GetPawn();
 	if (!P) return;
-	P->AddMovementInput(P->GetActorForwardVector(), Value);
+	AccumulatedMovementInput += P->GetActorForwardVector() * Value;
 }
 
 void AFractalPlayerController::MoveRight(float Value)
 {
 	APawn* P = GetPawn();
 	if (!P) return;
-	P->AddMovementInput(P->GetActorRightVector(), Value);
+	AccumulatedMovementInput += P->GetActorRightVector() * Value;
 }
 
 void AFractalPlayerController::MoveUp(float Value)
 {
 	APawn* P = GetPawn();
 	if (!P) return;
-	P->AddMovementInput(P->GetActorUpVector(), Value);
+	AccumulatedMovementInput += P->GetActorUpVector() * Value;
 }
 
 void AFractalPlayerController::Pan(float Value)

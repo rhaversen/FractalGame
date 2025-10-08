@@ -86,6 +86,9 @@ private:
 	// Current roll velocity (degrees per second)
 	float CurrentRollVelocity = 0.0f;
 
+	// Accumulated movement input for this frame (processed in Tick)
+	FVector AccumulatedMovementInput = FVector::ZeroVector;
+
 	// Distance Estimator driven speed control
 	UPROPERTY(EditAnywhere, Category = "Fractal DE")
 	bool bScaleSpeedByDE = true;

@@ -9,21 +9,32 @@
 // Persistent initial state for reset
 namespace {
 	static FTransform GInitialPawnTransform;
-	static double GInitialTTS = 0.0;
+	static float GInitialSpeedPercent = 50.0f;
 	static bool GHaveInitial = false;
 
 	struct SpeedConstraints
 	{
 		static constexpr float AccelPerSpeed = 3.0f;
 		static constexpr float MinAccel = 3.0f;
-		static constexpr float MinSpeed = 0.1;
 	};
 
-	float ComputeTargetSpeed(double DistanceToCM, double TimeToSurfaceSeconds, float MaxSpeed)
+	// Compute target speed from percentage and distance
+	// Uses exponential mapping to utilize full percentage range
+	float ComputeSpeedFromPercent(float Percent, double DistanceToCM, float BaseMultiplier, float MinSpd, float MaxSpd)
 	{
-		double RawSpeed = DistanceToCM / FMath::Max(TimeToSurfaceSeconds, (double)KINDA_SMALL_NUMBER);
-		RawSpeed = FMath::Clamp(RawSpeed, (double)SpeedConstraints::MinSpeed, (double)MaxSpeed);
-		return static_cast<float>(RawSpeed);
+		// Clamp percentage to valid range
+		Percent = FMath::Clamp(Percent, 0.0f, 100.0f);
+		
+		// Exponential scale factor: 0% -> 0.01x, 50% -> 1x, 100% -> 100x
+		// This gives fine control at low speeds and allows very fast movement at high percentages
+		const float NormalizedPercent = Percent / 100.0f;
+		const float ExpFactor = FMath::Pow(10.0f, (NormalizedPercent - 0.5f) * 4.0f); // Range: 0.01 to 100
+		
+		// Base speed from distance and multiplier
+		const float DistanceBasedSpeed = static_cast<float>(DistanceToCM) * BaseMultiplier * ExpFactor;
+		
+		// Clamp to min/max range
+		return FMath::Clamp(DistanceBasedSpeed, MinSpd, MaxSpd);
 	}
 }
 
@@ -41,7 +52,7 @@ void AFractalPlayerController::Tick(float DeltaTime)
 		if (APawn* PInit = GetPawn())
 		{
 			GInitialPawnTransform = PInit->GetActorTransform();
-			GInitialTTS = TimeToSurfaceSeconds;
+			GInitialSpeedPercent = SpeedPercentage;
 			GHaveInitial = true;
 		}
 	}
@@ -71,19 +82,15 @@ void AFractalPlayerController::Tick(float DeltaTime)
 		return;
 	}
 
-	Move->MaxSpeed = ComputeTargetSpeed(Dist, TimeToSurfaceSeconds, MaxSpeed);
+	Move->MaxSpeed = ComputeSpeedFromPercent(SpeedPercentage, Dist, BaseSpeedMultiplier, MinSpeed, MaxSpeed);
 	Move->Acceleration = FMath::Max(Move->MaxSpeed * SpeedConstraints::AccelPerSpeed, SpeedConstraints::MinAccel);
 
-	const float SpeedRatio = Move->MaxSpeed / FMath::Max(static_cast<float>(MaxSpeed), KINDA_SMALL_NUMBER);
-	const float DecelBoost = 1.f + (1.f - SpeedRatio) * 5.f;
-	Move->Deceleration = Move->Acceleration * DecelBoost;
+	Move->Deceleration = 1000000.0f;
 
 	// Update HUD with debug info
 	if (AFractalHUD* HUD = Cast<AFractalHUD>(GetHUD()))
 	{
 		const FVector3d LocalPos = (FVector3d(Loc) - FVector3d(FractalCenter)) / FMath::Max(FractalScale, KINDA_SMALL_NUMBER);
-		const float ClampedTTS = FMath::Clamp(TimeToSurfaceSeconds, 0.1, 3.0);
-		const float SpeedPercent = FMath::Clamp(100.0f * (1.0f - (ClampedTTS - 0.1f) / 2.9f), 0.0f, 100.0f);
 		const float SafeDist = FMath::Max(static_cast<float>(Dist), 0.001f);
 		const float LogDist = FMath::LogX(10.0f, SafeDist);
 		const float LogMin = FMath::LogX(10.0f, 0.001f);
@@ -91,7 +98,7 @@ void AFractalPlayerController::Tick(float DeltaTime)
 		const float ZoomLevel = FMath::Clamp((1.0f - ((LogDist - LogMin) / (LogMax - LogMin))) * 100.0f, 0.0f, 100.0f);
 
 		HUD->LocalPos = FVector(LocalPos);
-		HUD->SpeedPercent = SpeedPercent;
+		HUD->SpeedPercent = SpeedPercentage;
 		HUD->ZoomLevel = ZoomLevel;
 		HUD->bShowDebug = bShowFractalDebug;
 		HUD->bShowHelp = bShowHelp;
@@ -117,11 +124,12 @@ void AFractalPlayerController::SetupInputComponent()
 		Wheel.AxisDelegate.GetDelegateForManualSet().BindLambda([this](float Value)
 		{
 			if (FMath::IsNearlyZero(Value)) return;
-			TimeToSurfaceSeconds = FMath::Clamp(TimeToSurfaceSeconds - Value * 0.25, 0.1, 10.0);
+			// Adjust speed percentage with mouse wheel (5% per wheel notch)
+			SpeedPercentage = FMath::Clamp(SpeedPercentage + Value * 5.0f, 0.0f, 100.0f);
 		});
 	}
 
-	// R key resets pawn transform and TimeToSurfaceSeconds
+	// R key resets pawn transform and speed percentage
 	{
 		FInputAxisBinding& Reset = InputComponent->BindAxis(TEXT("ResetCamera"));
 		Reset.AxisDelegate.GetDelegateForManualSet().BindLambda([this](float Value)
@@ -132,7 +140,7 @@ void AFractalPlayerController::SetupInputComponent()
 				if (APawn* PInit = GetPawn())
 				{
 					GInitialPawnTransform = PInit->GetActorTransform();
-					GInitialTTS = TimeToSurfaceSeconds;
+					GInitialSpeedPercent = SpeedPercentage;
 					GHaveInitial = true;
 				}
 			}
@@ -144,7 +152,7 @@ void AFractalPlayerController::SetupInputComponent()
 					Move->Velocity = FVector::ZeroVector;
 				}
 			}
-			TimeToSurfaceSeconds = GInitialTTS;
+			SpeedPercentage = GInitialSpeedPercent;
 		});
 	}
 

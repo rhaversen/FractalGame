@@ -36,13 +36,22 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Fractal DE")
 	bool bScaleSpeedByDE = true;
 
-	// Target time to reach the fractal surface (approximately)
-	UPROPERTY(EditAnywhere, Category = "Fractal DE")
-	double TimeToSurfaceSeconds = 1.0;
+	// Speed control as percentage (0-100%). User controls this directly.
+	UPROPERTY(EditAnywhere, Category = "Fractal DE", meta = (ClampMin = "0.0", ClampMax = "100.0"))
+	float SpeedPercentage = 50.0f;
 
-	// Max cap for speed when scaling by DE (cm/s)
+	// Base speed multiplier (cm/s per unit distance at 100% speed)
+	// This defines how fast you move relative to distance to surface
 	UPROPERTY(EditAnywhere, Category = "Fractal DE")
-	float MaxSpeed = 3000.0f;
+	float BaseSpeedMultiplier = 2.0f;
+
+	// Minimum speed regardless of distance (cm/s) - prevents getting stuck at tiny scales
+	UPROPERTY(EditAnywhere, Category = "Fractal DE")
+	float MinSpeed = 0.1f;
+
+	// Maximum speed cap (cm/s)
+	UPROPERTY(EditAnywhere, Category = "Fractal DE")
+	float MaxSpeed = 1000.0f;
 
 	// Fractal placement and parameters
 	UPROPERTY(EditAnywhere, Category = "Fractal DE|Transform")

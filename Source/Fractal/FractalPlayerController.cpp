@@ -14,7 +14,7 @@ namespace {
 	struct SpeedConstraints
 	{
 		static constexpr float AccelPerSpeed = 3.0f;
-		static constexpr float MinAccel = 2.0f;
+		static constexpr float MinAccel = 3.0f;
 		static constexpr float MinSpeed = 0.1;
 	};
 
@@ -194,6 +194,21 @@ void AFractalPlayerController::SetupInputComponent()
 			bShowHelp = !FMath::IsNearlyZero(Value);
 		});
 	}
+
+    // Escape: quit game / close process (now via Action Mapping 'Quit' in DefaultInput.ini)
+    InputComponent->BindAction(TEXT("Quit"), IE_Pressed, this, &AFractalPlayerController::HandleQuit);
+}
+
+void AFractalPlayerController::HandleQuit()
+{
+	// Attempt clean quit; works for PIE & packaged. If not available at link-time, fallback to console command.
+#if WITH_ENGINE
+	if (UWorld* World = GetWorld())
+	{
+		ConsoleCommand(TEXT("quit"));
+		return;
+	}
+#endif
 }
 
 

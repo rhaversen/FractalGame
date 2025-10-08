@@ -70,4 +70,7 @@ private:
 
 	// Help display toggle
 	bool bShowHelp = false;
+
+private:
+	void HandleQuit();
 };

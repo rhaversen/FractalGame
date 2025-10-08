@@ -171,6 +171,11 @@ struct FractalFunctions
 			// Missed due to max steps: show fractal color (TODO: Find a better way to handle this case, use depth?)
 			return fractalColor;
 		}
+		else
+		{
+			// Should not happen, fallback to scene color
+			return sceneColor;
+		}
 	}
 };
 

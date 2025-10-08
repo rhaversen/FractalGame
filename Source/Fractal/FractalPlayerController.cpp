@@ -15,7 +15,7 @@ namespace {
 	{
 		static constexpr float AccelPerSpeed = 3.0f;
 		static constexpr float MinAccel = 2.0f;
-		static constexpr float MinSpeed = 0.05;
+		static constexpr float MinSpeed = 0.1;
 	};
 
 	float ComputeTargetSpeed(double DistanceToCM, double TimeToSurfaceSeconds, float MaxSpeed)

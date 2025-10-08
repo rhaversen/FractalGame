@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "FractalHUD.h"
+#include "FractalPlayerController.h"
 #include "Engine/Canvas.h"
 #include "Engine/Font.h"
 #include "Engine/Texture2D.h"
@@ -80,6 +81,17 @@ void AFractalHUD::DrawHUD()
 	{
 		DrawLine(FString::Printf(TEXT("Zoom  %s%.0f%%"), *CreateBar(ZoomLevel), ZoomLevel), FLinearColor(1.0f, 0.59f, 0.2f));
 		DrawLine(FString::Printf(TEXT("Speed %s%.0f%%"), *CreateBar(SpeedPercent), SpeedPercent), FLinearColor(0.0f, 1.0f, 0.59f));
+		
+		const float VelMagnitude = CurrentVelocity.Size();
+		const float VelScale = 0.01f;
+		DrawLine(FString::Printf(TEXT("Vel   %.3f m/s"), VelMagnitude * VelScale), FLinearColor(0.2f, 1.0f, 1.0f));
+		
+		const float MaxSpeedScale = 0.01f;
+		DrawLine(FString::Printf(TEXT("Max   %.3f m/s"), MaxSpeed * MaxSpeedScale), FLinearColor(1.0f, 0.78f, 0.2f));
+		
+		const float DistScale = 0.01f;
+		DrawLine(FString::Printf(TEXT("Dist  %.4f m"), Distance * DistScale), FLinearColor(1.0f, 1.0f, 0.2f));
+		
 		DrawLine(FString::Printf(TEXT("Pos   X:%+.4f Y:%+.4f Z:%+.4f"), LocalPos.X, LocalPos.Y, LocalPos.Z), FLinearColor(0.78f, 0.59f, 0.78f));
 	}
 

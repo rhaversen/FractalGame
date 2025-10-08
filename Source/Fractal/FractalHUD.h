@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/HUD.h"
+#include "FractalPlayerController.h"
 #include "FractalHUD.generated.h"
 
 UCLASS()
@@ -17,7 +18,10 @@ public:
 	// Debug display data (updated by PlayerController)
 	float ZoomLevel = 0.0f;
 	float SpeedPercent = 0.0f;
+	float Distance = 0.0f;
+	float MaxSpeed = 0.0f;
 	FVector LocalPos = FVector::ZeroVector;
+	FVector CurrentVelocity = FVector::ZeroVector;
 	bool bShowDebug = true;
 	bool bShowHelp = false;
 

@@ -14,29 +14,47 @@ namespace {
 
 	struct SpeedConstraints
 	{
-		static constexpr float AccelPerSpeed = 3.0f;  // Much lower base acceleration
-		static constexpr float MinAccel = 3.0f;       // Lower minimum acceleration
-		static constexpr float DecelPerSpeed = 8.0f;  // Strong braking when overspeeding
-		static constexpr float MinDecel = 50.0f;      // Low base deceleration for coasting
+		static constexpr float AccelPerSpeed = 0.5f;   // Acceleration scales with max speed
+		static constexpr float MinAccel = 2.0f;        // Any lower and player can get stuck
+		static constexpr float DecelPerSpeed = 0.1f;   // Slight deceleration scales with max speed
+		static constexpr float MinDecel = 1.0f;        // Slight constant deceleration to help stop at small speeds
 	};
 
-	// Compute target speed from percentage and distance
-	// Uses exponential mapping to utilize full percentage range
-	float ComputeSpeedFromPercent(float Percent, double DistanceToCM, float BaseMultiplier, float MinSpd, float MaxSpd)
+	// Compute target speed from percentage and distance using logarithmic time-to-surface approach
+	// 0% = 0 velocity (stationary)
+	// 100% = 0.01 seconds to reach surface (very fast)
+	// Uses fourth root for finer control at higher speeds
+	float ComputeSpeedFromPercent(float Percent, double DistanceToCM, float TimeMultiplier, float MinSpd, float MaxSpd)
 	{
 		// Clamp percentage to valid range
 		Percent = FMath::Clamp(Percent, 0.0f, 100.0f);
 		
-		// Exponential scale factor: 0% -> 0.01x, 50% -> 1x, 100% -> 100x
-		// This gives fine control at low speeds and allows very fast movement at high percentages
+		// At 0%, return 0 velocity
+		if (Percent <= 0.0f)
+		{
+			return 0.0f;
+		}
+		
+		const float MinTimeToSurface = 0.01f;      // At 100%
+		const float MaxTimeToSurface = 1000.0f;    // At ~0% (asymptotic)
+		
 		const float NormalizedPercent = Percent / 100.0f;
-		const float ExpFactor = FMath::Pow(10.0f, (NormalizedPercent - 0.5f) * 4.0f); // Range: 0.01 to 100
+		const float LogMin = FMath::Loge(MinTimeToSurface);
+		const float LogMax = FMath::Loge(MaxTimeToSurface);
 		
-		// Base speed from distance and multiplier
-		const float DistanceBasedSpeed = static_cast<float>(DistanceToCM) * BaseMultiplier * ExpFactor;
+		// Use fourth root less fidelity at slow speeds and give fine control at high speeds
+		const float ExpandedPercent = FMath::Pow(NormalizedPercent, 0.25f);
+		const float LogTime = FMath::Lerp(LogMax, LogMin, ExpandedPercent);
+		float TimeToSurface = FMath::Exp(LogTime);
 		
-		// Clamp to min/max range
-		return FMath::Clamp(DistanceBasedSpeed, MinSpd, MaxSpd);
+		// Apply multiplier: lower multiplier = longer time = slower speed
+		TimeToSurface /= FMath::Max(TimeMultiplier, 0.1f);
+		
+		// Calculate speed: Distance / Time (cm/s)
+		const float CalculatedSpeed = static_cast<float>(DistanceToCM) / FMath::Max(TimeToSurface, 0.01f);
+		
+		// Clamp to min/max range to prevent extreme values
+		return FMath::Clamp(CalculatedSpeed, MinSpd, MaxSpd);
 	}
 }
 
@@ -54,7 +72,6 @@ void AFractalPlayerController::Tick(float DeltaTime)
 		if (APawn* PInit = GetPawn())
 		{
 			GInitialPawnTransform = PInit->GetActorTransform();
-			GInitialSpeedPercent = SpeedPercentage;
 			GHaveInitial = true;
 		}
 	}
@@ -77,35 +94,35 @@ void AFractalPlayerController::Tick(float DeltaTime)
 	}
 
 	const FVector Loc = (PlayerCameraManager) ? PlayerCameraManager->GetCameraLocation() : P->GetActorLocation();
-	double Dist = DistanceToFractal(Loc);
-
-	if (!FMath::IsFinite(Dist) || Dist < 0.0)
-	{
-		return;
-	}
-
-	Move->MaxSpeed = ComputeSpeedFromPercent(SpeedPercentage, Dist, BaseSpeedMultiplier, MinSpeed, MaxSpeed);
-	Move->Acceleration = FMath::Max(Move->MaxSpeed * SpeedConstraints::AccelPerSpeed, SpeedConstraints::MinAccel);
-
-	// Apply strong deceleration only when current speed exceeds target speed (braking as we get closer)
-	// Otherwise use low deceleration to allow smooth coasting
+	
+	// Get distance to fractal surface from current position
+	const double Distance = DistanceToFractal(Loc);
+	const float DistanceFloat = static_cast<float>(Distance);
+	
+	// Calculate max allowed speed based on distance
+	const float MaxAllowedSpeed = ComputeSpeedFromPercent(SpeedPercentage, DistanceFloat, 1.0f, MinSpeed, MaxSpeed);
+	
+	// Set movement parameters with speed-scaled acceleration/deceleration for smooth direction changes
+	const float ScaledAccel = FMath::Max(SpeedConstraints::AccelPerSpeed * MaxAllowedSpeed, SpeedConstraints::MinAccel);
+	const float ScaledDecel = FMath::Max(SpeedConstraints::DecelPerSpeed * MaxAllowedSpeed, SpeedConstraints::MinDecel);
+	
+	Move->MaxSpeed = MaxAllowedSpeed;
+	Move->Acceleration = ScaledAccel;
+	Move->Deceleration = ScaledDecel;
+	
+	// Clamp velocity to max allowed speed (FloatingPawnMovement doesn't do this automatically)
 	const float CurrentSpeed = Move->Velocity.Size();
-	if (CurrentSpeed > Move->MaxSpeed)
+	if (CurrentSpeed > MaxAllowedSpeed)
 	{
-		// Braking: apply strong deceleration to bring speed down to target
-		Move->Deceleration = FMath::Max(Move->MaxSpeed * SpeedConstraints::DecelPerSpeed, SpeedConstraints::MinDecel);
-	}
-	else
-	{
-		// Coasting: use low deceleration to maintain speed smoothly
-		Move->Deceleration = SpeedConstraints::MinDecel;
+		// Scale down to max allowed, preserving direction
+		Move->Velocity = Move->Velocity.GetSafeNormal() * MaxAllowedSpeed;
 	}
 
 	// Update HUD with debug info
 	if (AFractalHUD* HUD = Cast<AFractalHUD>(GetHUD()))
 	{
 		const FVector3d LocalPos = (FVector3d(Loc) - FVector3d(FractalCenter)) / FMath::Max(FractalScale, KINDA_SMALL_NUMBER);
-		const float SafeDist = FMath::Max(static_cast<float>(Dist), 0.001f);
+		const float SafeDist = FMath::Max(DistanceFloat, 0.001f);
 		const float LogDist = FMath::LogX(10.0f, SafeDist);
 		const float LogMin = FMath::LogX(10.0f, 0.001f);
 		const float LogMax = FMath::LogX(10.0f, 1000.0f);
@@ -114,6 +131,9 @@ void AFractalPlayerController::Tick(float DeltaTime)
 		HUD->LocalPos = FVector(LocalPos);
 		HUD->SpeedPercent = SpeedPercentage;
 		HUD->ZoomLevel = ZoomLevel;
+		HUD->Distance = DistanceFloat;
+		HUD->MaxSpeed = MaxAllowedSpeed;
+		HUD->CurrentVelocity = Move->Velocity;
 		HUD->bShowDebug = bShowFractalDebug;
 		HUD->bShowHelp = bShowHelp;
 	}
@@ -154,7 +174,7 @@ void AFractalPlayerController::SetupInputComponent()
 				if (APawn* PInit = GetPawn())
 				{
 					GInitialPawnTransform = PInit->GetActorTransform();
-					GInitialSpeedPercent = SpeedPercentage;
+					// Don't override GInitialSpeedPercent - use the static initializer value (75.0f)
 					GHaveInitial = true;
 				}
 			}
@@ -198,7 +218,6 @@ void AFractalPlayerController::HandleQuit()
 
 void AFractalPlayerController::MoveForward(float Value)
 {
-	if (Value == 0.0f) return;
 	APawn* P = GetPawn();
 	if (!P) return;
 	P->AddMovementInput(P->GetActorForwardVector(), Value);
@@ -206,7 +225,6 @@ void AFractalPlayerController::MoveForward(float Value)
 
 void AFractalPlayerController::MoveRight(float Value)
 {
-	if (Value == 0.0f) return;
 	APawn* P = GetPawn();
 	if (!P) return;
 	P->AddMovementInput(P->GetActorRightVector(), Value);
@@ -214,10 +232,8 @@ void AFractalPlayerController::MoveRight(float Value)
 
 void AFractalPlayerController::MoveUp(float Value)
 {
-	if (Value == 0.0f) return;
 	APawn* P = GetPawn();
 	if (!P) return;
-	// Move along the pawn's local up so roll affects vertical movement
 	P->AddMovementInput(P->GetActorUpVector(), Value);
 }
 
@@ -250,16 +266,50 @@ void AFractalPlayerController::Tilt(float Value)
 
 void AFractalPlayerController::Roll(float Value)
 {
-	if (Value == 0.0f) return;
 	APawn* P = GetPawn();
 	if (!P) return;
-	const float Delta = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.016f;
-	const float AngleRad = FMath::DegreesToRadians(-Value * RollSpeedDegPerSec * Delta);
-	// Rotate around the pawn's local forward axis so roll behaves as expected
-	const FVector Axis = P->GetActorForwardVector();
-	const FQuat DeltaQ = FQuat(Axis, AngleRad);
-	const FQuat NewQ = DeltaQ * P->GetActorQuat();
-	P->SetActorRotation(NewQ);
+	
+	const float DeltaTime = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.016f;
+	
+	// Target roll velocity based on input
+	const float TargetRollVelocity = -Value * RollSpeedDegPerSec;
+	
+	// Apply acceleration or deceleration
+	if (FMath::IsNearlyZero(Value))
+	{
+		// No input - decelerate to zero
+		if (CurrentRollVelocity > 0.0f)
+		{
+			CurrentRollVelocity = FMath::Max(0.0f, CurrentRollVelocity - RollDeceleration * DeltaTime);
+		}
+		else if (CurrentRollVelocity < 0.0f)
+		{
+			CurrentRollVelocity = FMath::Min(0.0f, CurrentRollVelocity + RollDeceleration * DeltaTime);
+		}
+	}
+	else
+	{
+		// Accelerate toward target velocity
+		if (CurrentRollVelocity < TargetRollVelocity)
+		{
+			CurrentRollVelocity = FMath::Min(TargetRollVelocity, CurrentRollVelocity + RollAcceleration * DeltaTime);
+		}
+		else if (CurrentRollVelocity > TargetRollVelocity)
+		{
+			CurrentRollVelocity = FMath::Max(TargetRollVelocity, CurrentRollVelocity - RollAcceleration * DeltaTime);
+		}
+	}
+	
+	// Apply roll rotation if there's any velocity
+	if (!FMath::IsNearlyZero(CurrentRollVelocity))
+	{
+		const float AngleRad = FMath::DegreesToRadians(CurrentRollVelocity * DeltaTime);
+		// Rotate around the pawn's local forward axis so roll behaves as expected
+		const FVector Axis = P->GetActorForwardVector();
+		const FQuat DeltaQ = FQuat(Axis, AngleRad);
+		const FQuat NewQ = DeltaQ * P->GetActorQuat();
+		P->SetActorRotation(NewQ);
+	}
 }
 
 // Mandelbulb distance estimator (DE)
@@ -279,22 +329,22 @@ double AFractalPlayerController::DistanceToFractal(const FVector& WorldPos) cons
 
 	for (int32 i = 0; i < FractalIterations; ++i)
 	{
-	r = Z.Size();
+		r = Z.Size();
 		if (r > Bailout)
 		{
 			break;
 		}
 
 		// Convert to polar coordinates
-	const double cosArg = FMath::Clamp(Z.Z / FMath::Max(r, 1e-12), -1.0, 1.0);
-	double theta = FMath::Acos(cosArg);
+		const double cosArg = FMath::Clamp(Z.Z / FMath::Max(r, 1e-12), -1.0, 1.0);
+		double theta = FMath::Acos(cosArg);
 		double phi = FMath::Atan2(Z.Y, Z.X);
+		
+		// Update derivative BEFORE scaling (matches shader order)
+		dr = FMath::Pow(r, FractalPower - 1.0) * FractalPower * dr + 1.0;
 
 		// Scale and rotate the point
 		const double zr = FMath::Pow(r, FractalPower);
-		// Update derivative
-		dr = zr / FMath::Max(r, 1e-12) * FractalPower * dr + 1.0;
-
 		theta *= FractalPower;
 		phi   *= FractalPower;
 
@@ -319,4 +369,132 @@ double AFractalPlayerController::DistanceToFractal(const FVector& WorldPos) cons
 		DistWorld = 0.0;
 	}
 	return DistWorld;
+}
+
+// Raymarch along a direction to find distance to fractal surface
+float AFractalPlayerController::RaymarchDirection(const FVector& StartPos, const FVector& Direction) const
+{
+	if (!Direction.IsNormalized())
+	{
+		return 0.0f;
+	}
+
+	FVector CurrentPos = StartPos;
+	float TotalDistance = 0.0f;
+
+	for (int32 Step = 0; Step < RaymarchMaxSteps; ++Step)
+	{
+		const double DE = DistanceToFractal(CurrentPos);
+		
+		if (!FMath::IsFinite(DE) || DE < 0.0)
+		{
+			return TotalDistance;
+		}
+
+		// Hit surface
+		if (DE < RaymarchEpsilon)
+		{
+			return TotalDistance;
+		}
+
+		// Reached max distance
+		if (TotalDistance >= RaymarchMaxDistance)
+		{
+			return RaymarchMaxDistance;
+		}
+
+		// Step forward by the distance estimate
+		const float StepSize = static_cast<float>(DE);
+		CurrentPos += Direction * StepSize;
+		TotalDistance += StepSize;
+	}
+
+	return TotalDistance;
+}
+
+// Compute directional distances and speed limits based on 6-ray raymarching
+FDirectionalSpeedData AFractalPlayerController::ComputeDirectionalSpeeds(const FVector& Position, const FRotator& Rotation) const
+{
+	FDirectionalSpeedData Data;
+
+	// Get local axis directions in world space
+	const FVector Forward = Rotation.RotateVector(FVector::ForwardVector);
+	const FVector Right = Rotation.RotateVector(FVector::RightVector);
+	const FVector Up = Rotation.RotateVector(FVector::UpVector);
+
+	// Raymarch in all 6 cardinal directions
+	Data.DistanceForward = RaymarchDirection(Position, Forward);
+	Data.DistanceBack = RaymarchDirection(Position, -Forward);
+	Data.DistanceRight = RaymarchDirection(Position, Right);
+	Data.DistanceLeft = RaymarchDirection(Position, -Right);
+	Data.DistanceUp = RaymarchDirection(Position, Up);
+	Data.DistanceDown = RaymarchDirection(Position, -Up);
+
+	// Compute speed for each direction
+	// "Away" directions get shorter time (faster speed) and higher minimum speed
+	// "Toward" directions get longer time (slower speed) and regular minimum speed
+	auto ComputeSpeed = [this](float Distance, bool bIsAway) -> float
+	{
+		const float Multiplier = bIsAway ? AwaySpeedMultiplier : TowardSpeedMultiplier;
+		// For "away" directions, use a much higher minimum speed to allow escape from tight spaces
+		const float EffectiveMinSpeed = bIsAway ? (MinSpeed * 100.0f) : MinSpeed;
+		return ComputeSpeedFromPercent(SpeedPercentage, Distance, Multiplier, EffectiveMinSpeed, MaxSpeed);
+	};
+
+	// For now, treat forward/right/up as "toward" and their opposites as "away"
+	// This is a simplification - in reality it depends on current velocity direction
+	Data.MaxSpeedForward = ComputeSpeed(Data.DistanceForward, false);
+	Data.MaxSpeedBack = ComputeSpeed(Data.DistanceBack, true);
+	Data.MaxSpeedRight = ComputeSpeed(Data.DistanceRight, false);
+	Data.MaxSpeedLeft = ComputeSpeed(Data.DistanceLeft, true);
+	Data.MaxSpeedUp = ComputeSpeed(Data.DistanceUp, false);
+	Data.MaxSpeedDown = ComputeSpeed(Data.DistanceDown, true);
+
+	return Data;
+}
+
+// Apply directional speed constraints to desired movement
+FVector AFractalPlayerController::ApplyDirectionalConstraints(const FVector& DesiredMovement, const FDirectionalSpeedData& SpeedData) const
+{
+	FVector Result = DesiredMovement;
+
+	// Decompose movement into local axes
+	APawn* P = GetPawn();
+	if (!P)
+	{
+		return Result;
+	}
+
+	const FVector Forward = P->GetActorForwardVector();
+	const FVector Right = P->GetActorRightVector();
+	const FVector Up = P->GetActorUpVector();
+
+	// Project desired movement onto each axis
+	const float ForwardComponent = FVector::DotProduct(DesiredMovement, Forward);
+	const float RightComponent = FVector::DotProduct(DesiredMovement, Right);
+	const float UpComponent = FVector::DotProduct(DesiredMovement, Up);
+
+	// Constrain each component based on direction
+	auto ConstrainComponent = [](float Component, float MaxPositive, float MaxNegative) -> float
+	{
+		if (Component > 0.0f)
+		{
+			return FMath::Min(Component, MaxPositive);
+		}
+		else if (Component < 0.0f)
+		{
+			return FMath::Max(Component, -MaxNegative);
+		}
+		return 0.0f;
+	};
+
+	const float DeltaTime = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.016f;
+	const float ConstrainedForward = ConstrainComponent(ForwardComponent, SpeedData.MaxSpeedForward * DeltaTime, SpeedData.MaxSpeedBack * DeltaTime);
+	const float ConstrainedRight = ConstrainComponent(RightComponent, SpeedData.MaxSpeedRight * DeltaTime, SpeedData.MaxSpeedLeft * DeltaTime);
+	const float ConstrainedUp = ConstrainComponent(UpComponent, SpeedData.MaxSpeedUp * DeltaTime, SpeedData.MaxSpeedDown * DeltaTime);
+
+	// Reconstruct constrained movement vector
+	Result = Forward * ConstrainedForward + Right * ConstrainedRight + Up * ConstrainedUp;
+
+	return Result;
 }

@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "FractalPlayerController.h"
+#include "FractalHUD.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/FloatingPawnMovement.h"
 #include "Engine/Engine.h"
@@ -77,11 +78,9 @@ void AFractalPlayerController::Tick(float DeltaTime)
 	const float DecelBoost = 1.f + (1.f - SpeedRatio) * 5.f;
 	Move->Deceleration = Move->Acceleration * DecelBoost;
 
-	// Unified debug + help rendering (engine draws newest lines at the top, so we push in reverse)
-	if (GEngine)
+	// Update HUD with debug info
+	if (AFractalHUD* HUD = Cast<AFractalHUD>(GetHUD()))
 	{
-		struct FLine { FString Text; FColor Color; };
-		TArray<FLine> Lines; Lines.Reserve(64);
 		const FVector3d LocalPos = (FVector3d(Loc) - FVector3d(FractalCenter)) / FMath::Max(FractalScale, KINDA_SMALL_NUMBER);
 		const float ClampedTTS = FMath::Clamp(TimeToSurfaceSeconds, 0.1, 3.0);
 		const float SpeedPercent = FMath::Clamp(100.0f * (1.0f - (ClampedTTS - 0.1f) / 2.9f), 0.0f, 100.0f);
@@ -90,49 +89,12 @@ void AFractalPlayerController::Tick(float DeltaTime)
 		const float LogMin = FMath::LogX(10.0f, 0.001f);
 		const float LogMax = FMath::LogX(10.0f, 1000.0f);
 		const float ZoomLevel = FMath::Clamp((1.0f - ((LogDist - LogMin) / (LogMax - LogMin))) * 100.0f, 0.0f, 100.0f);
-		const FColor BarColor(0,255,150);
-		const FColor PosColor(200,150,200);
-		const FColor ZoomColor(255,150,50);
-			auto CreateBar = [](float Percent, int32 Width = 20) -> FString
-			{
-				int32 Filled = FMath::RoundToInt((Percent / 100.f) * Width);
-				Filled = FMath::Clamp(Filled, 0, Width);
-				FString S("");
-				for (int32 i=0;i<Filled;++i){ S += TEXT("#"); }
-				// No closing bracket or padding; caller will append percent directly after last hash/space
-				S += TEXT(" ");
-				return S;
-			};
-		if (bShowFractalDebug)
-		{
-			Lines.Add({FString::Printf(TEXT("Zoom  %s%.0f%%"), *CreateBar(ZoomLevel), ZoomLevel), ZoomColor});
-			Lines.Add({FString::Printf(TEXT("Speed %s%.0f%%"), *CreateBar(SpeedPercent), SpeedPercent), BarColor});
-			Lines.Add({FString::Printf(TEXT("Pos   X:%+.4f Y:%+.4f Z:%+.4f"), (float)LocalPos.X,(float)LocalPos.Y,(float)LocalPos.Z), PosColor});
-		}
-		// Help or hint appended below (so inserted earlier in array for bottom placement when reversed)
-		if (bShowHelp)
-		{
-			const FColor TitleColor(255,220,100);
-			const FColor KeyColor(150,255,200);
-			const FColor LabelColor(180,180,180);
-			Lines.Add({TEXT("") , LabelColor});
-			Lines.Add({TEXT("Controls"), TitleColor});
-			Lines.Add({TEXT("Move: W, A, S, D"), KeyColor});
-			Lines.Add({TEXT("Vertical: Space, Shift"), KeyColor});
-			Lines.Add({TEXT("Roll: Q, E"), KeyColor});
-			Lines.Add({TEXT("Speed: Mouse Wheel"), KeyColor});
-			Lines.Add({TEXT("Reset view: R"), KeyColor});
-		}
-		else
-		{
-			Lines.Add({TEXT("(Hold H for controls)"), FColor(140,140,140)});
-		}
-		// Emit in reverse so first logical line ends up at top on screen
-		int32 BaseKey = (int32)((PTRINT)this);
-		for (int32 i = Lines.Num()-1; i >=0; --i)
-		{
-			GEngine->AddOnScreenDebugMessage(BaseKey + i, 0.0f, Lines[i].Color, Lines[i].Text, true, FVector2D(1.2f,1.2f));
-		}
+
+		HUD->LocalPos = FVector(LocalPos);
+		HUD->SpeedPercent = SpeedPercent;
+		HUD->ZoomLevel = ZoomLevel;
+		HUD->bShowDebug = bShowFractalDebug;
+		HUD->bShowHelp = bShowHelp;
 	}
 }
 

@@ -14,8 +14,10 @@ namespace {
 
 	struct SpeedConstraints
 	{
-		static constexpr float AccelPerSpeed = 3.0f;
-		static constexpr float MinAccel = 3.0f;
+		static constexpr float AccelPerSpeed = 3.0f;  // Much lower base acceleration
+		static constexpr float MinAccel = 3.0f;       // Lower minimum acceleration
+		static constexpr float DecelPerSpeed = 8.0f;  // Strong braking when overspeeding
+		static constexpr float MinDecel = 50.0f;      // Low base deceleration for coasting
 	};
 
 	// Compute target speed from percentage and distance
@@ -85,7 +87,19 @@ void AFractalPlayerController::Tick(float DeltaTime)
 	Move->MaxSpeed = ComputeSpeedFromPercent(SpeedPercentage, Dist, BaseSpeedMultiplier, MinSpeed, MaxSpeed);
 	Move->Acceleration = FMath::Max(Move->MaxSpeed * SpeedConstraints::AccelPerSpeed, SpeedConstraints::MinAccel);
 
-	Move->Deceleration = 1000000.0f;
+	// Apply strong deceleration only when current speed exceeds target speed (braking as we get closer)
+	// Otherwise use low deceleration to allow smooth coasting
+	const float CurrentSpeed = Move->Velocity.Size();
+	if (CurrentSpeed > Move->MaxSpeed)
+	{
+		// Braking: apply strong deceleration to bring speed down to target
+		Move->Deceleration = FMath::Max(Move->MaxSpeed * SpeedConstraints::DecelPerSpeed, SpeedConstraints::MinDecel);
+	}
+	else
+	{
+		// Coasting: use low deceleration to maintain speed smoothly
+		Move->Deceleration = SpeedConstraints::MinDecel;
+	}
 
 	// Update HUD with debug info
 	if (AFractalHUD* HUD = Cast<AFractalHUD>(GetHUD()))

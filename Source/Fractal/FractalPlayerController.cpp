@@ -124,32 +124,26 @@ void AFractalPlayerController::Tick(float DeltaTime)
 		const FVector DesiredAcceleration = NormalizedInput * ScaledAccel;
 		Move->Velocity += DesiredAcceleration * DeltaTime;
 		
-		// Apply directional braking: reduce velocity components that oppose the input direction
+		// Apply directional braking: only brake the component of velocity opposing input direction
 		if (!Move->Velocity.IsNearlyZero())
 		{
 			const float ScaledBrake = FMath::Max(SpeedConstraints::BrakePerSpeed * MaxAllowedSpeed, SpeedConstraints::MinBrake);
 			
-			// Project velocity onto input direction to find aligned and opposed components
-			const FVector VelocityNorm = Move->Velocity.GetSafeNormal();
-			const float Alignment = FVector::DotProduct(VelocityNorm, NormalizedInput);
+			// Project velocity onto input direction
+			const float VelocityAlongInput = FVector::DotProduct(Move->Velocity, NormalizedInput);
 			
-			// If alignment is negative, we're moving opposite to input (apply more brake)
-			// If alignment is positive but < 1, we're moving at an angle (apply proportional brake)
-			// Alignment ranges from -1 (opposite) to +1 (same direction)
-			if (Alignment < 0.999f) // Only brake if not already perfectly aligned
+			// If we have velocity opposing the input (negative projection), brake that component
+			if (VelocityAlongInput < 0.0f)
 			{
-				// Opposition factor: 0 when aligned, 1 when perpendicular, 2 when opposite
-				const float OppositionFactor = 1.0f - Alignment;
+				// Calculate the opposing velocity component vector
+				const FVector OpposingComponent = NormalizedInput * VelocityAlongInput;
 				
-				// Apply braking force proportional to opposition and current speed
-				const FVector BrakingForce = -VelocityNorm * ScaledBrake * OppositionFactor * DeltaTime;
+				// Apply braking force only to the opposing component (in the direction of input)
+				// Magnitude is proportional to how much we're moving against the input
+				const float BrakingMagnitude = FMath::Min(ScaledBrake * DeltaTime, FMath::Abs(VelocityAlongInput));
+				const FVector BrakingForce = NormalizedInput * BrakingMagnitude;
+				
 				Move->Velocity += BrakingForce;
-				
-				// Prevent braking from reversing direction (only slow down, don't flip)
-				if (FVector::DotProduct(Move->Velocity, VelocityNorm) < 0.0f)
-				{
-					Move->Velocity = FVector::ZeroVector;
-				}
 			}
 		}
 		

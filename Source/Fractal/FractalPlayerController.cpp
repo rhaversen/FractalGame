@@ -122,7 +122,15 @@ void AFractalPlayerController::Tick(float DeltaTime)
 	{
 		const FVector NormalizedInput = AccumulatedMovementInput.GetClampedToMaxSize(1.0f);
 		const FVector DesiredAcceleration = NormalizedInput * ScaledAccel;
-		Move->Velocity += DesiredAcceleration * DeltaTime;
+		const FVector AccelerationDelta = DesiredAcceleration * DeltaTime;
+		
+		// Ensure the acceleration being applied has minimum magnitude to prevent floating point precision loss
+		const float AccelMagnitude = AccelerationDelta.Size();
+		const float MinAccelDelta = SpeedConstraints::MinAccel * DeltaTime;
+		const float ClampedMagnitude = FMath::Max(AccelMagnitude, MinAccelDelta);
+		const FVector FinalAcceleration = AccelerationDelta.GetSafeNormal() * ClampedMagnitude;
+		
+		Move->Velocity += FinalAcceleration;
 		
 		// Apply directional braking: only brake the component of velocity opposing input direction
 		if (!Move->Velocity.IsNearlyZero())

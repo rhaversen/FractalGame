@@ -154,9 +154,10 @@ void AFractalPlayerController::Tick(float DeltaTime)
 				Move->Velocity += BrakingForce;
 			}
 		}
-		
-		AccumulatedMovementInput = FVector::ZeroVector;
 	}
+	
+	// Always reset accumulated input every frame to prevent stale input from persisting
+	AccumulatedMovementInput = FVector::ZeroVector;
 	
 	// Clamp velocity to max allowed speed (FloatingPawnMovement doesn't do this automatically)
 	const float CurrentSpeed = Move->Velocity.Size();

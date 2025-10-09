@@ -15,16 +15,16 @@ namespace {
 	struct SpeedConstraints
 	{
 		// Acceleration: applied when input aligns with current velocity direction
-		static constexpr float AccelPerSpeed = 0.3f;   // Scales with max speed for consistent feel across zoom levels. Controls the general acceleration.
-		static constexpr float MinAccel = 1.5f;        // Minimum to prevent player getting stuck.
+		static constexpr float AccelPerSpeed = 0.2f;   // Scales with max speed for consistent feel across zoom levels. Controls the general acceleration.
+		static constexpr float MinAccel = 2.0f;        // Minimum to prevent player getting stuck.
 		
 		// Natural deceleration: applied when no input is given to gradually slow movement
-		static constexpr float DecelPerSpeed = 0.7f;   // Scales with max speed for gradual braking at any zoom level.
-		static constexpr float MinDecel = 0.1f;        // Minimum to ensure eventual stop at very low speeds.
+		static constexpr float DecelPerSpeed = 3.0f;   // Scales with speed for gradual braking at any zoom level.
+		static constexpr float MinDecel = 0.3f;        // Minimum to ensure eventual stop at very low speeds.
 
 		// Directional braking: applied when input opposes current velocity for responsive direction changes
-		static constexpr float BrakePerSpeed = 1.2f;   // Scales with max speed to enable sharp turns at any zoom level.
-		static constexpr float MinBrake = 0.1f;        // Minimum ensures direction changes work even when nearly stationary.
+		static constexpr float BrakePerSpeed = 4.0f;   // Scales with max speed to enable sharp turns at any zoom level.
+		static constexpr float MinBrake = 1.0f;        // Minimum ensures direction changes work even when nearly stationary.
 	};
 
 	// Compute target speed from percentage and distance using logarithmic time-to-surface approach
@@ -111,7 +111,6 @@ void AFractalPlayerController::Tick(float DeltaTime)
 	
 	// Set movement parameters with speed-scaled acceleration/deceleration for smooth direction changes
 	const float ScaledAccel = FMath::Max(SpeedConstraints::AccelPerSpeed * MaxAllowedSpeed, SpeedConstraints::MinAccel);
-	const float ScaledDecel = FMath::Max(SpeedConstraints::DecelPerSpeed * MaxAllowedSpeed, SpeedConstraints::MinDecel);
 	
 	Move->MaxSpeed = MaxAllowedSpeed;
 	Move->Acceleration = ScaledAccel;
@@ -139,7 +138,8 @@ void AFractalPlayerController::Tick(float DeltaTime)
 		// Apply directional braking: only brake the component of velocity opposing input direction
 		if (!Move->Velocity.IsNearlyZero())
 		{
-			const float ScaledBrake = FMath::Max(SpeedConstraints::BrakePerSpeed * MaxAllowedSpeed, SpeedConstraints::MinBrake);
+			const float CurrentSpeed = Move->Velocity.Size();
+			const float ScaledBrake = FMath::Max(SpeedConstraints::BrakePerSpeed * CurrentSpeed, SpeedConstraints::MinBrake);
 			
 			// Project velocity onto input direction
 			const float VelocityAlongInput = FVector::DotProduct(Move->Velocity, NormalizedInput);
@@ -161,7 +161,9 @@ void AFractalPlayerController::Tick(float DeltaTime)
 	}
 	else
 	{
-		// Apply braking when no input is given
+		// Apply deceleration scaled with current speed when no input is given
+		const float CurrentSpeed = Move->Velocity.Size();
+		const float ScaledDecel = FMath::Max(SpeedConstraints::DecelPerSpeed * CurrentSpeed, SpeedConstraints::MinDecel);
 		Move->Deceleration = ScaledDecel;
 	}
 	

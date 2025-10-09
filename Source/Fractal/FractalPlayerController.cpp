@@ -115,11 +115,15 @@ void AFractalPlayerController::Tick(float DeltaTime)
 	
 	Move->MaxSpeed = MaxAllowedSpeed;
 	Move->Acceleration = ScaledAccel;
-	// We handle deceleration manually when no input is given for finer control
+	// We apply deceleration manually below based on user input
 	
-	// Apply accumulated movement input directly to velocity
-	if (!AccumulatedMovementInput.IsNearlyZero())
+	const bool bHasInput = !AccumulatedMovementInput.IsNearlyZero();
+
+	if (bHasInput)
 	{
+		Move->Deceleration = 0.0f; // Disable natural deceleration while actively accelerating
+		
+		// Apply accumulated movement input directly to velocity
 		const FVector NormalizedInput = AccumulatedMovementInput.GetClampedToMaxSize(1.0f);
 		const FVector DesiredAcceleration = NormalizedInput * ScaledAccel;
 		const FVector AccelerationDelta = DesiredAcceleration * DeltaTime;
@@ -157,17 +161,8 @@ void AFractalPlayerController::Tick(float DeltaTime)
 	}
 	else
 	{
-		// No input - apply natural deceleration to gradually slow down
-		if (!Move->Velocity.IsNearlyZero())
-		{
-			const FVector VelocityDirection = Move->Velocity.GetSafeNormal();
-			const float CurrentSpeed = Move->Velocity.Size();
-			const float DecelDelta = ScaledDecel * DeltaTime;
-			
-			// Reduce speed but don't reverse direction
-			const float NewSpeed = FMath::Max(0.0f, CurrentSpeed - DecelDelta);
-			Move->Velocity = VelocityDirection * NewSpeed;
-		}
+		// Apply braking when no input is given
+		Move->Deceleration = ScaledDecel;
 	}
 	
 	// Always reset accumulated input every frame to prevent stale input from persisting

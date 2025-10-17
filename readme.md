@@ -31,4 +31,3 @@ C:\Users\<username>\Documents\Unreal Projects\FractalGame
 
 1. Open the workspace file `Fractal.code-workspace` in Visual Studio Code.
 2. In the Debug tab, run `Launch FractalEditor (Development) (workspace)` to start Unreal Editor.
-3. In Unreal Editor, open the `Mandelbulb` level to see the fractal in action.

@@ -36,5 +36,41 @@ public:
 	UTextureRenderTarget2D* RenderTarget = nullptr;
 
 private:
-	FString CreateBar(float Percent, int32 Width = 20) const;
+	void DrawTopLeftInfo(float X, float Y, float UIScale);
+	void DrawTopRightInfo(float X, float Y, float UIScale);
+	void DrawBottomLeftInfo(float X, float Y, float UIScale);
+	void DrawInfoPanel(float X, float Y, float UIScale);
+	void DrawControlsPanel(float CenterX, float CenterY, float UIScale);
+	void DrawKeyboardLayout(float X, float Y, float KeySize, float KeySpacing, float UIScale);
+	void DrawVerticalControls(float CenterX, float Y, float KeySize, float KeySpacing, float UIScale);
+	void DrawMouseControls(float X, float Y, float UIScale);
+	void DrawOtherControls(float X, float Y, float KeySize, float KeySpacing, float UIScale);
+	void DrawPanel(float X, float Y, float Width, float Height, const FLinearColor& Color);
+	void DrawBox(float X, float Y, float Width, float Height, float Thickness, const FLinearColor& Color);
+	void DrawCompactStatBar(float X, float Y, float Width, float Height, const FString& Label,
+		float Value, float MaxValue, const FString& Unit, const FLinearColor& BarColor, float UIScale);
+	void DrawStatBar(float X, float Y, float Width, float Height, const FString& Label, 
+		float Value, float MaxValue, const FLinearColor& BarColor, float UIScale, bool ShowValue = false);
+	void DrawGradientBar(float X, float Y, float Width, float Height, 
+		const FLinearColor& StartColor, const FLinearColor& EndColor);
+	void DrawRightAlignedMetric(float X, float Y, const FString& Label,
+		float Value, const FString& Unit, const FLinearColor& Color, float UIScale);
+	void DrawRightAlignedPosition(float X, float Y, float UIScale);
+	void DrawRightAlignedText(const FString& Text, const FVector2D& Position,
+		const FLinearColor& Color, float Scale);
+	void DrawMetricDisplay(float X, float Y, float Width, const FString& Label, 
+		float Value, const FString& Unit, const FLinearColor& Color, float UIScale);
+	void DrawPositionDisplay(float X, float Y, float Width, float UIScale);
+	void DrawText(const FString& Text, const FVector2D& Position, 
+		const FLinearColor& Color, float Scale);
+	void DrawTextWithShadow(const FString& Text, const FVector2D& Position, 
+		const FLinearColor& Color, float Scale);
+	void DrawCenteredText(const FString& Text, const FVector2D& Position, 
+		const FLinearColor& Color, float Scale);
+	void DrawKeyGraphic(float X, float Y, const FString& Keys, const FLinearColor& Color, float UIScale);
+	void DrawKeyButton(float X, float Y, float Width, float Height, const FString& Label, 
+		const FLinearColor& Color, float UIScale);
+	void DrawLabeledKey(float X, float Y, float Size, const FString& KeyLabel, const FString& ActionLabel,
+		const FLinearColor& Color, float UIScale);
+	void DrawMouseWheel(float X, float Y, float Width, float Height, const FLinearColor& Color, float UIScale);
 };

@@ -25,6 +25,7 @@ public class Fractal : ModuleRules
 		// Add subdirectories to include paths
 		PublicIncludePaths.AddRange(new string[] {
 			Path.Combine(ModuleDirectory, "Fractals"),
+			Path.Combine(ModuleDirectory, "Fractals", "DE"),
 			Path.Combine(ModuleDirectory, "Player"),
 			Path.Combine(ModuleDirectory, "UI")
 		});

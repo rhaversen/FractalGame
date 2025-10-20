@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Fractals/FractalTypes.h"
+#include "../FractalTypes.h"
 
 class FBurningShipDE : public IFractalDistanceEstimator
 {

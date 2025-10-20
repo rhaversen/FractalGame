@@ -3,14 +3,14 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "FractalTypes.h"
+#include "Fractals/FractalTypes.h"
 
-class FMandelbulbDE : public IFractalDistanceEstimator
+class FJuliaSetDE : public IFractalDistanceEstimator
 {
 public:
-	virtual ~FMandelbulbDE() = default;
+	virtual ~FJuliaSetDE() = default;
 
 	virtual double ComputeDistance(const FVector &WorldPos, const FFractalParameters &Params) const override;
 
-	virtual FString GetName() const override { return TEXT("Mandelbulb"); }
+	virtual FString GetName() const override { return TEXT("Julia Set"); }
 };

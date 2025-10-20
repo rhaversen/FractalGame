@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "FractalTypes.h"
+#include "Fractals/FractalTypes.h"
 
 class FMandelboxDE : public IFractalDistanceEstimator
 {

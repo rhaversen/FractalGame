@@ -4,16 +4,14 @@
 #include "FractalPlayerController.h"
 #include "Engine/Canvas.h"
 #include "Engine/Font.h"
-#include "Engine/Texture2D.h"
-#include "Engine/TextureRenderTarget2D.h"
-#include "Materials/MaterialInterface.h"
 #include "CanvasItem.h"
 
 void AFractalHUD::DrawHUD()
 {
 	Super::DrawHUD();
 
-	if (!Canvas) return;
+	if (!Canvas)
+		return;
 
 	const float ReferenceHeight = 1080.0f;
 	const float ScaleFactor = Canvas->SizeY / ReferenceHeight;
@@ -37,7 +35,7 @@ void AFractalHUD::DrawHUD()
 	{
 		const FVector2D HintPos(Canvas->SizeX / 2, Canvas->SizeY - 50.0f * UIScale);
 		DrawCenteredText(TEXT("[ H ] CONTROLS"), HintPos, FLinearColor(0.5f, 0.8f, 1.0f, 0.4f), UIScale * 1.0f);
-		
+
 		const FVector2D ResetHintPos(Canvas->SizeX / 2, Canvas->SizeY - 25.0f * UIScale);
 		DrawCenteredText(TEXT("[ R ] RESET POSITION"), ResetHintPos, FLinearColor(1.0f, 0.5f, 0.5f, 0.4f), UIScale * 0.9f);
 	}
@@ -47,63 +45,63 @@ void AFractalHUD::DrawTopLeftInfo(float X, float Y, float UIScale)
 {
 	float CurrentY = Y;
 	const float LineSpacing = 36.0f * UIScale;
-	
-	DrawText(TEXT("NAVIGATION"), FVector2D(X, CurrentY), 
-		FLinearColor(0.4f, 0.8f, 1.0f, 0.95f), UIScale * 1.3f);
+
+	DrawText(TEXT("NAVIGATION"), FVector2D(X, CurrentY),
+			 FLinearColor(0.4f, 0.8f, 1.0f, 0.95f), UIScale * 1.3f);
 	CurrentY += LineSpacing * 1.2f;
 
 	const float BarWidth = 280.0f * UIScale;
 	const float BarHeight = 8.0f * UIScale;
 
 	DrawCompactStatBar(X, CurrentY, BarWidth, BarHeight,
-		TEXT("ZOOM"), ZoomLevel, 100.0f, TEXT("x"), FLinearColor(1.0f, 0.6f, 0.2f, 0.9f), UIScale);
+					   TEXT("ZOOM"), ZoomLevel, 100.0f, TEXT("x"), FLinearColor(1.0f, 0.6f, 0.2f, 0.9f), UIScale);
 	CurrentY += LineSpacing;
 
 	DrawCompactStatBar(X, CurrentY, BarWidth, BarHeight,
-		TEXT("SPEED LIMIT"), SpeedPercent, 100.0f, TEXT("%"), FLinearColor(0.3f, 1.0f, 0.5f, 0.9f), UIScale);
+					   TEXT("SPEED LIMIT"), SpeedPercent, 100.0f, TEXT("%"), FLinearColor(0.3f, 1.0f, 0.5f, 0.9f), UIScale);
 	CurrentY += LineSpacing;
 
 	const float VelMagnitude = CurrentVelocity.Size() * 0.01f;
 	const float VelMax = MaxSpeed * 0.01f;
 	DrawCompactStatBar(X, CurrentY, BarWidth, BarHeight,
-		TEXT("VELOCITY"), VelMagnitude, VelMax > 0 ? VelMax : 1.0f, TEXT("m/s"),
-		FLinearColor(0.4f, 0.9f, 1.0f, 0.9f), UIScale);
+					   TEXT("VELOCITY"), VelMagnitude, VelMax > 0 ? VelMax : 1.0f, TEXT("m/s"),
+					   FLinearColor(0.4f, 0.9f, 1.0f, 0.9f), UIScale);
 }
 
 void AFractalHUD::DrawTopRightInfo(float X, float Y, float UIScale)
 {
 	float CurrentY = Y;
 	const float LineSpacing = 36.0f * UIScale;
-	
-	DrawText(TEXT("TELEMETRY"), FVector2D(X - 320.0f * UIScale, CurrentY), 
-		FLinearColor(1.0f, 0.8f, 0.4f, 0.95f), UIScale * 1.3f);
+
+	DrawText(TEXT("TELEMETRY"), FVector2D(X - 320.0f * UIScale, CurrentY),
+			 FLinearColor(1.0f, 0.8f, 0.4f, 0.95f), UIScale * 1.3f);
 	CurrentY += LineSpacing * 1.2f;
 
 	const float LabelWidth = 180.0f * UIScale;
 	const float DistScale = 0.01f;
-	
-	DrawText(TEXT("DIST TO FRACTAL"), FVector2D(X - 320.0f * UIScale, CurrentY), 
-		FLinearColor(0.7f, 0.7f, 0.8f, 0.95f), UIScale * 1.1f);
+
+	DrawText(TEXT("DIST TO FRACTAL"), FVector2D(X - 320.0f * UIScale, CurrentY),
+			 FLinearColor(0.7f, 0.7f, 0.8f, 0.95f), UIScale * 1.1f);
 	FString DistText = FString::Printf(TEXT("%.4f m"), Distance * DistScale);
-	DrawText(DistText, FVector2D(X - 110.0f * UIScale, CurrentY), 
-		FLinearColor(1.0f, 0.9f, 0.3f, 0.95f), UIScale * 1.1f);
+	DrawText(DistText, FVector2D(X - 110.0f * UIScale, CurrentY),
+			 FLinearColor(1.0f, 0.9f, 0.3f, 0.95f), UIScale * 1.1f);
 	CurrentY += LineSpacing;
 
-	DrawText(TEXT("POSITION"), FVector2D(X - 320.0f * UIScale, CurrentY), 
-		FLinearColor(0.7f, 0.7f, 0.8f, 0.95f), UIScale * 1.1f);
+	DrawText(TEXT("POSITION"), FVector2D(X - 320.0f * UIScale, CurrentY),
+			 FLinearColor(0.7f, 0.7f, 0.8f, 0.95f), UIScale * 1.1f);
 	FString PosText = FString::Printf(TEXT("X:%+.2f Y:%+.2f Z:%+.2f"), LocalPos.X, LocalPos.Y, LocalPos.Z);
-	DrawText(PosText, FVector2D(X - 280.0f * UIScale, CurrentY + 20.0f * UIScale), 
-		FLinearColor(0.7f, 0.5f, 1.0f, 0.95f), UIScale * 0.95f);
+	DrawText(PosText, FVector2D(X - 280.0f * UIScale, CurrentY + 20.0f * UIScale),
+			 FLinearColor(0.7f, 0.5f, 1.0f, 0.95f), UIScale * 0.95f);
 }
 
 void AFractalHUD::DrawBottomLeftInfo(float X, float Y, float UIScale)
 {
 	const float LineHeight = 28.0f * UIScale;
 	float CurrentY = Y - LineHeight;
-	
+
 	FString BuildInfo = TEXT("FRACTAL EXPLORER v1.0");
-	DrawText(BuildInfo, FVector2D(X, CurrentY), 
-		FLinearColor(0.5f, 0.5f, 0.6f, 0.6f), UIScale * 0.9f);
+	DrawText(BuildInfo, FVector2D(X, CurrentY),
+			 FLinearColor(0.5f, 0.5f, 0.6f, 0.6f), UIScale * 0.9f);
 }
 
 void AFractalHUD::DrawInfoPanel(float X, float Y, float UIScale)
@@ -122,28 +120,28 @@ void AFractalHUD::DrawControlsPanel(float CenterX, float CenterY, float UIScale)
 	DrawPanel(X, Y, PanelWidth, PanelHeight, FLinearColor(0.02f, 0.02f, 0.05f, 0.95f));
 
 	float CurrentY = Y + Padding;
-	
-	DrawCenteredText(TEXT("CONTROLS"), FVector2D(CenterX, CurrentY), 
-		FLinearColor(0.4f, 0.9f, 1.0f, 1.0f), UIScale * 2.5f);
+
+	DrawCenteredText(TEXT("CONTROLS"), FVector2D(CenterX, CurrentY),
+					 FLinearColor(0.4f, 0.9f, 1.0f, 1.0f), UIScale * 2.5f);
 	CurrentY += 80.0f * UIScale;
 
 	const float KeySize = 80.0f * UIScale;
 	const float KeySpacing = 14.0f * UIScale;
-	
-	DrawText(TEXT("MOVEMENT & ROLL"), FVector2D(CenterX - 110.0f * UIScale, CurrentY), 
-		FLinearColor(0.7f, 0.7f, 0.8f, 0.9f), UIScale * 1.4f);
+
+	DrawText(TEXT("MOVEMENT & ROLL"), FVector2D(CenterX - 110.0f * UIScale, CurrentY),
+			 FLinearColor(0.7f, 0.7f, 0.8f, 0.9f), UIScale * 1.4f);
 	CurrentY += 38.0f * UIScale;
-	
+
 	DrawKeyboardLayout(CenterX - 115.0f * UIScale, CurrentY, KeySize, KeySpacing, UIScale);
 	CurrentY += KeySize * 2 + KeySpacing + 35.0f * UIScale;
-	
+
 	DrawVerticalControls(CenterX, CurrentY, KeySize, KeySpacing, UIScale);
 	CurrentY += KeySize + 62.0f * UIScale;
-	
-	DrawText(TEXT("OTHER"), FVector2D(CenterX - 35.0f * UIScale, CurrentY), 
-		FLinearColor(0.7f, 0.7f, 0.8f, 0.9f), UIScale * 1.4f);
+
+	DrawText(TEXT("OTHER"), FVector2D(CenterX - 35.0f * UIScale, CurrentY),
+			 FLinearColor(0.7f, 0.7f, 0.8f, 0.9f), UIScale * 1.4f);
 	CurrentY += 38.0f * UIScale;
-	
+
 	const float BottomSectionY = CurrentY;
 	DrawMouseControls(CenterX - 170.0f * UIScale, BottomSectionY, UIScale);
 	DrawOtherControls(CenterX + 60.0f * UIScale, BottomSectionY, KeySize * 0.85f, KeySpacing, UIScale);
@@ -153,11 +151,11 @@ void AFractalHUD::DrawKeyboardLayout(float X, float Y, float KeySize, float KeyS
 {
 	const FLinearColor RollColor = FLinearColor(1.0f, 0.8f, 0.4f, 1.0f);
 	const FLinearColor MoveColor = FLinearColor(0.4f, 1.0f, 0.7f, 1.0f);
-	
+
 	DrawLabeledKey(X, Y, KeySize, TEXT("Q"), TEXT("ROLL\nLEFT"), RollColor, UIScale);
 	DrawLabeledKey(X + KeySize + KeySpacing, Y, KeySize, TEXT("W"), TEXT("FORWARD"), MoveColor, UIScale);
 	DrawLabeledKey(X + (KeySize + KeySpacing) * 2, Y, KeySize, TEXT("E"), TEXT("ROLL\nRIGHT"), RollColor, UIScale);
-	
+
 	DrawLabeledKey(X, Y + KeySize + KeySpacing, KeySize, TEXT("A"), TEXT("STRAFE\nLEFT"), MoveColor, UIScale);
 	DrawLabeledKey(X + KeySize + KeySpacing, Y + KeySize + KeySpacing, KeySize, TEXT("S"), TEXT("BACK"), MoveColor, UIScale);
 	DrawLabeledKey(X + (KeySize + KeySpacing) * 2, Y + KeySize + KeySpacing, KeySize, TEXT("D"), TEXT("STRAFE\nRIGHT"), MoveColor, UIScale);
@@ -169,30 +167,30 @@ void AFractalHUD::DrawVerticalControls(float CenterX, float Y, float KeySize, fl
 	const float SpacebarWidth = KeySize * 3.5f;
 	const float TotalWidth = KeySize + SpacebarWidth + KeySpacing;
 	const float StartX = CenterX - TotalWidth / 2;
-	
+
 	DrawLabeledKey(StartX, Y, KeySize, TEXT("SHIFT"), TEXT("DESCEND"), VertColor, UIScale);
-	
+
 	const float SpacebarX = StartX + KeySize + KeySpacing;
-	
+
 	FLinearColor BackColor = FLinearColor(0.05f, 0.05f, 0.1f, 0.6f);
 	FCanvasTileItem Background(FVector2D(SpacebarX, Y), FVector2D(SpacebarWidth, KeySize), BackColor);
 	Background.BlendMode = SE_BLEND_Translucent;
 	Canvas->DrawItem(Background);
-	
+
 	FLinearColor HighlightColor = VertColor;
 	HighlightColor.A = 0.2f;
 	FCanvasTileItem Highlight(FVector2D(SpacebarX, Y), FVector2D(SpacebarWidth, KeySize * 0.35f), HighlightColor);
 	Highlight.BlendMode = SE_BLEND_Translucent;
 	Canvas->DrawItem(Highlight);
-	
+
 	DrawBox(SpacebarX, Y, SpacebarWidth, KeySize, 2.0f, VertColor);
-	
+
 	FVector2D KeyTextSize;
 	float KeyTextScale = UIScale * 1.8f;
 	Canvas->TextSize(GEngine->GetMediumFont(), TEXT("SPACE"), KeyTextSize.X, KeyTextSize.Y, KeyTextScale, KeyTextScale);
 	FVector2D KeyTextPos(SpacebarX + (SpacebarWidth - KeyTextSize.X) / 2, Y + KeySize * 0.20f);
 	DrawText(TEXT("SPACE"), KeyTextPos, FLinearColor(1.0f, 1.0f, 1.0f, 1.0f), KeyTextScale);
-	
+
 	float ActionTextScale = UIScale * 0.85f;
 	FVector2D ActionTextSize;
 	Canvas->TextSize(GEngine->GetMediumFont(), TEXT("ASCEND"), ActionTextSize.X, ActionTextSize.Y, ActionTextScale, ActionTextScale);
@@ -203,36 +201,36 @@ void AFractalHUD::DrawVerticalControls(float CenterX, float Y, float KeySize, fl
 void AFractalHUD::DrawMouseControls(float X, float Y, float UIScale)
 {
 	const FLinearColor MouseColor = FLinearColor(1.0f, 0.6f, 0.9f, 1.0f);
-	
+
 	const float WheelWidth = 50.0f * UIScale;
 	const float WheelHeight = 80.0f * UIScale;
-	
-	DrawText(TEXT("SCROLL WHEEL"), FVector2D(X + WheelWidth / 2 - 60.0f * UIScale, Y - 25.0f * UIScale), 
-		FLinearColor(0.7f, 0.7f, 0.8f, 0.9f), UIScale * 1.2f);
-	
+
+	DrawText(TEXT("SCROLL WHEEL"), FVector2D(X + WheelWidth / 2 - 60.0f * UIScale, Y - 25.0f * UIScale),
+			 FLinearColor(0.7f, 0.7f, 0.8f, 0.9f), UIScale * 1.2f);
+
 	DrawMouseWheel(X, Y, WheelWidth, WheelHeight, MouseColor, UIScale);
-	
-	DrawText(TEXT("Speed Limit"), FVector2D(X + WheelWidth / 2 - 48.0f * UIScale, Y + WheelHeight + 15.0f * UIScale), 
-		MouseColor, UIScale * 0.9f);
+
+	DrawText(TEXT("Speed Limit"), FVector2D(X + WheelWidth / 2 - 48.0f * UIScale, Y + WheelHeight + 15.0f * UIScale),
+			 MouseColor, UIScale * 0.9f);
 }
 
-void AFractalHUD::DrawMouseWheel(float X, float Y, float Width, float Height, const FLinearColor& Color, float UIScale)
+void AFractalHUD::DrawMouseWheel(float X, float Y, float Width, float Height, const FLinearColor &Color, float UIScale)
 {
 	const FLinearColor BackColor = FLinearColor(0.05f, 0.05f, 0.1f, 0.6f);
 	const FLinearColor BorderColor = Color;
 	const float Radius = Width / 2.0f;
-	
+
 	const float CenterX = X + Width / 2.0f;
 	const float TopCapY = Y + Radius;
 	const float BottomCapY = Y + Height - Radius;
-	
+
 	for (float dy = 0; dy < Height; dy += 1.0f)
 	{
 		for (float dx = 0; dx < Width; dx += 2.0f)
 		{
 			float px = X + dx;
 			float py = Y + dy;
-			
+
 			bool inside = false;
 			if (py >= TopCapY && py <= BottomCapY)
 			{
@@ -248,7 +246,7 @@ void AFractalHUD::DrawMouseWheel(float X, float Y, float Width, float Height, co
 				float distToCenter = FMath::Sqrt(FMath::Square(px - CenterX) + FMath::Square(py - BottomCapY));
 				inside = (distToCenter <= Radius);
 			}
-			
+
 			if (inside)
 			{
 				FCanvasTileItem Pixel(FVector2D(px, py), FVector2D(2.0f, 1.0f), BackColor);
@@ -257,7 +255,7 @@ void AFractalHUD::DrawMouseWheel(float X, float Y, float Width, float Height, co
 			}
 		}
 	}
-	
+
 	FLinearColor HighlightColor = Color;
 	HighlightColor.A = 0.2f;
 	const float HighlightHeight = Height * 0.35f;
@@ -267,7 +265,7 @@ void AFractalHUD::DrawMouseWheel(float X, float Y, float Width, float Height, co
 		{
 			float px = X + dx;
 			float py = Y + dy;
-			
+
 			bool inside = false;
 			if (py >= TopCapY && py <= BottomCapY)
 			{
@@ -278,7 +276,7 @@ void AFractalHUD::DrawMouseWheel(float X, float Y, float Width, float Height, co
 				float distToCenter = FMath::Sqrt(FMath::Square(px - CenterX) + FMath::Square(py - TopCapY));
 				inside = (distToCenter <= Radius);
 			}
-			
+
 			if (inside)
 			{
 				FCanvasTileItem Pixel(FVector2D(px, py), FVector2D(2.0f, 1.0f), HighlightColor);
@@ -287,7 +285,7 @@ void AFractalHUD::DrawMouseWheel(float X, float Y, float Width, float Height, co
 			}
 		}
 	}
-	
+
 	const float BorderThickness = 2.0f;
 	for (float dy = 0; dy < Height; dy += 1.0f)
 	{
@@ -295,9 +293,9 @@ void AFractalHUD::DrawMouseWheel(float X, float Y, float Width, float Height, co
 		{
 			float px = X + dx;
 			float py = Y + dy;
-			
+
 			float distFromEdge = 999.0f;
-			
+
 			if (py >= TopCapY && py <= BottomCapY)
 			{
 				distFromEdge = FMath::Min(FMath::Abs(dx), FMath::Abs(dx - Width));
@@ -312,7 +310,7 @@ void AFractalHUD::DrawMouseWheel(float X, float Y, float Width, float Height, co
 				float distToCenter = FMath::Sqrt(FMath::Square(px - CenterX) + FMath::Square(py - BottomCapY));
 				distFromEdge = FMath::Abs(distToCenter - Radius);
 			}
-			
+
 			if (distFromEdge <= BorderThickness)
 			{
 				FCanvasTileItem BorderPixel(FVector2D(px, py), FVector2D(1.0f, 1.0f), BorderColor);
@@ -327,12 +325,12 @@ void AFractalHUD::DrawOtherControls(float X, float Y, float KeySize, float KeySp
 {
 	const FLinearColor ResetColor = FLinearColor(1.0f, 0.5f, 0.5f, 1.0f);
 	const FLinearColor HelpColor = FLinearColor(0.7f, 0.7f, 1.0f, 1.0f);
-	
+
 	DrawLabeledKey(X - KeySize - KeySpacing * 2, Y, KeySize, TEXT("R"), TEXT("RESET"), ResetColor, UIScale);
 	DrawLabeledKey(X + KeySpacing * 2, Y, KeySize, TEXT("H"), TEXT("HELP"), HelpColor, UIScale);
 }
 
-void AFractalHUD::DrawPanel(float X, float Y, float Width, float Height, const FLinearColor& Color)
+void AFractalHUD::DrawPanel(float X, float Y, float Width, float Height, const FLinearColor &Color)
 {
 	FCanvasTileItem BackPanel(FVector2D(X, Y), FVector2D(Width, Height), Color);
 	BackPanel.BlendMode = SE_BLEND_Translucent;
@@ -340,24 +338,24 @@ void AFractalHUD::DrawPanel(float X, float Y, float Width, float Height, const F
 
 	const float BorderThickness = 3.0f;
 	FLinearColor BorderColor = FLinearColor(0.3f, 0.7f, 1.0f, 0.8f);
-	
+
 	DrawBox(X, Y, Width, Height, BorderThickness, BorderColor);
-	
+
 	const float InnerGlow = 8.0f;
 	FLinearColor GlowColor = FLinearColor(0.2f, 0.5f, 0.8f, 0.2f);
-	DrawBox(X + BorderThickness, Y + BorderThickness, 
-		Width - BorderThickness * 2, Height - BorderThickness * 2, InnerGlow, GlowColor);
+	DrawBox(X + BorderThickness, Y + BorderThickness,
+			Width - BorderThickness * 2, Height - BorderThickness * 2, InnerGlow, GlowColor);
 }
 
-void AFractalHUD::DrawBox(float X, float Y, float Width, float Height, float Thickness, const FLinearColor& Color)
+void AFractalHUD::DrawBox(float X, float Y, float Width, float Height, float Thickness, const FLinearColor &Color)
 {
 	FCanvasTileItem Top(FVector2D(X, Y), FVector2D(Width, Thickness), Color);
 	FCanvasTileItem Bottom(FVector2D(X, Y + Height - Thickness), FVector2D(Width, Thickness), Color);
 	FCanvasTileItem Left(FVector2D(X, Y), FVector2D(Thickness, Height), Color);
 	FCanvasTileItem Right(FVector2D(X + Width - Thickness, Y), FVector2D(Thickness, Height), Color);
-	
+
 	Top.BlendMode = Bottom.BlendMode = Left.BlendMode = Right.BlendMode = SE_BLEND_Translucent;
-	
+
 	Canvas->DrawItem(Top);
 	Canvas->DrawItem(Bottom);
 	Canvas->DrawItem(Left);
@@ -365,11 +363,11 @@ void AFractalHUD::DrawBox(float X, float Y, float Width, float Height, float Thi
 }
 
 void AFractalHUD::DrawCompactStatBar(float X, float Y, float Width, float Height,
-	const FString& Label, float Value, float MaxValue, const FString& Unit, const FLinearColor& BarColor, float UIScale)
+									 const FString &Label, float Value, float MaxValue, const FString &Unit, const FLinearColor &BarColor, float UIScale)
 {
 	const float LabelY = Y - 22.0f * UIScale;
-	DrawText(Label, FVector2D(X, LabelY), 
-		FLinearColor(0.8f, 0.8f, 0.9f, 0.95f), UIScale * 1.1f);
+	DrawText(Label, FVector2D(X, LabelY),
+			 FLinearColor(0.8f, 0.8f, 0.9f, 0.95f), UIScale * 1.1f);
 
 	FLinearColor BackColor = FLinearColor(0.05f, 0.05f, 0.1f, 0.6f);
 	FCanvasTileItem Background(FVector2D(X, Y), FVector2D(Width, Height), BackColor);
@@ -386,7 +384,7 @@ void AFractalHUD::DrawCompactStatBar(float X, float Y, float Width, float Height
 		FCanvasTileItem Glow(FVector2D(X, Y - 2.0f), FVector2D(FilledWidth, Height + 4.0f), GlowColor);
 		Glow.BlendMode = SE_BLEND_Translucent;
 		Canvas->DrawItem(Glow);
-		
+
 		FCanvasTileItem Bar(FVector2D(X, Y), FVector2D(FilledWidth, Height), BarColor);
 		Bar.BlendMode = SE_BLEND_Translucent;
 		Canvas->DrawItem(Bar);
@@ -396,73 +394,73 @@ void AFractalHUD::DrawCompactStatBar(float X, float Y, float Width, float Height
 
 	FString ValueText = FString::Printf(TEXT("%.1f %s"), Value, *Unit);
 	const float ValueX = X + Width + 12.0f * UIScale;
-	DrawText(ValueText, FVector2D(ValueX, Y - 6.0f * UIScale), 
-		BarColor, UIScale * 1.0f);
+	DrawText(ValueText, FVector2D(ValueX, Y - 6.0f * UIScale),
+			 BarColor, UIScale * 1.0f);
 }
 
-void AFractalHUD::DrawRightAlignedMetric(float X, float Y, const FString& Label,
-	float Value, const FString& Unit, const FLinearColor& Color, float UIScale)
+void AFractalHUD::DrawRightAlignedMetric(float X, float Y, const FString &Label,
+										 float Value, const FString &Unit, const FLinearColor &Color, float UIScale)
 {
 	FString ValueText = FString::Printf(TEXT("%.4f %s"), Value, *Unit);
-	
+
 	FVector2D TextSize;
 	Canvas->TextSize(GEngine->GetMediumFont(), ValueText, TextSize.X, TextSize.Y, UIScale * 1.1f, UIScale * 1.1f);
-	
-	DrawText(Label, FVector2D(X - TextSize.X - 100.0f * UIScale, Y), 
-		FLinearColor(0.7f, 0.7f, 0.8f, 0.95f), UIScale * 1.1f);
+
+	DrawText(Label, FVector2D(X - TextSize.X - 100.0f * UIScale, Y),
+			 FLinearColor(0.7f, 0.7f, 0.8f, 0.95f), UIScale * 1.1f);
 	DrawText(ValueText, FVector2D(X - TextSize.X, Y), Color, UIScale * 1.1f);
 }
 
 void AFractalHUD::DrawRightAlignedPosition(float X, float Y, float UIScale)
 {
 	FString PosText = FString::Printf(TEXT("X:%+.3f  Y:%+.3f  Z:%+.3f"), LocalPos.X, LocalPos.Y, LocalPos.Z);
-	
+
 	FVector2D TextSize;
 	Canvas->TextSize(GEngine->GetMediumFont(), PosText, TextSize.X, TextSize.Y, UIScale * 1.0f, UIScale * 1.0f);
-	
-	DrawText(TEXT("POSITION"), FVector2D(X - TextSize.X - 100.0f * UIScale, Y), 
-		FLinearColor(0.7f, 0.7f, 0.8f, 0.95f), UIScale * 1.1f);
-	DrawText(PosText, FVector2D(X - TextSize.X, Y), 
-		FLinearColor(0.7f, 0.5f, 1.0f, 0.95f), UIScale * 1.0f);
+
+	DrawText(TEXT("POSITION"), FVector2D(X - TextSize.X - 100.0f * UIScale, Y),
+			 FLinearColor(0.7f, 0.7f, 0.8f, 0.95f), UIScale * 1.1f);
+	DrawText(PosText, FVector2D(X - TextSize.X, Y),
+			 FLinearColor(0.7f, 0.5f, 1.0f, 0.95f), UIScale * 1.0f);
 }
 
-void AFractalHUD::DrawRightAlignedText(const FString& Text, const FVector2D& Position,
-	const FLinearColor& Color, float Scale)
+void AFractalHUD::DrawRightAlignedText(const FString &Text, const FVector2D &Position,
+									   const FLinearColor &Color, float Scale)
 {
 	FVector2D TextSize;
 	Canvas->TextSize(GEngine->GetMediumFont(), Text, TextSize.X, TextSize.Y, Scale, Scale);
-	
+
 	DrawText(Text, FVector2D(Position.X - TextSize.X, Position.Y), Color, Scale);
 }
 
-void AFractalHUD::DrawStatBar(float X, float Y, float Width, float Height, 
-	const FString& Label, float Value, float MaxValue, const FLinearColor& BarColor, float UIScale, bool ShowValue)
+void AFractalHUD::DrawStatBar(float X, float Y, float Width, float Height,
+							  const FString &Label, float Value, float MaxValue, const FLinearColor &BarColor, float UIScale, bool ShowValue)
 {
 	DrawCompactStatBar(X, Y, Width, Height, Label, Value, MaxValue, TEXT("%"), BarColor, UIScale);
 }
 
-void AFractalHUD::DrawGradientBar(float X, float Y, float Width, float Height, 
-	const FLinearColor& StartColor, const FLinearColor& EndColor)
+void AFractalHUD::DrawGradientBar(float X, float Y, float Width, float Height,
+								  const FLinearColor &StartColor, const FLinearColor &EndColor)
 {
 	const int32 Steps = 20;
 	const float StepWidth = Width / Steps;
-	
+
 	for (int32 i = 0; i < Steps; ++i)
 	{
 		float Alpha = (float)i / (float)Steps;
 		FLinearColor Color = FMath::Lerp(StartColor, EndColor, Alpha);
-		
+
 		FCanvasTileItem Step(FVector2D(X + i * StepWidth, Y), FVector2D(StepWidth + 1, Height), Color);
 		Step.BlendMode = SE_BLEND_Translucent;
 		Canvas->DrawItem(Step);
 	}
 }
 
-void AFractalHUD::DrawMetricDisplay(float X, float Y, float Width, const FString& Label, 
-	float Value, const FString& Unit, const FLinearColor& Color, float UIScale)
+void AFractalHUD::DrawMetricDisplay(float X, float Y, float Width, const FString &Label,
+									float Value, const FString &Unit, const FLinearColor &Color, float UIScale)
 {
 	DrawTextWithShadow(Label, FVector2D(X, Y), FLinearColor(0.7f, 0.7f, 0.7f), UIScale * 0.85f);
-	
+
 	FString ValueText = FString::Printf(TEXT("%.4f %s"), Value, *Unit);
 	DrawTextWithShadow(ValueText, FVector2D(X + 100.0f * UIScale, Y), Color, UIScale * 0.9f);
 }
@@ -470,14 +468,14 @@ void AFractalHUD::DrawMetricDisplay(float X, float Y, float Width, const FString
 void AFractalHUD::DrawPositionDisplay(float X, float Y, float Width, float UIScale)
 {
 	DrawTextWithShadow(TEXT("POSITION"), FVector2D(X, Y), FLinearColor(0.7f, 0.7f, 0.7f), UIScale * 0.85f);
-	
+
 	FString PosText = FString::Printf(TEXT("X:%+.3f Y:%+.3f Z:%+.3f"), LocalPos.X, LocalPos.Y, LocalPos.Z);
-	DrawTextWithShadow(PosText, FVector2D(X, Y + 16.0f * UIScale), 
-		FLinearColor(0.8f, 0.6f, 0.9f), UIScale * 0.75f);
+	DrawTextWithShadow(PosText, FVector2D(X, Y + 16.0f * UIScale),
+					   FLinearColor(0.8f, 0.6f, 0.9f), UIScale * 0.75f);
 }
 
-void AFractalHUD::DrawText(const FString& Text, const FVector2D& Position, 
-	const FLinearColor& Color, float Scale)
+void AFractalHUD::DrawText(const FString &Text, const FVector2D &Position,
+						   const FLinearColor &Color, float Scale)
 {
 	FCanvasTextItem TextItem(Position, FText::FromString(Text), GEngine->GetMediumFont(), Color);
 	TextItem.Scale = FVector2D(Scale, Scale);
@@ -486,24 +484,24 @@ void AFractalHUD::DrawText(const FString& Text, const FVector2D& Position,
 	Canvas->DrawItem(TextItem);
 }
 
-void AFractalHUD::DrawTextWithShadow(const FString& Text, const FVector2D& Position, 
-	const FLinearColor& Color, float Scale)
+void AFractalHUD::DrawTextWithShadow(const FString &Text, const FVector2D &Position,
+									 const FLinearColor &Color, float Scale)
 {
 	FVector2D ShadowOffset(2.5f * Scale, 2.5f * Scale);
 	FLinearColor ShadowColor = FLinearColor(0.0f, 0.0f, 0.0f, Color.A * 0.9f);
-	
+
 	FCanvasTextItem ShadowText(Position + ShadowOffset, FText::FromString(Text), GEngine->GetMediumFont(), ShadowColor);
 	ShadowText.Scale = FVector2D(Scale, Scale);
 	ShadowText.EnableShadow(ShadowColor);
 	Canvas->DrawItem(ShadowText);
-	
+
 	FCanvasTextItem TextItem(Position, FText::FromString(Text), GEngine->GetMediumFont(), Color);
 	TextItem.Scale = FVector2D(Scale, Scale);
 	Canvas->DrawItem(TextItem);
 }
 
-void AFractalHUD::DrawCenteredText(const FString& Text, const FVector2D& Position, 
-	const FLinearColor& Color, float Scale)
+void AFractalHUD::DrawCenteredText(const FString &Text, const FVector2D &Position,
+								   const FLinearColor &Color, float Scale)
 {
 	FCanvasTextItem TextItem(Position, FText::FromString(Text), GEngine->GetMediumFont(), Color);
 	TextItem.Scale = FVector2D(Scale, Scale);
@@ -513,80 +511,80 @@ void AFractalHUD::DrawCenteredText(const FString& Text, const FVector2D& Positio
 	Canvas->DrawItem(TextItem);
 }
 
-void AFractalHUD::DrawKeyGraphic(float X, float Y, const FString& Keys, const FLinearColor& Color, float UIScale)
+void AFractalHUD::DrawKeyGraphic(float X, float Y, const FString &Keys, const FLinearColor &Color, float UIScale)
 {
 	TArray<FString> KeyArray;
 	Keys.ParseIntoArray(KeyArray, TEXT(" "), true);
-	
+
 	const float KeySize = 32.0f * UIScale;
 	const float KeySpacing = 8.0f * UIScale;
 	const float TotalWidth = (KeySize * KeyArray.Num()) + (KeySpacing * (KeyArray.Num() - 1));
-	
+
 	float CurrentX = X - TotalWidth;
-	
-	for (const FString& Key : KeyArray)
+
+	for (const FString &Key : KeyArray)
 	{
 		DrawKeyButton(CurrentX, Y - 8.0f * UIScale, KeySize, KeySize, Key, Color, UIScale);
 		CurrentX += KeySize + KeySpacing;
 	}
 }
 
-void AFractalHUD::DrawKeyButton(float X, float Y, float Width, float Height, const FString& Label, const FLinearColor& Color, float UIScale)
+void AFractalHUD::DrawKeyButton(float X, float Y, float Width, float Height, const FString &Label, const FLinearColor &Color, float UIScale)
 {
 	const float Radius = 4.0f * UIScale;
-	
+
 	FLinearColor BgColor = FLinearColor(0.08f, 0.08f, 0.12f, 0.9f);
 	FCanvasTileItem Background(FVector2D(X, Y), FVector2D(Width, Height), BgColor);
 	Background.BlendMode = SE_BLEND_Translucent;
 	Canvas->DrawItem(Background);
-	
+
 	const float BorderThickness = 2.0f * UIScale;
 	FLinearColor BorderColor = Color;
 	BorderColor.A = 0.8f;
 	DrawBox(X, Y, Width, Height, BorderThickness, BorderColor);
-	
+
 	FLinearColor InnerBorderColor = Color;
 	InnerBorderColor.A = 0.3f;
-	DrawBox(X + BorderThickness, Y + BorderThickness, 
-		Width - BorderThickness * 2, Height - BorderThickness * 2, 1.0f * UIScale, InnerBorderColor);
-	
+	DrawBox(X + BorderThickness, Y + BorderThickness,
+			Width - BorderThickness * 2, Height - BorderThickness * 2, 1.0f * UIScale, InnerBorderColor);
+
 	FVector2D TextSize;
 	float TextScale = UIScale * 0.9f;
 	if (Label.Len() > 3)
 	{
 		TextScale = UIScale * 0.65f;
 	}
-	
+
 	Canvas->TextSize(GEngine->GetMediumFont(), Label, TextSize.X, TextSize.Y, TextScale, TextScale);
 	FVector2D TextPos(X + (Width - TextSize.X) / 2, Y + (Height - TextSize.Y) / 2);
-	
+
 	DrawText(Label, TextPos, Color, TextScale);
 }
 
-void AFractalHUD::DrawLabeledKey(float X, float Y, float Size, const FString& KeyLabel, const FString& ActionLabel, const FLinearColor& Color, float UIScale)
+void AFractalHUD::DrawLabeledKey(float X, float Y, float Size, const FString &KeyLabel, const FString &ActionLabel, const FLinearColor &Color, float UIScale)
 {
 	FLinearColor BgColor = FLinearColor(0.08f, 0.08f, 0.12f, 0.9f);
 	FCanvasTileItem Background(FVector2D(X, Y), FVector2D(Size, Size), BgColor);
 	Background.BlendMode = SE_BLEND_Translucent;
 	Canvas->DrawItem(Background);
-	
+
 	const float BorderThickness = 2.5f * UIScale;
 	FLinearColor BorderColor = Color;
 	BorderColor.A = 0.9f;
 	DrawBox(X, Y, Size, Size, BorderThickness, BorderColor);
-	
+
 	FLinearColor InnerBorderColor = Color;
 	InnerBorderColor.A = 0.2f;
-	DrawBox(X + BorderThickness, Y + BorderThickness, 
-		Size - BorderThickness * 2, Size - BorderThickness * 2, 1.5f * UIScale, InnerBorderColor);
-	
+	DrawBox(X + BorderThickness, Y + BorderThickness,
+			Size - BorderThickness * 2, Size - BorderThickness * 2, 1.5f * UIScale, InnerBorderColor);
+
 	FLinearColor HighlightColor = Color;
 	HighlightColor.A = 0.15f;
-	FCanvasTileItem Highlight(FVector2D(X + BorderThickness * 2, Y + BorderThickness * 2), 
-		FVector2D(Size - BorderThickness * 4, Size * 0.3f), HighlightColor);
+	FCanvasTileItem Highlight(FVector2D(X + BorderThickness * 2, Y + BorderThickness * 2),
+							  FVector2D(Size - BorderThickness * 4, Size * 0.3f), HighlightColor);
 	Highlight.BlendMode = SE_BLEND_Translucent;
 	Canvas->DrawItem(Highlight);
-	
+
 	FVector2D KeyTextSize;
 	float KeyTextScale = UIScale * 1.8f;
 	if (KeyLabel.Len() > 3)
@@ -596,14 +594,14 @@ void AFractalHUD::DrawLabeledKey(float X, float Y, float Size, const FString& Ke
 	Canvas->TextSize(GEngine->GetMediumFont(), KeyLabel, KeyTextSize.X, KeyTextSize.Y, KeyTextScale, KeyTextScale);
 	FVector2D KeyTextPos(X + (Size - KeyTextSize.X) / 2, Y + Size * 0.20f);
 	DrawText(KeyLabel, KeyTextPos, FLinearColor(1.0f, 1.0f, 1.0f, 1.0f), KeyTextScale);
-	
+
 	TArray<FString> ActionLines;
 	ActionLabel.ParseIntoArray(ActionLines, TEXT("\n"), false);
-	
+
 	float ActionTextScale = UIScale * 0.85f;
 	float LineY = Y + Size * 0.62f;
-	
-	for (const FString& Line : ActionLines)
+
+	for (const FString &Line : ActionLines)
 	{
 		FVector2D ActionTextSize;
 		Canvas->TextSize(GEngine->GetMediumFont(), Line, ActionTextSize.X, ActionTextSize.Y, ActionTextScale, ActionTextScale);

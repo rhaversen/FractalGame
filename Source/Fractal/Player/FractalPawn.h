@@ -25,12 +25,12 @@ public:
 	virtual void Tick(float DeltaTime) override;
 
 private:
-	UPROPERTY(VisibleAnywhere, Category="Components")
-	USphereComponent* Collision;
+	UPROPERTY(VisibleAnywhere, Category = "Components")
+	USphereComponent *Collision;
 
-	UPROPERTY(VisibleAnywhere, Category="Components")
-	UCameraComponent* Camera;
+	UPROPERTY(VisibleAnywhere, Category = "Components")
+	UCameraComponent *Camera;
 
-	UPROPERTY(VisibleAnywhere, Category="Components")
-	UFloatingPawnMovement* Movement;
+	UPROPERTY(VisibleAnywhere, Category = "Components")
+	UFloatingPawnMovement *Movement;
 };

@@ -22,6 +22,13 @@ public class Fractal : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
 
+		// Add subdirectories to include paths
+		PublicIncludePaths.AddRange(new string[] {
+			Path.Combine(ModuleDirectory, "Fractals"),
+			Path.Combine(ModuleDirectory, "Player"),
+			Path.Combine(ModuleDirectory, "UI")
+		});
+
 		// Uncomment if you are using Slate UI
 		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
 

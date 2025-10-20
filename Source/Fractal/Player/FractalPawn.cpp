@@ -39,4 +39,3 @@ void AFractalPawn::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 }
-

@@ -5,7 +5,7 @@ using System.Collections.Generic;
 
 public class FractalEditorTarget : TargetRules
 {
-	public FractalEditorTarget( TargetInfo Target) : base(Target)
+	public FractalEditorTarget(TargetInfo Target) : base(Target)
 	{
 		Type = TargetType.Editor;
 		DefaultBuildSettings = BuildSettingsVersion.V5;

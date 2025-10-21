@@ -22,16 +22,38 @@ struct MarchResult
 	float distance;
 	int steps;
 	int hitStatus;
+	int totalDEIterations;
+};
+
+struct DEResult
+{
+	float distance;
+	int iterations;
+};
+
+struct SphericalCoords
+{
+	float r;
+	float theta;
+	float phi;
+};
+
+struct SphereFoldResult
+{
+	float3 z;
+	float dz;
 };
 
 struct FractalFunctions
 {
 	// Convert Cartesian coordinates to spherical
-	static void CartesianToSpherical(in float3 z, out float r, out float theta, out float phi)
+	static SphericalCoords CartesianToSpherical(float3 z)
 	{
-		r = length(z);
-		theta = acos(z.z / r);
-		phi = atan2(z.y, z.x);
+		SphericalCoords result;
+		result.r = length(z);
+		result.theta = acos(z.z / result.r);
+		result.phi = atan2(z.y, z.x);
+		return result;
 	}
 
 	// Convert spherical coordinates back to Cartesian
@@ -62,34 +84,76 @@ struct FractalFunctions
 		return distance * ResolvedView.ClipToView._22 / ResolvedView.ViewSizeAndInvSize.y;
 	}
 
-	static float FractalDE(float3 pos, int fractalType, float power)
+	static DEResult FractalDE(float3 pos, int fractalType, float power)
 	{
-		if (fractalType == FRACTAL_TYPE_MANDELBULB)
+		switch (fractalType)
 		{
-			return MandelbulbDE(pos, power);
+			case FRACTAL_TYPE_MANDELBULB:
+			case FRACTAL_TYPE_BURNING_SHIP:
+			case FRACTAL_TYPE_JULIA_SET:
+			// Spherical Power Fractals
+			{
+				float3 z = pos;
+				float dr = 1.0;
+				float r = 0.0;
+				int i;
+
+				for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+				{
+					r = length(z);
+					if (r > FRACTAL_DE_BAILOUT)
+						break;
+
+					dr = pow(r, power - 1.0) * power * dr + 1.0;
+
+					switch (fractalType)
+					{
+						case FRACTAL_TYPE_MANDELBULB:
+							z = MandelbulbTransform(z, pos, power);
+							break;
+						case FRACTAL_TYPE_BURNING_SHIP:
+							z = BurningShipTransform(z, pos, power);
+							break;
+						case FRACTAL_TYPE_JULIA_SET:
+							z = JuliaSetTransform(z, pos, power);
+							break;
+					}
+				}
+
+				DEResult result;
+				result.distance = FinalDE(r, dr);
+				result.iterations = i;
+				return result;
+			}
+			case FRACTAL_TYPE_MANDELBOX:
+				return MandelboxDE(pos, power);
+			case FRACTAL_TYPE_MENGER_SPONGE:
+				return MengerSpongeDE(pos);
+			case FRACTAL_TYPE_SIERPINSKI:
+				return SierpinskiDE(pos);
+			default:
+			{
+				float3 z = pos;
+				float dr = 1.0;
+				float r = 0.0;
+				int i;
+
+				for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+				{
+					r = length(z);
+					if (r > FRACTAL_DE_BAILOUT)
+						break;
+
+					dr = pow(r, power - 1.0) * power * dr + 1.0;
+					z = MandelbulbTransform(z, pos, power);
+				}
+
+				DEResult result;
+				result.distance = FinalDE(r, dr);
+				result.iterations = i;
+				return result;
+			}
 		}
-		else if (fractalType == FRACTAL_TYPE_BURNING_SHIP)
-		{
-			return BurningShipDE(pos, power);
-		}
-		else if (fractalType == FRACTAL_TYPE_JULIA_SET)
-		{
-			return JuliaSetDE(pos, power);
-		}
-		else if (fractalType == FRACTAL_TYPE_MANDELBOX)
-		{
-			return MandelboxDE(pos, power);
-		}
-		else if (fractalType == FRACTAL_TYPE_MENGER_SPONGE)
-		{
-			return MengerSpongeDE(pos);
-		}
-		else if (fractalType == FRACTAL_TYPE_SIERPINSKI)
-		{
-			return SierpinskiDE(pos);
-		}
-		
-		return MandelbulbDE(pos, power);
 	}
 
 	// Marching function that can do cone marching (subdivisionFactor > 0) or ray marching (subdivisionFactor = 0)
@@ -99,24 +163,29 @@ struct FractalFunctions
 	{
 		float totalDist = 0.0;
 		int steps = 0;
+		int totalDEIterations = 0;
 
 		while (totalDist < FRACTAL_MARCH_MAX_DISTANCE && steps < FRACTAL_MARCH_MAX_STEPS)
 		{
 			steps++;
 			float3 pos = RayOrigin + RayDir * totalDist;
-			float distEstimate = FractalDE(pos, fractalType, power);
+			DEResult deResult = FractalDE(pos, fractalType, power);
+			
+			// Accumulate total DE iterations
+			totalDEIterations += deResult.iterations;
 
 			// Calculate precision threshold based on whether we're cone marching or ray marching
 			float pixelSize = GetPixelWorldRadius(totalDist);
 			float threshold = pixelSize;
 
 			// Check if we've hit the fractal
-			if (distEstimate <= threshold)
+			if (deResult.distance <= threshold)
 			{
 				MarchResult result;
 				result.distance = totalDist;
 				result.steps = steps;
 				result.hitStatus = HIT_STATUS_HIT;
+				result.totalDEIterations = totalDEIterations;
 				return result;
 			}
 
@@ -129,9 +198,9 @@ struct FractalFunctions
 		result.distance = totalDist;
 		result.steps = steps;
 		result.hitStatus = (totalDist >= FRACTAL_MARCH_MAX_DISTANCE) ? HIT_STATUS_MISS_DISTANCE : HIT_STATUS_MISS_STEPS;
+		result.totalDEIterations = totalDEIterations;
 		return result;
 	}
-
 
 	static float3 RenderFractal(float2 screenUV, float3 sceneColor, int fractalType, float power)
 	{
@@ -172,6 +241,26 @@ struct FractalFunctions
 		float range3 = saturate((t - vibrantBluePos) / (brightBluePos - vibrantBluePos));
 		float3 fractalColor = lerp(lerp(lerp(almostBlack, deepBlue, range1), vibrantBlue, range2), brightBlue, range3);
 
+		// Add green tint based on total DE iterations
+		float iterFactor = saturate(finalResult.totalDEIterations / float(FRACTAL_DE_MAX_ITER * finalResult.steps));
+		float greenThreshold = 0.1;
+		if (iterFactor > greenThreshold)
+		{
+			// Steep exponential curve from greenThreshold to 1.0
+			float greenAmount = (iterFactor - greenThreshold) / (1.0 - greenThreshold);
+			greenAmount = pow(greenAmount, 2.0); // Quadratic for steep ramp
+			fractalColor = lerp(fractalColor, float3(0.3, 0.5, 0.6), greenAmount);
+		}
+
+		float greenPeak = 0.9;
+		if (iterFactor > greenPeak)
+		{
+			// Steep exponential curve from greenPeak to 1.0
+			float greenAmount = (iterFactor - greenPeak) / (1.0 - greenPeak);
+			greenAmount = pow(greenAmount, 5.0); // Quadratic for steep ramp
+			fractalColor = lerp(fractalColor, float3(0.3, 0.9, 0.7), greenAmount);
+		}
+
 		if (finalResult.hitStatus == HIT_STATUS_HIT)
 		{
 			// Direct hit: show fractal color
@@ -195,79 +284,32 @@ struct FractalFunctions
 		}
 	}
 
-	static float MandelbulbDE(float3 pos, float power)
+	// Spherical power fractal transformations
+	static float3 MandelbulbTransform(float3 z, float3 pos, float power)
 	{
-		float3 z = pos;
-		float dr = 1.0;
-		float r = 0.0;
-
-		for (int i = 0; i < FRACTAL_DE_MAX_ITER; i++)
-		{
-			r = length(z);
-			if (r > FRACTAL_DE_BAILOUT)
-				break;
-
-			float theta = acos(z.z / r);
-			float phi = atan2(z.y, z.x);
-			dr = pow(r, power - 1.0) * power * dr + 1.0;
-
-			float zr = pow(r, power);
-			RotateSpherical(theta, phi, power);
-			z = SphericalToCartesian(zr, theta, phi);
-			z += pos;
-		}
-
-		return FinalDE(r, dr);
+		SphericalCoords coords = CartesianToSpherical(z);
+		float zr = pow(coords.r, power);
+		RotateSpherical(coords.theta, coords.phi, power);
+		return SphericalToCartesian(zr, coords.theta, coords.phi) + pos;
 	}
-
-	static float BurningShipDE(float3 pos, float power)
+	static float3 BurningShipTransform(float3 z, float3 pos, float power)
 	{
-		float3 z = pos;
-		float dr = 1.0;
-		float r, theta, phi;
-
-		for (int i = 0; i < FRACTAL_DE_MAX_ITER; i++)
-		{
-			z = abs(z);
-			CartesianToSpherical(z, r, theta, phi);
-			if (r > FRACTAL_DE_BAILOUT)
-				break;
-
-			dr = pow(r, power - 1.0) * power * dr + 1.0;
-			float zr = pow(r, power);
-
-			RotateSpherical(theta, phi, power);
-			z = SphericalToCartesian(zr, theta, phi);
-			z += pos;
-		}
-
-		return FinalDE(r, dr);
+		z = abs(z);
+		SphericalCoords coords = CartesianToSpherical(z);
+		float zr = pow(coords.r, power);
+		RotateSpherical(coords.theta, coords.phi, power);
+		return SphericalToCartesian(zr, coords.theta, coords.phi) + pos;
 	}
-
-	static float JuliaSetDE(float3 pos, float power)
+	static float3 JuliaSetTransform(float3 z, float3 pos, float power)
 	{
-		float3 z = pos;
-		float dr = 1.0;
-		float r, theta, phi;
+		SphericalCoords coords = CartesianToSpherical(z);
+		float zr = pow(coords.r, power);
+		RotateSpherical(coords.theta, coords.phi, power);
 		float3 c = float3(-0.8, 0.156, 0.0);
-
-		for (int i = 0; i < FRACTAL_DE_MAX_ITER; i++)
-		{
-			CartesianToSpherical(z, r, theta, phi);
-			if (r > FRACTAL_DE_BAILOUT)
-				break;
-
-			dr = pow(r, power - 1.0) * power * dr + 1.0;
-			float zr = pow(r, power);
-
-			RotateSpherical(theta, phi, power);
-			z = SphericalToCartesian(zr, theta, phi);
-			z += c;
-		}
-
-		return FinalDE(r, dr);
+		return SphericalToCartesian(zr, coords.theta, coords.phi) + c;
 	}
 
+	
 	static void BoxFold(inout float3 z, float foldingLimit)
 	{
 		z.x = clamp(z.x, -foldingLimit, foldingLimit) * 2.0 - z.x;
@@ -295,15 +337,16 @@ struct FractalFunctions
 		}
 	}
 
-	static float MandelboxDE(float3 pos, float scale)
+	static DEResult MandelboxDE(float3 pos, float scale)
 	{
 		float3 z = pos;
 		float dr = 1.0;
 		const float foldingLimit = 1.0;
 		const float minRadius = 0.5;
 		const float fixedRadius = 1.0;
+		int i;
 
-		for (int i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
 		{
 			BoxFold(z, foldingLimit);
 			SphereFold(z, dr, minRadius, fixedRadius);
@@ -318,15 +361,19 @@ struct FractalFunctions
 		}
 
 		float r = length(z);
-		return r / abs(dr);
+		DEResult result;
+		result.distance = r / abs(dr);
+		result.iterations = i;
+		return result;
 	}
 
-	static float MengerSpongeDE(float3 pos)
+	static DEResult MengerSpongeDE(float3 pos)
 	{
 		float3 z = pos;
 		float dr = 1.0;
 		const float scale = 3.0;
-		for (int i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+		int i;
+		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
 		{
 			z = abs(z);
 			if (z.x < z.y) z.xy = z.yx;
@@ -336,15 +383,20 @@ struct FractalFunctions
 			dr *= scale;
 		}
 		float r = length(z);
-		return r / dr;
+		
+		DEResult result;
+		result.distance = r / dr;
+		result.iterations = i;
+		return result;
 	}
 
-	static float SierpinskiDE(float3 pos)
+	static DEResult SierpinskiDE(float3 pos)
 	{
 		float3 z = pos;
 		float dr = 1.0;
 		const float scale = 2.0;
-		for (int i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+		int i;
+		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
 		{
 			if (z.x + z.y < 0.0) z.xy = -z.yx;
 			if (z.x + z.z < 0.0) z.xz = -z.zx;
@@ -353,7 +405,11 @@ struct FractalFunctions
 			dr *= scale;
 		}
 		float r = length(z);
-		return r / dr;
+		
+		DEResult result;
+		result.distance = r / dr;
+		result.iterations = i;
+		return result;
 	}
 };
 

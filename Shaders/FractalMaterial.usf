@@ -95,10 +95,10 @@ struct FractalFunctions
 	// Marching function that can do cone marching (subdivisionFactor > 0) or ray marching (subdivisionFactor = 0)
 	// subdivisionFactor: 0 = precise ray marching, >0 = cone marching with that many pixels bundled
 	// startDistance & startSteps: allows continuing from where a previous march left off
-	static MarchResult MarchFractal(float3 RayOrigin, float3 RayDir, float subdivisionFactor, float startDistance, int startSteps, int fractalType, float power)
+	static MarchResult MarchFractal(float3 RayOrigin, float3 RayDir, int fractalType, float power)
 	{
-		float totalDist = startDistance;
-		int steps = startSteps;
+		float totalDist = 0.0;
+		int steps = 0;
 
 		while (totalDist < FRACTAL_MARCH_MAX_DISTANCE && steps < FRACTAL_MARCH_MAX_STEPS)
 		{
@@ -108,18 +108,7 @@ struct FractalFunctions
 
 			// Calculate precision threshold based on whether we're cone marching or ray marching
 			float pixelSize = GetPixelWorldRadius(totalDist);
-			float threshold;
-			
-			if (subdivisionFactor > 0.0)
-			{
-				// Cone marching: larger threshold based on cone radius
-				threshold = pixelSize * subdivisionFactor;
-			}
-			else
-			{
-				// Ray marching: threshold is pixel size
-				threshold = pixelSize;
-			}
+			float threshold = pixelSize;
 
 			// Check if we've hit the fractal
 			if (distEstimate <= threshold)
@@ -162,13 +151,9 @@ struct FractalFunctions
 		// Scale down the camera origin for better framing
 		float3 rayOrigin = cameraOrigin * 0.001;
 		float3 rayDir = worldDir;
-		
-		// First pass: Cone march with subdivision factor of 12 (bundle ~12 pixels per cone)
-		float subdivisionFactor = 12.0;
-		MarchResult coneResult = MarchFractal(rayOrigin, rayDir, subdivisionFactor, 0.0, 0);
-		
-		// Second pass: Ray march from where cone marching left off (subdivisionFactor = 0 for precise marching)
-		MarchResult finalResult = MarchFractal(rayOrigin, rayDir, 0.0, coneResult.distance, coneResult.steps);
+
+		// Ray march
+		MarchResult finalResult = MarchFractal(rayOrigin, rayDir, fractalType, power);
 
 		// Calculate color based on total steps taken
 		float stepFactor = saturate(finalResult.steps / float(FRACTAL_MARCH_MAX_STEPS));

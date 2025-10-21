@@ -4,6 +4,15 @@
 #include "FractalPawn.h"
 #include "FractalHUD.h"
 #include "MandelbulbDE.h"
+#include "MandelboxDE.h"
+#include "JuliaSetDE.h"
+#include "MengerSpongeDE.h"
+#include "SierpinskiDE.h"
+#include "BurningShipDE.h"
+#include "KleinianDE.h"
+#include "ApollonianDE.h"
+#include "QuaternionDE.h"
+#include "KaleidoscopicIFSDE.h"
 #include "FractalTracing.h"
 #include "GameFramework/FloatingPawnMovement.h"
 #include "Engine/Engine.h"
@@ -93,7 +102,7 @@ void AFractalPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
 
-	DistanceEstimator = MakeUnique<FMandelbulbDE>();
+	UpdateDistanceEstimator();
 
 	// If MPC not assigned in Blueprint, try to find it by name
 	if (!FractalMaterialCollection)
@@ -145,6 +154,9 @@ void AFractalPlayerController::Tick(float DeltaTime)
 	}
 
 	const FVector Loc = (PlayerCameraManager) ? PlayerCameraManager->GetCameraLocation() : P->GetActorLocation();
+
+	// Update fractal parameters with current power value
+	FractalParams.Power = CurrentPower;
 
 	const double Distance = DistanceEstimator->ComputeDistance(Loc, FractalParams);
 	const float DistanceFloat = static_cast<float>(Distance);
@@ -474,7 +486,51 @@ void AFractalPlayerController::Roll(float Value)
 void AFractalPlayerController::CycleFractalType()
 {
 	CurrentFractalType = (CurrentFractalType + 1) % (MaxFractalType + 1);
+	UpdateDistanceEstimator();
 	UpdateMaterialParameters();
+}
+
+void AFractalPlayerController::UpdateDistanceEstimator()
+{
+	// Create the appropriate distance estimator based on current fractal type
+	// Must match the fractal type indices in FractalMaterial.usf
+	switch (CurrentFractalType)
+	{
+		case 0: // FRACTAL_TYPE_MANDELBULB
+			DistanceEstimator = MakeUnique<FMandelbulbDE>();
+			break;
+		case 1: // FRACTAL_TYPE_BURNING_SHIP
+			DistanceEstimator = MakeUnique<FBurningShipDE>();
+			break;
+		case 2: // FRACTAL_TYPE_JULIA_SET
+			DistanceEstimator = MakeUnique<FJuliaSetDE>();
+			break;
+		case 3: // FRACTAL_TYPE_MANDELBOX
+			DistanceEstimator = MakeUnique<FMandelboxDE>();
+			break;
+		case 4: // FRACTAL_TYPE_INVERTED_MENGER
+			DistanceEstimator = MakeUnique<FMengerSpongeDE>();
+			break;
+		case 5: // FRACTAL_TYPE_KLEINIAN
+			DistanceEstimator = MakeUnique<FKleinianDE>();
+			break;
+		case 6: // FRACTAL_TYPE_APOLLONIAN
+			DistanceEstimator = MakeUnique<FApollonianDE>();
+			break;
+		case 7: // FRACTAL_TYPE_QUATERNION
+			DistanceEstimator = MakeUnique<FQuaternionDE>();
+			break;
+		case 8: // FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON
+			DistanceEstimator = MakeUnique<FSierpinskiDE>();
+			break;
+		case 9: // FRACTAL_TYPE_KALEIDOSCOPIC_IFS
+			DistanceEstimator = MakeUnique<FKaleidoscopicIFSDE>();
+			break;
+		default:
+			// Fallback to Mandelbulb for unknown types
+			DistanceEstimator = MakeUnique<FMandelbulbDE>();
+			break;
+	}
 }
 
 void AFractalPlayerController::UpdateMaterialParameters()

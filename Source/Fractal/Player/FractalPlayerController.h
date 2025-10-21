@@ -63,6 +63,7 @@ private:
 	void Roll(float Value);
 	void HandleQuit();
 	void CycleFractalType();
+	void UpdateDistanceEstimator();
 	void UpdateMaterialParameters();
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Movement", meta = (AllowPrivateAccess = "true"))

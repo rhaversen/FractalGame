@@ -17,13 +17,13 @@ struct FFractalParameters
 	double Scale = 1000.0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal")
-	int32 Iterations = 120;
+	int32 Iterations = 50;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal")
 	double Power = 8.0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal")
-	double Bailout = 4.0;
+	double Bailout = 50.0;
 
 	FFractalParameters() = default;
 

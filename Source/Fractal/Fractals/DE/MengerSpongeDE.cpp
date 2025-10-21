@@ -7,43 +7,46 @@ double FMengerSpongeDE::ComputeDistance(const FVector &WorldPos, const FFractalP
 	const FVector LocalPos = (WorldPos - Params.Center) / Params.Scale;
 
 	FVector z = LocalPos;
-	double scale = 1.0;
+	double dr = 1.0;
+	const double Scale = Params.Power;
+	const double Bailout = Params.Bailout;
 
 	for (int32 i = 0; i < Params.Iterations; i++)
 	{
+		// Octahedral fold (abs + sort)
 		z.X = FMath::Abs(z.X);
 		z.Y = FMath::Abs(z.Y);
 		z.Z = FMath::Abs(z.Z);
 
-		if (z.X - z.Y < 0.0)
+		// Sort components in descending order
+		if (z.X < z.Y)
 		{
 			double temp = z.Y;
 			z.Y = z.X;
 			z.X = temp;
 		}
-		if (z.X - z.Z < 0.0)
+		if (z.X < z.Z)
 		{
 			double temp = z.Z;
 			z.Z = z.X;
 			z.X = temp;
 		}
-		if (z.Y - z.Z < 0.0)
+		if (z.Y < z.Z)
 		{
 			double temp = z.Z;
 			z.Z = z.Y;
 			z.Y = temp;
 		}
 
-		z *= 3.0;
-		scale *= 3.0;
+		// Scale and translate (Inverted Menger transformation)
+		z = z * Scale - FVector(1.0, 1.0, 1.0) * (Scale - 1.0);
+		dr *= Scale;
 
-		z.X -= 2.0;
-		z.Y -= 2.0;
-
-		if (z.Z > 1.0)
-			z.Z -= 2.0;
+		if (z.SizeSquared() > Bailout * Bailout)
+			break;
 	}
 
-	const double dist = (z.Size() - 2.0) / scale;
-	return dist * Params.Scale;
+	const double r = z.Size();
+	const double DE = r / FMath::Abs(dr);
+	return DE * Params.Scale;
 }

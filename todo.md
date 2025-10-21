@@ -20,3 +20,5 @@ Alternative fractal morphing mode: Automatically go in the sin and cos with powe
 
 Alternative fractal movement mode: Let the player move, but when changing speed, we actually scale up the fractal and move the player in the local space, to achieve higher detail levels without floating point issues.
 We do the same for morphing between fractal types and powers.
+
+Add seamless support for higher dimensional fractals, like the quaternion fractal. Swap between different dimension float vectors.

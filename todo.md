@@ -11,3 +11,5 @@ When changing fractal type, smoothly interpolate between the two fractal types o
 When changing power, limit the rate of change based on how close the player is to the fractal surface. This will make it impossible to clip through the fractal by changing power.
 
 When reaching the end of the power scale, smoothly slow down the rate of change to zero, instead of reaching the limit abruptly.
+
+Have custom power range for each fractal type.

@@ -13,3 +13,7 @@ When changing power, limit the rate of change based on how close the player is t
 When reaching the end of the power scale, smoothly slow down the rate of change to zero, instead of reaching the limit abruptly.
 
 Have custom power range for each fractal type.
+
+We should interpolate between two different DE functions by making hybrid fractals and sliding the start/stop from the max de iter and 0, to gradually convert from one fractal to another. Then, we string all fractals together in a big list, and loop through them when changing fractal type.
+
+Alternative fractal morphing mode: Automatically go in the sin and cos with power and fractal type, to create a continuous morphing fractal experience.

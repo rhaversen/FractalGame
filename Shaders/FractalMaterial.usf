@@ -237,9 +237,7 @@ struct FractalFunctions
 		return PowerFractalDE(pos, FRACTAL_TYPE_MANDELBULB, power);
 	}
 
-	// Marching function that can do cone marching (subdivisionFactor > 0) or ray marching (subdivisionFactor = 0)
-	// subdivisionFactor: 0 = precise ray marching, >0 = cone marching with that many pixels bundled
-	// startDistance & startSteps: allows continuing from where a previous march left off
+	// Marching function
 	static MarchResult MarchFractal(float3 RayOrigin, float3 RayDir, int fractalType, float power)
 	{
 		float totalDist = 0.0;

@@ -108,8 +108,12 @@ void AFractalHUD::DrawFractalParameters(float X, float Y, float UIScale)
 		TEXT("Burning Ship"),
 		TEXT("Julia Set"),
 		TEXT("Mandelbox"),
-		TEXT("Menger Sponge"),
-		TEXT("Sierpinski")
+		TEXT("Inverted Menger"),
+		TEXT("Kleinian"),
+		TEXT("Apollonian"),
+		TEXT("Quaternion"),
+		TEXT("Sierpinski Tetrahedron"),
+		TEXT("Kaleidoscopic IFS")
 	};
 	
 	// Update transition animation

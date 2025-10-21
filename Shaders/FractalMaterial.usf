@@ -9,8 +9,12 @@
 #define FRACTAL_TYPE_BURNING_SHIP 1
 #define FRACTAL_TYPE_JULIA_SET 2
 #define FRACTAL_TYPE_MANDELBOX 3
-#define FRACTAL_TYPE_MENGER_SPONGE 4
-#define FRACTAL_TYPE_SIERPINSKI 5
+#define FRACTAL_TYPE_INVERTED_MENGER 4
+#define FRACTAL_TYPE_KLEINIAN 5
+#define FRACTAL_TYPE_APOLLONIAN 6
+#define FRACTAL_TYPE_QUATERNION 7
+#define FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON 8
+#define FRACTAL_TYPE_KALEIDOSCOPIC_IFS 9
 
 #define HIT_STATUS_NONE 0
 #define HIT_STATUS_HIT 1
@@ -127,10 +131,18 @@ struct FractalFunctions
 			}
 			case FRACTAL_TYPE_MANDELBOX:
 				return MandelboxDE(pos, power);
-			case FRACTAL_TYPE_MENGER_SPONGE:
-				return MengerSpongeDE(pos);
-			case FRACTAL_TYPE_SIERPINSKI:
-				return SierpinskiDE(pos);
+			case FRACTAL_TYPE_INVERTED_MENGER:
+				return InvertedMengerDE(pos, power);
+			case FRACTAL_TYPE_KLEINIAN:
+				return KleinianDE(pos, power);
+			case FRACTAL_TYPE_APOLLONIAN:
+				return ApollonianDE(pos, power);
+			case FRACTAL_TYPE_QUATERNION:
+				return QuaternionDE(pos, power);
+			case FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON:
+				return SierpinskiTetrahedronDE(pos, power);
+			case FRACTAL_TYPE_KALEIDOSCOPIC_IFS:
+				return KaleidoscopicIFSDE(pos, power);
 			default:
 			{
 				float3 z = pos;
@@ -367,47 +379,253 @@ struct FractalFunctions
 		return result;
 	}
 
-	static DEResult MengerSpongeDE(float3 pos)
+	static DEResult InvertedMengerDE(float3 pos, float power)
 	{
 		float3 z = pos;
 		float dr = 1.0;
-		const float scale = 3.0;
+		const float scale = power;
 		int i;
+		
 		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
 		{
+			// Octahedral/cubic symmetry
 			z = abs(z);
 			if (z.x < z.y) z.xy = z.yx;
 			if (z.x < z.z) z.xz = z.zx;
 			if (z.y < z.z) z.yz = z.zy;
-			z = z * scale - float3(2.0, 2.0, 2.0);
+			
+			z = z * scale - float3(1.0, 1.0, 1.0) * (scale - 1.0);
 			dr *= scale;
+			
+			if (length(z) > FRACTAL_DE_BAILOUT)
+				break;
 		}
-		float r = length(z);
 		
+		float r = length(z);
 		DEResult result;
-		result.distance = r / dr;
+		result.distance = r / abs(dr);
 		result.iterations = i;
 		return result;
 	}
 
-	static DEResult SierpinskiDE(float3 pos)
+	static DEResult KleinianDE(float3 pos, float power)
 	{
 		float3 z = pos;
 		float dr = 1.0;
-		const float scale = 2.0;
+		float scale = 1.0 + (power - 1.0) * 0.1; // Power affects scale more gradually
 		int i;
+		
+		const float minRadius = 0.3;
+		const float minRadius2 = minRadius * minRadius;
+		const float fixedRadius = 1.0;
+		const float fixedRadius2 = fixedRadius * fixedRadius;
+		
 		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
 		{
+			float r2 = dot(z, z);
+			
+			// Sphere folding
+			if (r2 < minRadius2)
+			{
+				float temp = fixedRadius2 / minRadius2;
+				z *= temp;
+				dr *= temp;
+			}
+			else if (r2 < fixedRadius2)
+			{
+				float temp = fixedRadius2 / r2;
+				z *= temp;
+				dr *= temp;
+			}
+			
+			// Scale and translate
+			z = z * scale + pos;
+			dr = dr * abs(scale) + 1.0;
+			
+			if (r2 > FRACTAL_DE_BAILOUT * FRACTAL_DE_BAILOUT)
+				break;
+		}
+		
+		float r = length(z);
+		DEResult result;
+		result.distance = r / abs(dr);
+		result.iterations = i;
+		return result;
+	}
+
+	static DEResult ApollonianDE(float3 pos, float power)
+	{
+		float3 z = pos;
+		float dr = 1.0;
+		float scale = 1.0 + (power - 1.0) * 0.15; // Power affects scale
+		int i;
+		
+		// Four spheres in tetrahedral arrangement for Apollonian gasket
+		const float3 center1 = float3(1.0, 1.0, 1.0);
+		const float3 center2 = float3(1.0, -1.0, -1.0);
+		const float3 center3 = float3(-1.0, 1.0, -1.0);
+		const float3 center4 = float3(-1.0, -1.0, 1.0);
+		const float radius = 1.0;
+		
+		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+		{
+			// Find closest sphere and invert through it
+			float3 diff1 = z - center1;
+			float3 diff2 = z - center2;
+			float3 diff3 = z - center3;
+			float3 diff4 = z - center4;
+			
+			float d1 = dot(diff1, diff1);
+			float d2 = dot(diff2, diff2);
+			float d3 = dot(diff3, diff3);
+			float d4 = dot(diff4, diff4);
+			
+			float3 closest = center1;
+			float closestD = d1;
+			
+			if (d2 < closestD) { closest = center2; closestD = d2; }
+			if (d3 < closestD) { closest = center3; closestD = d3; }
+			if (d4 < closestD) { closest = center4; closestD = d4; }
+			
+			// Sphere inversion
+			float3 diff = z - closest;
+			float r2 = dot(diff, diff);
+			float k = radius * radius / max(r2, 0.01);
+			z = closest + diff * k;
+			dr *= k;
+			
+			// Scale
+			z *= scale;
+			dr *= scale;
+			
+			if (length(z) > FRACTAL_DE_BAILOUT)
+				break;
+		}
+		
+		DEResult result;
+		result.distance = length(z) / abs(dr);
+		result.iterations = i;
+		return result;
+	}
+
+	static DEResult QuaternionDE(float3 pos, float power)
+	{
+		float4 z = float4(pos, 0.0);
+		float4 c = float4(pos, 0.0);
+		float dr = 1.0;
+		int i;
+		
+		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+		{
+			float r = length(z);
+			if (r > FRACTAL_DE_BAILOUT)
+				break;
+			
+			// Quaternion multiplication (z^power)
+			float theta = acos(z.w / r) * power;
+			float phi = atan2(z.y, z.x) * power;
+			float zr = pow(r, power);
+			
+			float sinTheta = sin(theta);
+			z = float4(
+				zr * sinTheta * cos(phi),
+				zr * sinTheta * sin(phi),
+				zr * cos(theta),
+				0.0
+			);
+			
+			z += c;
+			dr = pow(r, power - 1.0) * power * dr + 1.0;
+		}
+		
+		float r = length(z);
+		DEResult result;
+		result.distance = FinalDE(r, dr);
+		result.iterations = i;
+		return result;
+	}
+
+	static DEResult SierpinskiTetrahedronDE(float3 pos, float power)
+	{
+		float3 z = pos;
+		float dr = 1.0;
+		const float scale = power;
+		int i;
+		
+		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+		{
+			// Tetrahedral folding (creates triangular pyramids with 4 faces)
 			if (z.x + z.y < 0.0) z.xy = -z.yx;
 			if (z.x + z.z < 0.0) z.xz = -z.zx;
 			if (z.y + z.z < 0.0) z.yz = -z.zy;
-			z = z * scale - float3(1.0, 1.0, 1.0);
+			
+			// Additional octahedral symmetry
+			if (z.x - z.y < 0.0) z.xy = z.yx;
+			if (z.x - z.z < 0.0) z.xz = z.zx;
+			if (z.y - z.z < 0.0) z.yz = z.zy;
+			
+			z = z * scale - float3(1.0, 1.0, 1.0) * (scale - 1.0);
 			dr *= scale;
+			
+			if (length(z) > FRACTAL_DE_BAILOUT)
+				break;
 		}
-		float r = length(z);
 		
+		float r = length(z);
 		DEResult result;
-		result.distance = r / dr;
+		result.distance = r / abs(dr);
+		result.iterations = i;
+		return result;
+	}
+
+	static DEResult KaleidoscopicIFSDE(float3 pos, float power)
+	{
+		float3 z = pos;
+		float dr = 1.0;
+		const float scale = power;
+		int i;
+		
+		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+		{
+			// Kaleidoscopic folding
+			z = abs(z);
+			
+			// Plane foldings
+			float t;
+			if (z.x - z.y < 0.0) { t = z.x; z.x = z.y; z.y = t; }
+			if (z.x - z.z < 0.0) { t = z.x; z.x = z.z; z.z = t; }
+			if (z.y - z.z < 0.0) { t = z.y; z.y = z.z; z.z = t; }
+			
+			// Sphere folding
+			float r2 = dot(z, z);
+			float minRadius = 0.5;
+			float fixedRadius = 1.0;
+			float minRadius2 = minRadius * minRadius;
+			float fixedRadius2 = fixedRadius * fixedRadius;
+			
+			if (r2 < minRadius2)
+			{
+				float temp = fixedRadius2 / minRadius2;
+				z *= temp;
+				dr *= temp;
+			}
+			else if (r2 < fixedRadius2)
+			{
+				float temp = fixedRadius2 / r2;
+				z *= temp;
+				dr *= temp;
+			}
+			
+			z = z * scale + pos;
+			dr = dr * abs(scale) + 1.0;
+			
+			if (length(z) > FRACTAL_DE_BAILOUT)
+				break;
+		}
+		
+		float r = length(z);
+		DEResult result;
+		result.distance = r / abs(dr);
 		result.iterations = i;
 		return result;
 	}
@@ -423,5 +641,9 @@ struct FractalFunctions
 // 1 = Burning Ship
 // 2 = Julia Set
 // 3 = Mandelbox
-// 4 = Menger Sponge
-// 5 = Sierpinski
+// 4 = Inverted Menger (cube-based IFS with holes as surface)
+// 5 = Kleinian (bubble-like sphere inversions)
+// 6 = Apollonian (sphere packing)
+// 7 = Quaternion (4D Julia set)
+// 8 = Sierpinski Tetrahedron (triangular pyramid fractal with 4 faces)
+// 9 = Kaleidoscopic IFS (complex mirrored patterns)

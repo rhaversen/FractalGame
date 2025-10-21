@@ -20,12 +20,15 @@ public:
 	AFractalPlayerController();
 	virtual ~AFractalPlayerController();
 
+	// Maximum fractal type index (must match shader defines)
+	static constexpr int32 MaxFractalType = 9;
+
 	// Material Parameter Collection for shader control
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Material")
 	TObjectPtr<UMaterialParameterCollection> FractalMaterialCollection;
 
-	// Current fractal type (0-5 based on shader defines)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Material", meta = (ClampMin = "0", ClampMax = "5"))
+	// Current fractal type (0-9 based on shader defines)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Material", meta = (ClampMin = "0", ClampMax = "9"))
 	int32 CurrentFractalType = 0;
 
 	// Current power value for the fractal

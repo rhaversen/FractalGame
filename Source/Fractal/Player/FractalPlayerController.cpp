@@ -473,7 +473,7 @@ void AFractalPlayerController::Roll(float Value)
 
 void AFractalPlayerController::CycleFractalType()
 {
-	CurrentFractalType = (CurrentFractalType + 1) % 6;
+	CurrentFractalType = (CurrentFractalType + 1) % (MaxFractalType + 1);
 	UpdateMaterialParameters();
 }
 

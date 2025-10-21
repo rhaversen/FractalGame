@@ -120,8 +120,9 @@ struct FractalFunctions
 				return result;
 			}
 
-			// Advance by the distance estimate
-			totalDist += distEstimate;
+			// Advance by the distance estimate, with minimum step to avoid precision issues
+			float stepSize = max(deResult.distance, pixelSize * 0.5); // Never step smaller than half a pixel
+			totalDist += stepSize;
 		}
 
 		MarchResult result;

@@ -2,6 +2,14 @@
 
 An Unreal Engine 5 project featuring real-time raymarched Mandelbulb fractals with adaptive LOD and camera movement based on distance estimation.
 
+# Playing
+
+Download the latest release from the [Releases](https://github.com/YourUsername/FractalGame/releases) page.
+
+# Development
+
+To build and run the project locally, follow these steps:
+
 ## Prerequisites
 
 ### Required Software

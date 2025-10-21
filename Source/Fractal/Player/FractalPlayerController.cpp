@@ -7,6 +7,8 @@
 #include "FractalTracing.h"
 #include "GameFramework/FloatingPawnMovement.h"
 #include "Engine/Engine.h"
+#include "Materials/MaterialParameterCollection.h"
+#include "Materials/MaterialParameterCollectionInstance.h"
 
 // Persistent initial state for reset
 namespace
@@ -92,6 +94,62 @@ void AFractalPlayerController::BeginPlay()
 	Super::BeginPlay();
 
 	DistanceEstimator = MakeUnique<FMandelbulbDE>();
+
+	// If MPC not assigned in Blueprint, try to find it by name
+	if (!FractalMaterialCollection)
+	{
+		FractalMaterialCollection = LoadObject<UMaterialParameterCollection>(
+			nullptr, 
+			TEXT("/Game/MPC_FractalParameters.MPC_FractalParameters")
+		);
+		
+		if (FractalMaterialCollection)
+		{
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Yellow, 
+					TEXT("MPC auto-loaded from hardcoded path"));
+			}
+		}
+	}
+
+	// Get the MPC instance from the world
+	if (FractalMaterialCollection && GetWorld())
+	{
+		MPCInstance = GetWorld()->GetParameterCollectionInstance(FractalMaterialCollection);
+		if (MPCInstance)
+		{
+			// Initialize material parameters
+			UpdateMaterialParameters();
+			
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green, 
+					TEXT("Material Parameter Collection initialized successfully!"));
+			}
+		}
+		else
+		{
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 10.0f, FColor::Red, 
+					TEXT("ERROR: Failed to get MPC Instance!"));
+			}
+		}
+	}
+	else
+	{
+		if (GEngine)
+		{
+			FString ErrorMsg = TEXT("ERROR: ");
+			if (!FractalMaterialCollection)
+				ErrorMsg += TEXT("FractalMaterialCollection is NULL! ");
+			if (!GetWorld())
+				ErrorMsg += TEXT("World is NULL!");
+			
+			GEngine->AddOnScreenDebugMessage(-1, 10.0f, FColor::Red, ErrorMsg);
+		}
+	}
 }
 
 void AFractalPlayerController::Tick(float DeltaTime)
@@ -280,6 +338,61 @@ void AFractalPlayerController::SetupInputComponent()
 
 	// Escape: quit game / close process (now via Action Mapping 'Quit' in DefaultInput.ini)
 	InputComponent->BindAction(TEXT("Quit"), IE_Pressed, this, &AFractalPlayerController::HandleQuit);
+
+	// Fractal parameter controls (from DefaultInput.ini)
+	InputComponent->BindAction(TEXT("CycleFractalType"), IE_Pressed, this, &AFractalPlayerController::CycleFractalType);
+	
+	// Power adjustment - uses axis so it works while held
+	{
+		FInputAxisBinding &PowerAdjust = InputComponent->BindAxis(TEXT("AdjustPower"));
+		PowerAdjust.AxisDelegate.GetDelegateForManualSet().BindLambda([this](float Value)
+		{
+			const float DeltaTime = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.016f;
+			
+			// Target velocity based on input
+			const float TargetPowerVelocity = Value * PowerAdjustSpeed;
+			
+			// Apply acceleration or deceleration
+			if (FMath::IsNearlyZero(Value))
+			{
+				// No input - decelerate to zero
+				if (CurrentPowerVelocity > 0.0f)
+				{
+					CurrentPowerVelocity = FMath::Max(0.0f, CurrentPowerVelocity - PowerAdjustDeceleration * DeltaTime);
+				}
+				else if (CurrentPowerVelocity < 0.0f)
+				{
+					CurrentPowerVelocity = FMath::Min(0.0f, CurrentPowerVelocity + PowerAdjustDeceleration * DeltaTime);
+				}
+			}
+			else
+			{
+				// Check if input direction opposes current velocity (directional braking)
+				const bool bOpposingDirection = (Value > 0.0f && CurrentPowerVelocity < 0.0f) || 
+												(Value < 0.0f && CurrentPowerVelocity > 0.0f);
+				
+				// Use deceleration rate when changing direction, acceleration rate otherwise
+				const float RateToApply = bOpposingDirection ? PowerAdjustDeceleration : PowerAdjustAcceleration;
+				
+				// Accelerate toward target velocity
+				if (CurrentPowerVelocity < TargetPowerVelocity)
+				{
+					CurrentPowerVelocity = FMath::Min(TargetPowerVelocity, CurrentPowerVelocity + RateToApply * DeltaTime);
+				}
+				else if (CurrentPowerVelocity > TargetPowerVelocity)
+				{
+					CurrentPowerVelocity = FMath::Max(TargetPowerVelocity, CurrentPowerVelocity - RateToApply * DeltaTime);
+				}
+			}
+			
+			// Apply power adjustment if there's any velocity
+			if (!FMath::IsNearlyZero(CurrentPowerVelocity))
+			{
+				CurrentPower = FMath::Clamp(CurrentPower + (CurrentPowerVelocity * DeltaTime), 1.0f, 19.0f);
+				UpdateMaterialParameters();
+			}
+		});
+	}
 }
 
 void AFractalPlayerController::HandleQuit()
@@ -393,5 +506,54 @@ void AFractalPlayerController::Roll(float Value)
 		const FQuat DeltaQ = FQuat(Axis, AngleRad);
 		const FQuat NewQ = DeltaQ * P->GetActorQuat();
 		P->SetActorRotation(NewQ);
+	}
+}
+
+void AFractalPlayerController::CycleFractalType()
+{
+	// Cycle through fractal types (0-5 based on shader defines)
+	CurrentFractalType = (CurrentFractalType + 1) % 6;
+	UpdateMaterialParameters();
+
+	if (GEngine)
+	{
+		const FString TypeNames[] = { TEXT("Mandelbulb"), TEXT("Burning Ship"), TEXT("Julia Set"), 
+									  TEXT("Mandelbox"), TEXT("Menger Sponge"), TEXT("Sierpinski") };
+		GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Cyan, 
+			FString::Printf(TEXT("Fractal Type: %s"), *TypeNames[CurrentFractalType]));
+	}
+}
+
+void AFractalPlayerController::UpdateMaterialParameters()
+{
+	if (MPCInstance)
+	{
+		// Update the scalar parameters in the Material Parameter Collection
+		bool bSuccess1 = MPCInstance->SetScalarParameterValue(FName("FractalType"), static_cast<float>(CurrentFractalType));
+		bool bSuccess2 = MPCInstance->SetScalarParameterValue(FName("Power"), CurrentPower);
+		
+		if (GEngine)
+		{
+			if (bSuccess1 && bSuccess2)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green, 
+					FString::Printf(TEXT("MPC Updated: Type=%d, Power=%.1f"), CurrentFractalType, CurrentPower));
+			}
+			else
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, 
+					FString::Printf(TEXT("MPC Update FAILED! Type=%s, Power=%s"), 
+						bSuccess1 ? TEXT("OK") : TEXT("FAIL"),
+						bSuccess2 ? TEXT("OK") : TEXT("FAIL")));
+			}
+		}
+	}
+	else
+	{
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, 
+				TEXT("ERROR: MPCInstance is NULL! Cannot update parameters."));
+		}
 	}
 }

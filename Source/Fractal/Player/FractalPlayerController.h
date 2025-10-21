@@ -8,6 +8,8 @@
 #include "FractalPlayerController.generated.h"
 
 class IFractalDistanceEstimator;
+class UMaterialParameterCollection;
+class UMaterialParameterCollectionInstance;
 
 UCLASS()
 class AFractalPlayerController : public APlayerController
@@ -17,6 +19,28 @@ class AFractalPlayerController : public APlayerController
 public:
 	AFractalPlayerController();
 	virtual ~AFractalPlayerController();
+
+	// Material Parameter Collection for shader control
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Material")
+	TObjectPtr<UMaterialParameterCollection> FractalMaterialCollection;
+
+	// Current fractal type (0-5 based on shader defines)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Material", meta = (ClampMin = "0", ClampMax = "5"))
+	int32 CurrentFractalType = 0;
+
+	// Current power value for the fractal
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Material", meta = (ClampMin = "1.0", ClampMax = "19.0"))
+	float CurrentPower = 8.0f;
+
+	// Power adjustment parameters
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Material")
+	float PowerAdjustSpeed = 2.0f; // Max units per second
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Material")
+	float PowerAdjustAcceleration = 0.5f; // How fast it ramps up
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Material")
+	float PowerAdjustDeceleration = 4.0f; // How fast it slows down
 
 protected:
 	virtual void BeginPlay() override;
@@ -34,6 +58,8 @@ private:
 	void Tilt(float Value);
 	void Roll(float Value);
 	void HandleQuit();
+	void CycleFractalType();
+	void UpdateMaterialParameters();
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Movement", meta = (AllowPrivateAccess = "true"))
 	float RollSpeedDegPerSec = 90.0f;
@@ -46,6 +72,9 @@ private:
 
 	// Current roll velocity (degrees per second)
 	float CurrentRollVelocity = 0.0f;
+
+	// Current power adjustment velocity
+	float CurrentPowerVelocity = 0.0f;
 
 	// Accumulated movement input for this frame (processed in Tick)
 	FVector AccumulatedMovementInput = FVector::ZeroVector;
@@ -80,4 +109,7 @@ private:
 	bool bShowHelp = false;
 
 	TUniquePtr<IFractalDistanceEstimator> DistanceEstimator;
+
+	// Cached MPC instance
+	UMaterialParameterCollectionInstance* MPCInstance = nullptr;
 };

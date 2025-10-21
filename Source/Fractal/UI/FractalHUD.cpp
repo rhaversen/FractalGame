@@ -24,20 +24,13 @@ void AFractalHUD::DrawHUD()
 	{
 		DrawTopLeftInfo(MarginX, MarginY, UIScale);
 		DrawTopRightInfo(Canvas->SizeX - MarginX, MarginY, UIScale);
-		DrawBottomLeftInfo(MarginX, Canvas->SizeY - MarginY, UIScale);
 	}
+	
+	DrawFractalParameters(Canvas->SizeX - MarginX, Canvas->SizeY - MarginY, UIScale);
 
 	if (bShowHelp)
 	{
 		DrawControlsPanel(Canvas->SizeX / 2, Canvas->SizeY / 2, UIScale);
-	}
-	else
-	{
-		const FVector2D HintPos(Canvas->SizeX / 2, Canvas->SizeY - 50.0f * UIScale);
-		DrawCenteredText(TEXT("[ H ] CONTROLS"), HintPos, FLinearColor(0.5f, 0.8f, 1.0f, 0.4f), UIScale * 1.0f);
-
-		const FVector2D ResetHintPos(Canvas->SizeX / 2, Canvas->SizeY - 25.0f * UIScale);
-		DrawCenteredText(TEXT("[ R ] RESET POSITION"), ResetHintPos, FLinearColor(1.0f, 0.5f, 0.5f, 0.4f), UIScale * 0.9f);
 	}
 }
 
@@ -104,6 +97,162 @@ void AFractalHUD::DrawBottomLeftInfo(float X, float Y, float UIScale)
 			 FLinearColor(0.5f, 0.5f, 0.6f, 0.6f), UIScale * 0.9f);
 }
 
+void AFractalHUD::DrawFractalParameters(float X, float Y, float UIScale)
+{
+	const float ScreenWidth = Canvas->SizeX;
+	const float Margin = 30.0f * UIScale;
+	const float BottomMargin = 15.0f * UIScale;
+	
+	const TArray<FString> FractalNames = {
+		TEXT("Mandelbulb"),
+		TEXT("Burning Ship"),
+		TEXT("Julia Set"),
+		TEXT("Mandelbox"),
+		TEXT("Menger Sponge"),
+		TEXT("Sierpinski")
+	};
+	
+	// Update transition animation
+	if (CurrentFractalType != PreviousFractalType)
+	{
+		float CurrentTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		if (LastTransitionTime == 0.0f || CurrentTime - LastTransitionTime > 0.5f)
+		{
+			LastTransitionTime = CurrentTime;
+			TypeTransitionProgress = 0.0f;
+		}
+	}
+	
+	if (TypeTransitionProgress < 1.0f)
+	{
+		float CurrentTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+		float DeltaTime = CurrentTime - LastTransitionTime;
+		TypeTransitionProgress = FMath::Clamp(DeltaTime / 0.3f, 0.0f, 1.0f);
+		
+		if (TypeTransitionProgress >= 1.0f)
+		{
+			PreviousFractalType = CurrentFractalType;
+		}
+	}
+	
+	// Smooth easing function
+	float EasedProgress = TypeTransitionProgress * TypeTransitionProgress * (3.0f - 2.0f * TypeTransitionProgress);
+	
+	// Type wheel in bottom-right corner
+	const float TypePanelWidth = 240.0f * UIScale;
+	const float TypePanelHeight = 120.0f * UIScale;
+	const float TypePanelX = X - TypePanelWidth;
+	const float TypePanelY = Y - BottomMargin - 80.0f * UIScale - TypePanelHeight;
+	const float Padding = 12.0f * UIScale;
+	
+	DrawPanel(TypePanelX, TypePanelY, TypePanelWidth, TypePanelHeight, FLinearColor(0.01f, 0.01f, 0.03f, 0.75f));
+	
+	float CurrentY = TypePanelY + Padding;
+	
+	DrawText(TEXT("TYPE"), FVector2D(TypePanelX + Padding, CurrentY),
+			 FLinearColor(0.5f, 0.5f, 0.6f, 0.9f), UIScale * 1.0f);
+	CurrentY += 28.0f * UIScale;
+	
+	const float WheelCenterY = CurrentY + 30.0f * UIScale;
+	const float ItemSpacing = 35.0f * UIScale;
+	const float TransitionOffset = ItemSpacing * EasedProgress;
+	
+	int32 NumTypes = FractalNames.Num();
+	int32 PrevType = (CurrentFractalType - 1 + NumTypes) % NumTypes;
+	int32 NextType = (CurrentFractalType + 1) % NumTypes;
+	
+	// Colors for interpolation
+	const FLinearColor FadedColor = FLinearColor(0.3f, 0.3f, 0.4f, 0.4f);
+	const FLinearColor BrightColor = FLinearColor(0.3f, 1.0f, 0.5f, 1.0f);
+	
+	// Scales for interpolation
+	const float FadedScale = 0.8f;
+	const float BrightScale = 1.1f;
+	
+	// Draw previous (above, fading out and shrinking)
+	float PrevY = WheelCenterY - ItemSpacing - TransitionOffset;
+	if (PrevY >= TypePanelY - 20.0f * UIScale && PrevY <= TypePanelY + TypePanelHeight)
+	{
+		// Previous is becoming more faded and smaller as it moves out
+		float PrevScale = FMath::Lerp(BrightScale, FadedScale, EasedProgress);
+		FLinearColor PrevColor = FLinearColor::LerpUsingHSV(BrightColor, FadedColor, EasedProgress);
+		
+		DrawText(FractalNames[PrevType], FVector2D(TypePanelX + Padding + 8.0f * UIScale, PrevY),
+				 PrevColor, UIScale * PrevScale);
+	}
+	
+	// Draw current (center, transitioning from faded to bright)
+	float CurY = WheelCenterY - TransitionOffset;
+	if (CurY >= TypePanelY - 20.0f * UIScale && CurY <= TypePanelY + TypePanelHeight + 20.0f * UIScale)
+	{
+		// Current is growing and brightening as it centers
+		float CurScale = FMath::Lerp(FadedScale, BrightScale, EasedProgress);
+		FLinearColor CurColor = FLinearColor::LerpUsingHSV(FadedColor, BrightColor, EasedProgress);
+		
+		DrawText(FractalNames[CurrentFractalType], FVector2D(TypePanelX + Padding + 8.0f * UIScale, CurY),
+				 CurColor, UIScale * CurScale);
+	}
+	
+	// Draw next (below, transitioning from faded to current position)
+	float NextY = WheelCenterY + ItemSpacing - TransitionOffset;
+	if (NextY >= TypePanelY && NextY <= TypePanelY + TypePanelHeight + 20.0f * UIScale)
+	{
+		// Next remains faded and small as it moves up toward center
+		float NextScale = FadedScale;
+		FLinearColor NextColor = FadedColor;
+		
+		DrawText(FractalNames[NextType], FVector2D(TypePanelX + Padding + 8.0f * UIScale, NextY),
+				 NextColor, UIScale * NextScale);
+	}
+	
+	// Hints and version above power bar
+	if (!bShowHelp)
+	{
+		const float HintY = Y - BottomMargin - 115.0f * UIScale;
+		
+		DrawCenteredText(TEXT("FRACTAL EXPLORER v1.0"), 
+			FVector2D(ScreenWidth / 2, HintY), 
+			FLinearColor(0.4f, 0.4f, 0.5f, 0.5f), UIScale * 0.85f);
+		
+		DrawCenteredText(TEXT("[ H ] CONTROLS  •  [ R ] RESET"), 
+			FVector2D(ScreenWidth / 2, HintY + 22.0f * UIScale), 
+			FLinearColor(0.5f, 0.7f, 0.9f, 0.6f), UIScale * 0.9f);
+	}
+	
+	// Power bar at bottom - simple two-color slider
+	const float PowerBarHeight = 12.0f * UIScale;
+	const float PowerBarY = Y - BottomMargin - PowerBarHeight - 15.0f * UIScale;
+	const float PowerBarX = Margin;
+	const float PowerBarWidth = ScreenWidth - (Margin * 2);
+	
+	const float LabelWidth = 70.0f * UIScale;
+	const float ValueWidth = 90.0f * UIScale;
+	
+	DrawText(TEXT("POWER"), FVector2D(PowerBarX, PowerBarY - 20.0f * UIScale),
+			 FLinearColor(0.6f, 0.6f, 0.7f, 0.9f), UIScale * 1.2f);
+	
+	const float SliderX = PowerBarX + LabelWidth;
+	const float SliderWidth = PowerBarWidth - LabelWidth - ValueWidth;
+	
+	const float MinPower = 1.0f;
+	const float MaxPower = 19.0f;
+	const float PowerPercent = (CurrentPower - MinPower) / (MaxPower - MinPower);
+	
+	const float SplitX = SliderX + (SliderWidth * PowerPercent);
+	
+	FCanvasTileItem LeftRect(FVector2D(SliderX, PowerBarY), FVector2D(SplitX - SliderX, PowerBarHeight), FLinearColor(1.0f, 0.6f, 0.2f, 0.9f));
+	LeftRect.BlendMode = SE_BLEND_Translucent;
+	Canvas->DrawItem(LeftRect);
+	
+	FCanvasTileItem RightRect(FVector2D(SplitX, PowerBarY), FVector2D((SliderX + SliderWidth) - SplitX, PowerBarHeight), FLinearColor(0.15f, 0.15f, 0.2f, 0.9f));
+	RightRect.BlendMode = SE_BLEND_Translucent;
+	Canvas->DrawItem(RightRect);
+	
+	FString PowerText = FString::Printf(TEXT("%.1f"), CurrentPower);
+	DrawText(PowerText, FVector2D(SliderX + SliderWidth + 15.0f * UIScale, PowerBarY - 3.0f * UIScale),
+			 FLinearColor(1.0f, 0.9f, 0.3f, 0.95f), UIScale * 1.3f);
+}
+
 void AFractalHUD::DrawInfoPanel(float X, float Y, float UIScale)
 {
 	DrawTopLeftInfo(X, Y, UIScale);
@@ -112,7 +261,7 @@ void AFractalHUD::DrawInfoPanel(float X, float Y, float UIScale)
 void AFractalHUD::DrawControlsPanel(float CenterX, float CenterY, float UIScale)
 {
 	const float PanelWidth = 850.0f * UIScale;
-	const float PanelHeight = 680.0f * UIScale;
+	const float PanelHeight = 750.0f * UIScale;
 	const float X = CenterX - PanelWidth / 2;
 	const float Y = CenterY - PanelHeight / 2;
 	const float Padding = 45.0f * UIScale;
@@ -138,13 +287,24 @@ void AFractalHUD::DrawControlsPanel(float CenterX, float CenterY, float UIScale)
 	DrawVerticalControls(CenterX, CurrentY, KeySize, KeySpacing, UIScale);
 	CurrentY += KeySize + 62.0f * UIScale;
 
-	DrawText(TEXT("OTHER"), FVector2D(CenterX - 35.0f * UIScale, CurrentY),
+	DrawText(TEXT("FRACTAL & OTHER"), FVector2D(CenterX - 95.0f * UIScale, CurrentY),
 			 FLinearColor(0.7f, 0.7f, 0.8f, 0.9f), UIScale * 1.4f);
 	CurrentY += 38.0f * UIScale;
 
 	const float BottomSectionY = CurrentY;
-	DrawMouseControls(CenterX - 170.0f * UIScale, BottomSectionY, UIScale);
-	DrawOtherControls(CenterX + 60.0f * UIScale, BottomSectionY, KeySize * 0.85f, KeySpacing, UIScale);
+	const float ItemSpacing = 100.0f * UIScale;
+	
+	// Left: Scroll wheel
+	DrawMouseWheel(CenterX - ItemSpacing * 2.5f - 25.0f * UIScale, BottomSectionY, 50.0f * UIScale, 70.0f * UIScale, 
+		FLinearColor(1.0f, 0.6f, 0.9f, 1.0f), UIScale);
+	DrawText(TEXT("Speed Limit"), FVector2D(CenterX - ItemSpacing * 2.5f - 48.0f * UIScale, BottomSectionY + 80.0f * UIScale),
+		FLinearColor(1.0f, 0.6f, 0.9f, 1.0f), UIScale * 0.85f);
+	
+	// Mouse buttons (stacked)
+	DrawMouseButtons(CenterX - ItemSpacing * 1.3f, BottomSectionY, UIScale);
+	
+	// Keyboard controls in a row
+	DrawOtherControls(CenterX + ItemSpacing * 0.3f, BottomSectionY, KeySize * 0.85f, KeySpacing, UIScale);
 }
 
 void AFractalHUD::DrawKeyboardLayout(float X, float Y, float KeySize, float KeySpacing, float UIScale)
@@ -203,15 +363,48 @@ void AFractalHUD::DrawMouseControls(float X, float Y, float UIScale)
 	const FLinearColor MouseColor = FLinearColor(1.0f, 0.6f, 0.9f, 1.0f);
 
 	const float WheelWidth = 50.0f * UIScale;
-	const float WheelHeight = 80.0f * UIScale;
+	const float WheelHeight = 70.0f * UIScale;
 
 	DrawText(TEXT("SCROLL WHEEL"), FVector2D(X + WheelWidth / 2 - 60.0f * UIScale, Y - 25.0f * UIScale),
-			 FLinearColor(0.7f, 0.7f, 0.8f, 0.9f), UIScale * 1.2f);
+			 FLinearColor(0.7f, 0.7f, 0.8f, 0.9f), UIScale * 1.1f);
 
 	DrawMouseWheel(X, Y, WheelWidth, WheelHeight, MouseColor, UIScale);
 
-	DrawText(TEXT("Speed Limit"), FVector2D(X + WheelWidth / 2 - 48.0f * UIScale, Y + WheelHeight + 15.0f * UIScale),
-			 MouseColor, UIScale * 0.9f);
+	DrawText(TEXT("Speed Limit"), FVector2D(X + WheelWidth / 2 - 48.0f * UIScale, Y + WheelHeight + 12.0f * UIScale),
+			 MouseColor, UIScale * 0.85f);
+	
+	float ButtonY = Y + WheelHeight + 45.0f * UIScale;
+	
+	DrawText(TEXT("LEFT CLICK"), FVector2D(X + WheelWidth / 2 - 45.0f * UIScale, ButtonY),
+			 FLinearColor(0.7f, 0.7f, 0.8f, 0.9f), UIScale * 0.95f);
+	DrawText(TEXT("Decrease Power"), FVector2D(X + WheelWidth / 2 - 60.0f * UIScale, ButtonY + 18.0f * UIScale),
+			 MouseColor, UIScale * 0.75f);
+	
+	ButtonY += 42.0f * UIScale;
+	
+	DrawText(TEXT("RIGHT CLICK"), FVector2D(X + WheelWidth / 2 - 50.0f * UIScale, ButtonY),
+			 FLinearColor(0.7f, 0.7f, 0.8f, 0.9f), UIScale * 0.95f);
+	DrawText(TEXT("Increase Power"), FVector2D(X + WheelWidth / 2 - 60.0f * UIScale, ButtonY + 18.0f * UIScale),
+			 MouseColor, UIScale * 0.75f);
+}
+
+void AFractalHUD::DrawMouseButtons(float X, float Y, float UIScale)
+{
+	const FLinearColor MouseColor = FLinearColor(1.0f, 0.6f, 0.9f, 1.0f);
+	
+	float ButtonY = Y;
+	
+	DrawText(TEXT("LEFT CLICK"), FVector2D(X - 45.0f * UIScale, ButtonY),
+			 FLinearColor(0.7f, 0.7f, 0.8f, 0.9f), UIScale * 0.95f);
+	DrawText(TEXT("Decrease Power"), FVector2D(X - 60.0f * UIScale, ButtonY + 18.0f * UIScale),
+			 MouseColor, UIScale * 0.75f);
+	
+	ButtonY += 42.0f * UIScale;
+	
+	DrawText(TEXT("RIGHT CLICK"), FVector2D(X - 50.0f * UIScale, ButtonY),
+			 FLinearColor(0.7f, 0.7f, 0.8f, 0.9f), UIScale * 0.95f);
+	DrawText(TEXT("Increase Power"), FVector2D(X - 60.0f * UIScale, ButtonY + 18.0f * UIScale),
+			 MouseColor, UIScale * 0.75f);
 }
 
 void AFractalHUD::DrawMouseWheel(float X, float Y, float Width, float Height, const FLinearColor &Color, float UIScale)
@@ -325,9 +518,12 @@ void AFractalHUD::DrawOtherControls(float X, float Y, float KeySize, float KeySp
 {
 	const FLinearColor ResetColor = FLinearColor(1.0f, 0.5f, 0.5f, 1.0f);
 	const FLinearColor HelpColor = FLinearColor(0.7f, 0.7f, 1.0f, 1.0f);
+	const FLinearColor FractalColor = FLinearColor(0.3f, 1.0f, 0.5f, 1.0f);
 
-	DrawLabeledKey(X - KeySize - KeySpacing * 2, Y, KeySize, TEXT("R"), TEXT("RESET"), ResetColor, UIScale);
-	DrawLabeledKey(X + KeySpacing * 2, Y, KeySize, TEXT("H"), TEXT("HELP"), HelpColor, UIScale);
+	// All keys in one row
+	DrawLabeledKey(X, Y, KeySize, TEXT("R"), TEXT("RESET"), ResetColor, UIScale);
+	DrawLabeledKey(X + KeySize + KeySpacing, Y, KeySize, TEXT("H"), TEXT("HELP"), HelpColor, UIScale);
+	DrawLabeledKey(X + (KeySize + KeySpacing) * 2, Y, KeySize, TEXT("TAB"), TEXT("CYCLE"), FractalColor, UIScale);
 }
 
 void AFractalHUD::DrawPanel(float X, float Y, float Width, float Height, const FLinearColor &Color)

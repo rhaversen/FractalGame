@@ -22,16 +22,25 @@ public:
 	FVector CurrentVelocity = FVector::ZeroVector;
 	bool bShowDebug = true;
 	bool bShowHelp = false;
+	
+	int32 CurrentFractalType = 0;
+	float CurrentPower = 8.0f;
+	
+	int32 PreviousFractalType = 0;
+	float TypeTransitionProgress = 0.0f;
+	float LastTransitionTime = 0.0f;
 
 private:
 	void DrawTopLeftInfo(float X, float Y, float UIScale);
 	void DrawTopRightInfo(float X, float Y, float UIScale);
 	void DrawBottomLeftInfo(float X, float Y, float UIScale);
+	void DrawFractalParameters(float X, float Y, float UIScale);
 	void DrawInfoPanel(float X, float Y, float UIScale);
 	void DrawControlsPanel(float CenterX, float CenterY, float UIScale);
 	void DrawKeyboardLayout(float X, float Y, float KeySize, float KeySpacing, float UIScale);
 	void DrawVerticalControls(float CenterX, float Y, float KeySize, float KeySpacing, float UIScale);
 	void DrawMouseControls(float X, float Y, float UIScale);
+	void DrawMouseButtons(float X, float Y, float UIScale);
 	void DrawOtherControls(float X, float Y, float KeySize, float KeySpacing, float UIScale);
 	void DrawPanel(float X, float Y, float Width, float Height, const FLinearColor &Color);
 	void DrawBox(float X, float Y, float Width, float Height, float Thickness, const FLinearColor &Color);

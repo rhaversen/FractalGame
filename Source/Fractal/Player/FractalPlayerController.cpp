@@ -102,52 +102,14 @@ void AFractalPlayerController::BeginPlay()
 			nullptr, 
 			TEXT("/Game/MPC_FractalParameters.MPC_FractalParameters")
 		);
-		
-		if (FractalMaterialCollection)
-		{
-			if (GEngine)
-			{
-				GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Yellow, 
-					TEXT("MPC auto-loaded from hardcoded path"));
-			}
-		}
 	}
 
-	// Get the MPC instance from the world
 	if (FractalMaterialCollection && GetWorld())
 	{
 		MPCInstance = GetWorld()->GetParameterCollectionInstance(FractalMaterialCollection);
 		if (MPCInstance)
 		{
-			// Initialize material parameters
 			UpdateMaterialParameters();
-			
-			if (GEngine)
-			{
-				GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green, 
-					TEXT("Material Parameter Collection initialized successfully!"));
-			}
-		}
-		else
-		{
-			if (GEngine)
-			{
-				GEngine->AddOnScreenDebugMessage(-1, 10.0f, FColor::Red, 
-					TEXT("ERROR: Failed to get MPC Instance!"));
-			}
-		}
-	}
-	else
-	{
-		if (GEngine)
-		{
-			FString ErrorMsg = TEXT("ERROR: ");
-			if (!FractalMaterialCollection)
-				ErrorMsg += TEXT("FractalMaterialCollection is NULL! ");
-			if (!GetWorld())
-				ErrorMsg += TEXT("World is NULL!");
-			
-			GEngine->AddOnScreenDebugMessage(-1, 10.0f, FColor::Red, ErrorMsg);
 		}
 	}
 }
@@ -511,49 +473,21 @@ void AFractalPlayerController::Roll(float Value)
 
 void AFractalPlayerController::CycleFractalType()
 {
-	// Cycle through fractal types (0-5 based on shader defines)
 	CurrentFractalType = (CurrentFractalType + 1) % 6;
 	UpdateMaterialParameters();
-
-	if (GEngine)
-	{
-		const FString TypeNames[] = { TEXT("Mandelbulb"), TEXT("Burning Ship"), TEXT("Julia Set"), 
-									  TEXT("Mandelbox"), TEXT("Menger Sponge"), TEXT("Sierpinski") };
-		GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Cyan, 
-			FString::Printf(TEXT("Fractal Type: %s"), *TypeNames[CurrentFractalType]));
-	}
 }
 
 void AFractalPlayerController::UpdateMaterialParameters()
 {
 	if (MPCInstance)
 	{
-		// Update the scalar parameters in the Material Parameter Collection
-		bool bSuccess1 = MPCInstance->SetScalarParameterValue(FName("FractalType"), static_cast<float>(CurrentFractalType));
-		bool bSuccess2 = MPCInstance->SetScalarParameterValue(FName("Power"), CurrentPower);
-		
-		if (GEngine)
-		{
-			if (bSuccess1 && bSuccess2)
-			{
-				GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green, 
-					FString::Printf(TEXT("MPC Updated: Type=%d, Power=%.1f"), CurrentFractalType, CurrentPower));
-			}
-			else
-			{
-				GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, 
-					FString::Printf(TEXT("MPC Update FAILED! Type=%s, Power=%s"), 
-						bSuccess1 ? TEXT("OK") : TEXT("FAIL"),
-						bSuccess2 ? TEXT("OK") : TEXT("FAIL")));
-			}
-		}
+		MPCInstance->SetScalarParameterValue(FName("FractalType"), static_cast<float>(CurrentFractalType));
+		MPCInstance->SetScalarParameterValue(FName("Power"), CurrentPower);
 	}
-	else
+	
+	if (AFractalHUD* FractalHUD = Cast<AFractalHUD>(GetHUD()))
 	{
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, 
-				TEXT("ERROR: MPCInstance is NULL! Cannot update parameters."));
-		}
+		FractalHUD->CurrentFractalType = CurrentFractalType;
+		FractalHUD->CurrentPower = CurrentPower;
 	}
 }

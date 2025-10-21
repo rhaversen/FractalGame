@@ -17,3 +17,6 @@ Have custom power range for each fractal type.
 We should interpolate between two different DE functions by making hybrid fractals and sliding the start/stop from the max de iter and 0, to gradually convert from one fractal to another. Then, we string all fractals together in a big list, and loop through them when changing fractal type.
 
 Alternative fractal morphing mode: Automatically go in the sin and cos with power and fractal type, to create a continuous morphing fractal experience.
+
+Alternative fractal movement mode: Let the player move, but when changing speed, we actually scale up the fractal and move the player in the local space, to achieve higher detail levels without floating point issues.
+We do the same for morphing between fractal types and powers.

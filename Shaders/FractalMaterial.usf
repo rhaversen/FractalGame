@@ -1,9 +1,9 @@
 // Post-process mandelbulb fractal rendering shader functions for use in material custom node
 
-#define FRACTAL_MARCH_MAX_STEPS 500 // How many steps to take before giving up
-#define FRACTAL_MARCH_MAX_DISTANCE 5.0 // How far to march before giving up
-#define FRACTAL_DE_MAX_ITER 8 // How many iterations the fractal grows for distance estimate
-#define FRACTAL_DE_BAILOUT 2.0 // How far from the origin the fractal can grow
+#define FRACTAL_MARCH_MAX_STEPS 200 // How many steps to take before giving up
+#define FRACTAL_MARCH_MAX_DISTANCE 500.0 // How far to march before giving up
+#define FRACTAL_DE_MAX_ITER 25 // How many iterations the fractal grows for distance estimate
+#define FRACTAL_DE_BAILOUT 10.0 // How far from the origin the fractal can grow
 
 #define FRACTAL_TYPE_MANDELBULB 0
 #define FRACTAL_TYPE_BURNING_SHIP 1

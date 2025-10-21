@@ -1,10 +1,20 @@
-// Post-process mandelbulb fractal rendering shader functions for use in material custom node
+// Post-process fractal rendering shader functions for use in material custom node
+//
+// ADDING NEW FRACTALS - Update these 3 locations:
+// 1. Add #define FRACTAL_TYPE_YOURFRACTAL below and increment FRACTAL_TYPE_COUNT
+// 2. Add case in FractalDE() switch statement to call your DE function
+// 3. Update FractalNames array in FractalHUD.cpp
+// 4. Update MaxFractalType in FractalPlayerController.h
+// 5. Add implementation using common transformation functions (BoxFold, SphereFold, etc.)
+//
+// Common transformation building blocks are provided to make hybrid fractals easier.
 
-#define FRACTAL_MARCH_MAX_STEPS 200 // How many steps to take before giving up
-#define FRACTAL_MARCH_MAX_DISTANCE 500.0 // How far to march before giving up
-#define FRACTAL_DE_MAX_ITER 25 // How many iterations the fractal grows for distance estimate
-#define FRACTAL_DE_BAILOUT 10.0 // How far from the origin the fractal can grow
+#define FRACTAL_MARCH_MAX_STEPS 200
+#define FRACTAL_MARCH_MAX_DISTANCE 500.0
+#define FRACTAL_DE_MAX_ITER 25
+#define FRACTAL_DE_BAILOUT 10.0
 
+// Fractal type definitions - ADD NEW TYPES HERE and increment COUNT
 #define FRACTAL_TYPE_MANDELBULB 0
 #define FRACTAL_TYPE_BURNING_SHIP 1
 #define FRACTAL_TYPE_JULIA_SET 2
@@ -15,6 +25,7 @@
 #define FRACTAL_TYPE_QUATERNION 7
 #define FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON 8
 #define FRACTAL_TYPE_KALEIDOSCOPIC_IFS 9
+#define FRACTAL_TYPE_COUNT 10
 
 #define HIT_STATUS_NONE 0
 #define HIT_STATUS_HIT 1
@@ -88,84 +99,142 @@ struct FractalFunctions
 		return distance * ResolvedView.ClipToView._22 / ResolvedView.ViewSizeAndInvSize.y;
 	}
 
+	// ============================================================================
+	// POWER FRACTALS - Algebraic power iteration (z^n + c)
+	// Uses spherical coordinates for smooth, organic shapes
+	// ============================================================================
+
+	static DEResult PowerFractalDE(float3 pos, int fractalType, float power)
+	{
+		float3 z = pos;
+		float dr = 1.0;
+		float r = 0.0;
+		int i;
+
+		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+		{
+			r = length(z);
+			if (r > FRACTAL_DE_BAILOUT)
+				break;
+
+			dr = pow(r, power - 1.0) * power * dr + 1.0;
+
+			switch (fractalType)
+			{
+				case FRACTAL_TYPE_MANDELBULB:
+					z = MandelbulbTransform(z, pos, power);
+					break;
+				case FRACTAL_TYPE_BURNING_SHIP:
+					z = BurningShipTransform(z, pos, power);
+					break;
+				case FRACTAL_TYPE_JULIA_SET:
+					z = JuliaSetTransform(z, pos, power);
+					break;
+			}
+		}
+
+		DEResult result;
+		result.distance = FinalDE(r, dr);
+		result.iterations = i;
+		return result;
+	}
+
+	// ============================================================================
+	// IFS FRACTALS - Iterated Function Systems (geometric folding)
+	// Uses repeated folding/inversion operations for crisp, geometric structures
+	// ============================================================================
+
+	static DEResult IFSFractalDE(float3 pos, float power, int fractalType)
+	{
+		float3 z = pos;
+		float dr = 1.0;
+		float scale;
+		int i;
+		
+		switch (fractalType)
+		{
+			case FRACTAL_TYPE_MANDELBOX:
+				scale = power;
+				break;
+			case FRACTAL_TYPE_KLEINIAN:
+				scale = 1.0 + (power - 1.0) * 0.1;
+				break;
+			case FRACTAL_TYPE_APOLLONIAN:
+				scale = 1.0 + (power - 1.0) * 0.15;
+				break;
+			default:
+				scale = power;
+				break;
+		}
+		
+		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+		{
+			switch (fractalType)
+			{
+				case FRACTAL_TYPE_MANDELBOX:
+					MandelboxLoop(z, dr, pos, scale);
+					break;
+				case FRACTAL_TYPE_INVERTED_MENGER:
+					InvertedMengerLoop(z, dr, pos, scale);
+					break;
+				case FRACTAL_TYPE_KLEINIAN:
+					KleinianLoop(z, dr, pos, scale);
+					break;
+				case FRACTAL_TYPE_APOLLONIAN:
+					ApollonianLoop(z, dr, pos, scale);
+					break;
+				case FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON:
+					SierpinskiTetrahedronLoop(z, dr, pos, scale);
+					break;
+				case FRACTAL_TYPE_KALEIDOSCOPIC_IFS:
+					KaleidoscopicIFSLoop(z, dr, pos, scale);
+					break;
+			}
+			
+			if (dot(z, z) > FRACTAL_DE_BAILOUT * FRACTAL_DE_BAILOUT)
+				break;
+		}
+		
+		float r = length(z);
+		DEResult result;
+		result.distance = FinalDE(r, dr);
+		result.iterations = i;
+		return result;
+	}
+
+	// ============================================================================
+	// MAIN FRACTAL DISPATCHER - Routes to Power or IFS fractals
+	// ============================================================================
+
 	static DEResult FractalDE(float3 pos, int fractalType, float power)
 	{
+		// Power Fractals: Smooth algebraic iteration
 		switch (fractalType)
 		{
 			case FRACTAL_TYPE_MANDELBULB:
 			case FRACTAL_TYPE_BURNING_SHIP:
 			case FRACTAL_TYPE_JULIA_SET:
-			// Spherical Power Fractals
-			{
-				float3 z = pos;
-				float dr = 1.0;
-				float r = 0.0;
-				int i;
-
-				for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
-				{
-					r = length(z);
-					if (r > FRACTAL_DE_BAILOUT)
-						break;
-
-					dr = pow(r, power - 1.0) * power * dr + 1.0;
-
-					switch (fractalType)
-					{
-						case FRACTAL_TYPE_MANDELBULB:
-							z = MandelbulbTransform(z, pos, power);
-							break;
-						case FRACTAL_TYPE_BURNING_SHIP:
-							z = BurningShipTransform(z, pos, power);
-							break;
-						case FRACTAL_TYPE_JULIA_SET:
-							z = JuliaSetTransform(z, pos, power);
-							break;
-					}
-				}
-
-				DEResult result;
-				result.distance = FinalDE(r, dr);
-				result.iterations = i;
-				return result;
-			}
-			case FRACTAL_TYPE_MANDELBOX:
-				return MandelboxDE(pos, power);
-			case FRACTAL_TYPE_INVERTED_MENGER:
-				return InvertedMengerDE(pos, power);
-			case FRACTAL_TYPE_KLEINIAN:
-				return KleinianDE(pos, power);
-			case FRACTAL_TYPE_APOLLONIAN:
-				return ApollonianDE(pos, power);
-			case FRACTAL_TYPE_QUATERNION:
-				return QuaternionDE(pos, power);
-			case FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON:
-				return SierpinskiTetrahedronDE(pos, power);
-			case FRACTAL_TYPE_KALEIDOSCOPIC_IFS:
-				return KaleidoscopicIFSDE(pos, power);
-			default:
-			{
-				float3 z = pos;
-				float dr = 1.0;
-				float r = 0.0;
-				int i;
-
-				for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
-				{
-					r = length(z);
-					if (r > FRACTAL_DE_BAILOUT)
-						break;
-
-					dr = pow(r, power - 1.0) * power * dr + 1.0;
-					z = MandelbulbTransform(z, pos, power);
-				}
-
-				DEResult result;
-				result.distance = FinalDE(r, dr);
-				result.iterations = i;
-				return result;
-			}
+				return PowerFractalDE(pos, fractalType, power);
 		}
+		
+		// IFS Fractals: Geometric folding
+		switch (fractalType)
+		{
+			case FRACTAL_TYPE_MANDELBOX:
+			case FRACTAL_TYPE_INVERTED_MENGER:
+			case FRACTAL_TYPE_KLEINIAN:
+			case FRACTAL_TYPE_APOLLONIAN:
+			case FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON:
+			case FRACTAL_TYPE_KALEIDOSCOPIC_IFS:
+				return IFSFractalDE(pos, power, fractalType);
+		}
+		
+		// Special case: Quaternion (hybrid approach)
+		if (fractalType == FRACTAL_TYPE_QUATERNION)
+			return QuaternionDE(pos, power);
+			
+		// Default fallback
+		return PowerFractalDE(pos, FRACTAL_TYPE_MANDELBULB, power);
 	}
 
 	// Marching function that can do cone marching (subdivisionFactor > 0) or ray marching (subdivisionFactor = 0)
@@ -296,32 +365,11 @@ struct FractalFunctions
 		}
 	}
 
-	// Spherical power fractal transformations
-	static float3 MandelbulbTransform(float3 z, float3 pos, float power)
-	{
-		SphericalCoords coords = CartesianToSpherical(z);
-		float zr = pow(coords.r, power);
-		RotateSpherical(coords.theta, coords.phi, power);
-		return SphericalToCartesian(zr, coords.theta, coords.phi) + pos;
-	}
-	static float3 BurningShipTransform(float3 z, float3 pos, float power)
-	{
-		z = abs(z);
-		SphericalCoords coords = CartesianToSpherical(z);
-		float zr = pow(coords.r, power);
-		RotateSpherical(coords.theta, coords.phi, power);
-		return SphericalToCartesian(zr, coords.theta, coords.phi) + pos;
-	}
-	static float3 JuliaSetTransform(float3 z, float3 pos, float power)
-	{
-		SphericalCoords coords = CartesianToSpherical(z);
-		float zr = pow(coords.r, power);
-		RotateSpherical(coords.theta, coords.phi, power);
-		float3 c = float3(-0.8, 0.156, 0.0);
-		return SphericalToCartesian(zr, coords.theta, coords.phi) + c;
-	}
-
+	// ============================================================================
+	// SHARED UTILITY FUNCTIONS
+	// ============================================================================
 	
+	// Box folding - reflects coordinates through box boundaries (IFS building block)
 	static void BoxFold(inout float3 z, float foldingLimit)
 	{
 		z.x = clamp(z.x, -foldingLimit, foldingLimit) * 2.0 - z.x;
@@ -329,7 +377,8 @@ struct FractalFunctions
 		z.z = clamp(z.z, -foldingLimit, foldingLimit) * 2.0 - z.z;
 	}
 
-	static void SphereFold(inout float3 z, inout float dz, float minRadius, float fixedRadius)
+	// Sphere folding - inverts points through spherical boundaries (IFS building block)
+	static void SphereFold(inout float3 z, inout float dr, float minRadius, float fixedRadius)
 	{
 		float r2 = dot(z, z);
 		float minRadius2 = minRadius * minRadius;
@@ -339,175 +388,171 @@ struct FractalFunctions
 		{
 			float temp = fixedRadius2 / minRadius2;
 			z *= temp;
-			dz *= temp;
+			dr *= temp;
 		}
 		else if (r2 < fixedRadius2)
 		{
 			float temp = fixedRadius2 / r2;
 			z *= temp;
-			dz *= temp;
+			dr *= temp;
 		}
 	}
-
-	static DEResult MandelboxDE(float3 pos, float scale)
+	
+	// Tetrahedral folding - creates 4-faced pyramid symmetry
+	static void TetrahedralFold(inout float3 z)
 	{
-		float3 z = pos;
-		float dr = 1.0;
+		if (z.x + z.y < 0.0) z.xy = -z.yx;
+		if (z.x + z.z < 0.0) z.xz = -z.zx;
+		if (z.y + z.z < 0.0) z.yz = -z.zy;
+	}
+	
+	// Octahedral folding - creates 8-faced symmetry
+	static void OctahedralFold(inout float3 z)
+	{
+		z = abs(z);
+		SortComponents(z);
+	}
+	
+	// Tetrahedral folding followed by component sorting (for Sierpinski-type fractals)
+	static void TetrahedralSortFold(inout float3 z)
+	{
+		TetrahedralFold(z);
+		SortComponents(z);
+	}
+
+	// Component sorting - sorts components in descending order
+	static void SortComponents(inout float3 z)
+	{
+		if (z.x < z.y) z.xy = z.yx;
+		if (z.x < z.z) z.xz = z.zx;
+		if (z.y < z.z) z.yz = z.zy;
+	}
+	
+
+	// Spherical power transformation (Mandelbulb-style)
+	static float3 SphericalPowerTransform(float3 z, float power)
+	{
+		SphericalCoords coords = CartesianToSpherical(z);
+		float zr = pow(coords.r, power);
+		RotateSpherical(coords.theta, coords.phi, power);
+		return SphericalToCartesian(zr, coords.theta, coords.phi);
+	}
+
+	// ============================================================================
+	// Specific Fractal Transformations
+	// ============================================================================
+	
+	static float3 MandelbulbTransform(float3 z, float3 pos, float power)
+	{
+		return SphericalPowerTransform(z, power) + pos;
+	}
+	
+	static float3 BurningShipTransform(float3 z, float3 pos, float power)
+	{
+		return SphericalPowerTransform(abs(z), power) + pos;
+	}
+	
+	static float3 JuliaSetTransform(float3 z, float3 pos, float power)
+	{
+		float3 c = float3(-0.8, 0.156, 0.0);
+		return SphericalPowerTransform(z, power) + c;
+	}
+
+	// ============================================================================
+	// Distance Estimator Loop Bodies (The unique part of each fractal)
+	// ============================================================================
+	
+	static void MandelboxLoop(inout float3 z, inout float dr, float3 pos, float scale)
+	{
 		const float foldingLimit = 1.0;
 		const float minRadius = 0.5;
 		const float fixedRadius = 1.0;
-		int i;
-
-		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
-		{
-			BoxFold(z, foldingLimit);
-			SphereFold(z, dr, minRadius, fixedRadius);
-
-			z = z * scale + pos;
-			dr = dr * abs(scale) + 1.0;
-
-			if (length(z) > FRACTAL_DE_BAILOUT * FRACTAL_DE_BAILOUT)
-			{
-				break;
-			}
-		}
-
-		float r = length(z);
-		DEResult result;
-		result.distance = r / abs(dr);
-		result.iterations = i;
-		return result;
+		
+		BoxFold(z, foldingLimit);
+		SphereFold(z, dr, minRadius, fixedRadius);
+		
+		z = z * scale + pos;
+		dr = dr * abs(scale) + 1.0;
 	}
-
-	static DEResult InvertedMengerDE(float3 pos, float power)
+	
+	static void InvertedMengerLoop(inout float3 z, inout float dr, float3 pos, float scale)
 	{
-		float3 z = pos;
-		float dr = 1.0;
-		const float scale = power;
-		int i;
+		OctahedralFold(z);
 		
-		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
-		{
-			// Octahedral/cubic symmetry
-			z = abs(z);
-			if (z.x < z.y) z.xy = z.yx;
-			if (z.x < z.z) z.xz = z.zx;
-			if (z.y < z.z) z.yz = z.zy;
-			
-			z = z * scale - float3(1.0, 1.0, 1.0) * (scale - 1.0);
-			dr *= scale;
-			
-			if (length(z) > FRACTAL_DE_BAILOUT)
-				break;
-		}
-		
-		float r = length(z);
-		DEResult result;
-		result.distance = r / abs(dr);
-		result.iterations = i;
-		return result;
+		z = z * scale - float3(1.0, 1.0, 1.0) * (scale - 1.0);
+		dr *= scale;
 	}
-
-	static DEResult KleinianDE(float3 pos, float power)
+	
+	static void KleinianLoop(inout float3 z, inout float dr, float3 pos, float scale)
 	{
-		float3 z = pos;
-		float dr = 1.0;
-		float scale = 1.0 + (power - 1.0) * 0.1; // Power affects scale more gradually
-		int i;
-		
 		const float minRadius = 0.3;
-		const float minRadius2 = minRadius * minRadius;
 		const float fixedRadius = 1.0;
-		const float fixedRadius2 = fixedRadius * fixedRadius;
 		
-		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
-		{
-			float r2 = dot(z, z);
-			
-			// Sphere folding
-			if (r2 < minRadius2)
-			{
-				float temp = fixedRadius2 / minRadius2;
-				z *= temp;
-				dr *= temp;
-			}
-			else if (r2 < fixedRadius2)
-			{
-				float temp = fixedRadius2 / r2;
-				z *= temp;
-				dr *= temp;
-			}
-			
-			// Scale and translate
-			z = z * scale + pos;
-			dr = dr * abs(scale) + 1.0;
-			
-			if (r2 > FRACTAL_DE_BAILOUT * FRACTAL_DE_BAILOUT)
-				break;
-		}
+		SphereFold(z, dr, minRadius, fixedRadius);
 		
-		float r = length(z);
-		DEResult result;
-		result.distance = r / abs(dr);
-		result.iterations = i;
-		return result;
+		z = z * scale + pos;
+		dr = dr * abs(scale) + 1.0;
 	}
-
-	static DEResult ApollonianDE(float3 pos, float power)
+	
+	static void ApollonianLoop(inout float3 z, inout float dr, float3 pos, float scale)
 	{
-		float3 z = pos;
-		float dr = 1.0;
-		float scale = 1.0 + (power - 1.0) * 0.15; // Power affects scale
-		int i;
-		
-		// Four spheres in tetrahedral arrangement for Apollonian gasket
 		const float3 center1 = float3(1.0, 1.0, 1.0);
 		const float3 center2 = float3(1.0, -1.0, -1.0);
 		const float3 center3 = float3(-1.0, 1.0, -1.0);
 		const float3 center4 = float3(-1.0, -1.0, 1.0);
 		const float radius = 1.0;
 		
-		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
-		{
-			// Find closest sphere and invert through it
-			float3 diff1 = z - center1;
-			float3 diff2 = z - center2;
-			float3 diff3 = z - center3;
-			float3 diff4 = z - center4;
-			
-			float d1 = dot(diff1, diff1);
-			float d2 = dot(diff2, diff2);
-			float d3 = dot(diff3, diff3);
-			float d4 = dot(diff4, diff4);
-			
-			float3 closest = center1;
-			float closestD = d1;
-			
-			if (d2 < closestD) { closest = center2; closestD = d2; }
-			if (d3 < closestD) { closest = center3; closestD = d3; }
-			if (d4 < closestD) { closest = center4; closestD = d4; }
-			
-			// Sphere inversion
-			float3 diff = z - closest;
-			float r2 = dot(diff, diff);
-			float k = radius * radius / max(r2, 0.01);
-			z = closest + diff * k;
-			dr *= k;
-			
-			// Scale
-			z *= scale;
-			dr *= scale;
-			
-			if (length(z) > FRACTAL_DE_BAILOUT)
-				break;
-		}
+		float3 diff1 = z - center1;
+		float3 diff2 = z - center2;
+		float3 diff3 = z - center3;
+		float3 diff4 = z - center4;
 		
-		DEResult result;
-		result.distance = length(z) / abs(dr);
-		result.iterations = i;
-		return result;
+		float d1 = dot(diff1, diff1);
+		float d2 = dot(diff2, diff2);
+		float d3 = dot(diff3, diff3);
+		float d4 = dot(diff4, diff4);
+		
+		float3 closest = center1;
+		float closestD = d1;
+		
+		if (d2 < closestD) { closest = center2; closestD = d2; }
+		if (d3 < closestD) { closest = center3; closestD = d3; }
+		if (d4 < closestD) { closest = center4; closestD = d4; }
+		
+		float3 diff = z - closest;
+		float r2 = dot(diff, diff);
+		float k = radius * radius / max(r2, 0.01);
+		z = closest + diff * k;
+		dr *= k;
+		
+		z *= scale;
+		dr *= scale;
+	}
+	
+	static void SierpinskiTetrahedronLoop(inout float3 z, inout float dr, float3 pos, float scale)
+	{
+		TetrahedralSortFold(z);
+		
+		z = z * scale - float3(1.0, 1.0, 1.0) * (scale - 1.0);
+		dr *= scale;
+	}
+	
+	static void KaleidoscopicIFSLoop(inout float3 z, inout float dr, float3 pos, float scale)
+	{
+		const float minRadius = 0.5;
+		const float fixedRadius = 1.0;
+		
+		OctahedralFold(z);
+		SphereFold(z, dr, minRadius, fixedRadius);
+		
+		z = z * scale + pos;
+		dr = dr * abs(scale) + 1.0;
 	}
 
+	// ============================================================================
+	// Distance Estimator Functions
+	// ============================================================================
+	
 	static DEResult QuaternionDE(float3 pos, float power)
 	{
 		float4 z = float4(pos, 0.0);
@@ -541,91 +586,6 @@ struct FractalFunctions
 		float r = length(z);
 		DEResult result;
 		result.distance = FinalDE(r, dr);
-		result.iterations = i;
-		return result;
-	}
-
-	static DEResult SierpinskiTetrahedronDE(float3 pos, float power)
-	{
-		float3 z = pos;
-		float dr = 1.0;
-		const float scale = power;
-		int i;
-		
-		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
-		{
-			// Tetrahedral folding (creates triangular pyramids with 4 faces)
-			if (z.x + z.y < 0.0) z.xy = -z.yx;
-			if (z.x + z.z < 0.0) z.xz = -z.zx;
-			if (z.y + z.z < 0.0) z.yz = -z.zy;
-			
-			// Additional octahedral symmetry
-			if (z.x - z.y < 0.0) z.xy = z.yx;
-			if (z.x - z.z < 0.0) z.xz = z.zx;
-			if (z.y - z.z < 0.0) z.yz = z.zy;
-			
-			z = z * scale - float3(1.0, 1.0, 1.0) * (scale - 1.0);
-			dr *= scale;
-			
-			if (length(z) > FRACTAL_DE_BAILOUT)
-				break;
-		}
-		
-		float r = length(z);
-		DEResult result;
-		result.distance = r / abs(dr);
-		result.iterations = i;
-		return result;
-	}
-
-	static DEResult KaleidoscopicIFSDE(float3 pos, float power)
-	{
-		float3 z = pos;
-		float dr = 1.0;
-		const float scale = power;
-		int i;
-		
-		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
-		{
-			// Kaleidoscopic folding
-			z = abs(z);
-			
-			// Plane foldings
-			float t;
-			if (z.x - z.y < 0.0) { t = z.x; z.x = z.y; z.y = t; }
-			if (z.x - z.z < 0.0) { t = z.x; z.x = z.z; z.z = t; }
-			if (z.y - z.z < 0.0) { t = z.y; z.y = z.z; z.z = t; }
-			
-			// Sphere folding
-			float r2 = dot(z, z);
-			float minRadius = 0.5;
-			float fixedRadius = 1.0;
-			float minRadius2 = minRadius * minRadius;
-			float fixedRadius2 = fixedRadius * fixedRadius;
-			
-			if (r2 < minRadius2)
-			{
-				float temp = fixedRadius2 / minRadius2;
-				z *= temp;
-				dr *= temp;
-			}
-			else if (r2 < fixedRadius2)
-			{
-				float temp = fixedRadius2 / r2;
-				z *= temp;
-				dr *= temp;
-			}
-			
-			z = z * scale + pos;
-			dr = dr * abs(scale) + 1.0;
-			
-			if (length(z) > FRACTAL_DE_BAILOUT)
-				break;
-		}
-		
-		float r = length(z);
-		DEResult result;
-		result.distance = r / abs(dr);
 		result.iterations = i;
 		return result;
 	}

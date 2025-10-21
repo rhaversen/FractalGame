@@ -103,6 +103,8 @@ void AFractalHUD::DrawFractalParameters(float X, float Y, float UIScale)
 	const float Margin = 30.0f * UIScale;
 	const float BottomMargin = 15.0f * UIScale;
 	
+	// Fractal names - must match order of FRACTAL_TYPE_* defines in shader
+	// When adding fractals: Update this array, shader defines, and PlayerController::MaxFractalType
 	const TArray<FString> FractalNames = {
 		TEXT("Mandelbulb"),
 		TEXT("Burning Ship"),

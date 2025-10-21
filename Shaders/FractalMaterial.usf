@@ -1,8 +1,16 @@
 // Post-process mandelbulb fractal rendering shader functions for use in material custom node
 
-#define FRACTAL_MAX_STEPS 500
-#define FRACTAL_MAX_DISTANCE 5.0
-#define FRACTAL_POWER 8.0
+#define FRACTAL_MARCH_MAX_STEPS 500 // How many steps to take before giving up
+#define FRACTAL_MARCH_MAX_DISTANCE 5.0 // How far to march before giving up
+#define FRACTAL_DE_MAX_ITER 8 // How many iterations the fractal grows for distance estimate
+#define FRACTAL_DE_BAILOUT 2.0 // How far from the origin the fractal can grow
+
+#define FRACTAL_TYPE_MANDELBULB 0
+#define FRACTAL_TYPE_BURNING_SHIP 1
+#define FRACTAL_TYPE_JULIA_SET 2
+#define FRACTAL_TYPE_MANDELBOX 3
+#define FRACTAL_TYPE_MENGER_SPONGE 4
+#define FRACTAL_TYPE_SIERPINSKI 5
 
 #define HIT_STATUS_NONE 0
 #define HIT_STATUS_HIT 1
@@ -18,6 +26,34 @@ struct MarchResult
 
 struct FractalFunctions
 {
+	// Convert Cartesian coordinates to spherical
+	static void CartesianToSpherical(in float3 z, out float r, out float theta, out float phi)
+	{
+		r = length(z);
+		theta = acos(z.z / r);
+		phi = atan2(z.y, z.x);
+	}
+
+	// Convert spherical coordinates back to Cartesian
+	static float3 SphericalToCartesian(float r, float theta, float phi)
+	{
+		float sinTheta = sin(theta);
+		return r * float3(sinTheta * cos(phi), sinTheta * sin(phi), cos(theta));
+	}
+
+	// Apply power rotation in spherical domain
+	static void RotateSpherical(inout float theta, inout float phi, float power)
+	{
+		theta *= power;
+		phi *= power;
+	}
+
+	// Final distance estimate calculation
+	static float FinalDE(float r, float dr)
+	{
+		return 0.5 * log(r) * r / dr;
+	}
+
 	// Computes the world-space radius that a sphere must have to appear 1 pixel tall on screen at a given distance.
 	static float GetPixelWorldRadius(float distance)
 	{
@@ -26,54 +62,49 @@ struct FractalFunctions
 		return distance * ResolvedView.ClipToView._22 / ResolvedView.ViewSizeAndInvSize.y;
 	}
 
-	// Calculates the Distance Estimate (DE) for a point in space to the Mandelbulb set.
-	// The DE is the radius of a sphere centered at 'pos' that is guaranteed not to touch the fractal.
-	// Based on: http://blog.hvidtfeldts.net/index.php/2011/09/distance-estimated-3d-fractals-v-the-mandelbulb-different-de-approximations/
-	static float FractalDE(float3 pos)
+	static float FractalDE(float3 pos, int fractalType, float power)
 	{
-		float3 z = pos;
-		float dr = 1.0;
-		float r = 0.0;
-		float bailout = 2.0;
-		int MaxIter = 100;
-
-		for (int i = 0; i < MaxIter; i++)
+		if (fractalType == FRACTAL_TYPE_MANDELBULB)
 		{
-			r = length(z);
-			if (r > bailout)
-				break;
-
-			// Convert to polar coordinates
-			float theta = acos(z.z / r);
-			float phi = atan2(z.y, z.x);
-			dr = pow(r, FRACTAL_POWER - 1.0) * FRACTAL_POWER * dr + 1.0;
-
-			// Scale and rotate the point
-			float zr = pow(r, FRACTAL_POWER);
-			theta *= FRACTAL_POWER;
-			phi *= FRACTAL_POWER;
-
-			// Convert back to cartesian coordinates
-			z = zr * float3(sin(theta) * cos(phi), sin(phi) * sin(theta), cos(theta));
-			z += pos;
+			return MandelbulbDE(pos, power);
 		}
-
-		return 0.5 * log(r) * r / dr;
+		else if (fractalType == FRACTAL_TYPE_BURNING_SHIP)
+		{
+			return BurningShipDE(pos, power);
+		}
+		else if (fractalType == FRACTAL_TYPE_JULIA_SET)
+		{
+			return JuliaSetDE(pos, power);
+		}
+		else if (fractalType == FRACTAL_TYPE_MANDELBOX)
+		{
+			return MandelboxDE(pos, power);
+		}
+		else if (fractalType == FRACTAL_TYPE_MENGER_SPONGE)
+		{
+			return MengerSpongeDE(pos);
+		}
+		else if (fractalType == FRACTAL_TYPE_SIERPINSKI)
+		{
+			return SierpinskiDE(pos);
+		}
+		
+		return MandelbulbDE(pos, power);
 	}
 
 	// Marching function that can do cone marching (subdivisionFactor > 0) or ray marching (subdivisionFactor = 0)
 	// subdivisionFactor: 0 = precise ray marching, >0 = cone marching with that many pixels bundled
 	// startDistance & startSteps: allows continuing from where a previous march left off
-	static MarchResult MarchFractal(float3 RayOrigin, float3 RayDir, float subdivisionFactor, float startDistance, int startSteps)
+	static MarchResult MarchFractal(float3 RayOrigin, float3 RayDir, float subdivisionFactor, float startDistance, int startSteps, int fractalType, float power)
 	{
 		float totalDist = startDistance;
 		int steps = startSteps;
 
-		while (totalDist < FRACTAL_MAX_DISTANCE && steps < FRACTAL_MAX_STEPS)
+		while (totalDist < FRACTAL_MARCH_MAX_DISTANCE && steps < FRACTAL_MARCH_MAX_STEPS)
 		{
 			steps++;
 			float3 pos = RayOrigin + RayDir * totalDist;
-			float distEstimate = FractalDE(pos);
+			float distEstimate = FractalDE(pos, fractalType, power);
 
 			// Calculate precision threshold based on whether we're cone marching or ray marching
 			float pixelSize = GetPixelWorldRadius(totalDist);
@@ -107,12 +138,12 @@ struct FractalFunctions
 		MarchResult result;
 		result.distance = totalDist;
 		result.steps = steps;
-		result.hitStatus = (totalDist >= FRACTAL_MAX_DISTANCE) ? HIT_STATUS_MISS_DISTANCE : HIT_STATUS_MISS_STEPS;
+		result.hitStatus = (totalDist >= FRACTAL_MARCH_MAX_DISTANCE) ? HIT_STATUS_MISS_DISTANCE : HIT_STATUS_MISS_STEPS;
 		return result;
 	}
 
 
-	static float3 RenderFractal(float2 screenUV, float3 sceneColor)
+	static float3 RenderFractal(float2 screenUV, float3 sceneColor, int fractalType, float power)
 	{
 		// Get camera parameters
 		float3 cameraOrigin = LWCHackToFloat(ResolvedView.WorldCameraOrigin);
@@ -140,7 +171,7 @@ struct FractalFunctions
 		MarchResult finalResult = MarchFractal(rayOrigin, rayDir, 0.0, coneResult.distance, coneResult.steps);
 
 		// Calculate color based on total steps taken
-		float stepFactor = saturate(finalResult.steps / float(FRACTAL_MAX_STEPS));
+		float stepFactor = saturate(finalResult.steps / float(FRACTAL_MARCH_MAX_STEPS));
 		float t = sqrt(stepFactor);
 		
 		// Gradient color stops: position -> color
@@ -177,9 +208,178 @@ struct FractalFunctions
 			return sceneColor;
 		}
 	}
+
+	static float MandelbulbDE(float3 pos, float power)
+	{
+		float3 z = pos;
+		float dr = 1.0;
+		float r = 0.0;
+
+		for (int i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+		{
+			r = length(z);
+			if (r > FRACTAL_DE_BAILOUT)
+				break;
+
+			float theta = acos(z.z / r);
+			float phi = atan2(z.y, z.x);
+			dr = pow(r, power - 1.0) * power * dr + 1.0;
+
+			float zr = pow(r, power);
+			RotateSpherical(theta, phi, power);
+			z = SphericalToCartesian(zr, theta, phi);
+			z += pos;
+		}
+
+		return FinalDE(r, dr);
+	}
+
+	static float BurningShipDE(float3 pos, float power)
+	{
+		float3 z = pos;
+		float dr = 1.0;
+		float r, theta, phi;
+
+		for (int i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+		{
+			z = abs(z);
+			CartesianToSpherical(z, r, theta, phi);
+			if (r > FRACTAL_DE_BAILOUT)
+				break;
+
+			dr = pow(r, power - 1.0) * power * dr + 1.0;
+			float zr = pow(r, power);
+
+			RotateSpherical(theta, phi, power);
+			z = SphericalToCartesian(zr, theta, phi);
+			z += pos;
+		}
+
+		return FinalDE(r, dr);
+	}
+
+	static float JuliaSetDE(float3 pos, float power)
+	{
+		float3 z = pos;
+		float dr = 1.0;
+		float r, theta, phi;
+		float3 c = float3(-0.8, 0.156, 0.0);
+
+		for (int i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+		{
+			CartesianToSpherical(z, r, theta, phi);
+			if (r > FRACTAL_DE_BAILOUT)
+				break;
+
+			dr = pow(r, power - 1.0) * power * dr + 1.0;
+			float zr = pow(r, power);
+
+			RotateSpherical(theta, phi, power);
+			z = SphericalToCartesian(zr, theta, phi);
+			z += c;
+		}
+
+		return FinalDE(r, dr);
+	}
+
+	static void BoxFold(inout float3 z, float foldingLimit)
+	{
+		z.x = clamp(z.x, -foldingLimit, foldingLimit) * 2.0 - z.x;
+		z.y = clamp(z.y, -foldingLimit, foldingLimit) * 2.0 - z.y;
+		z.z = clamp(z.z, -foldingLimit, foldingLimit) * 2.0 - z.z;
+	}
+
+	static void SphereFold(inout float3 z, inout float dz, float minRadius, float fixedRadius)
+	{
+		float r2 = dot(z, z);
+		float minRadius2 = minRadius * minRadius;
+		float fixedRadius2 = fixedRadius * fixedRadius;
+
+		if (r2 < minRadius2)
+		{
+			float temp = fixedRadius2 / minRadius2;
+			z *= temp;
+			dz *= temp;
+		}
+		else if (r2 < fixedRadius2)
+		{
+			float temp = fixedRadius2 / r2;
+			z *= temp;
+			dz *= temp;
+		}
+	}
+
+	static float MandelboxDE(float3 pos, float scale)
+	{
+		float3 z = pos;
+		float dr = 1.0;
+		const float foldingLimit = 1.0;
+		const float minRadius = 0.5;
+		const float fixedRadius = 1.0;
+
+		for (int i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+		{
+			BoxFold(z, foldingLimit);
+			SphereFold(z, dr, minRadius, fixedRadius);
+
+			z = z * scale + pos;
+			dr = dr * abs(scale) + 1.0;
+
+			if (length(z) > FRACTAL_DE_BAILOUT * FRACTAL_DE_BAILOUT)
+			{
+				break;
+			}
+		}
+
+		float r = length(z);
+		return r / abs(dr);
+	}
+
+	static float MengerSpongeDE(float3 pos)
+	{
+		float3 z = pos;
+		float dr = 1.0;
+		const float scale = 3.0;
+		for (int i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+		{
+			z = abs(z);
+			if (z.x < z.y) z.xy = z.yx;
+			if (z.x < z.z) z.xz = z.zx;
+			if (z.y < z.z) z.yz = z.zy;
+			z = z * scale - float3(2.0, 2.0, 2.0);
+			dr *= scale;
+		}
+		float r = length(z);
+		return r / dr;
+	}
+
+	static float SierpinskiDE(float3 pos)
+	{
+		float3 z = pos;
+		float dr = 1.0;
+		const float scale = 2.0;
+		for (int i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+		{
+			if (z.x + z.y < 0.0) z.xy = -z.yx;
+			if (z.x + z.z < 0.0) z.xz = -z.zx;
+			if (z.y + z.z < 0.0) z.yz = -z.zy;
+			z = z * scale - float3(1.0, 1.0, 1.0);
+			dr *= scale;
+		}
+		float r = length(z);
+		return r / dr;
+	}
 };
 
 // Usage in material custom node:
 // #include "/Project/FractalMaterial.usf"
 // FractalFunctions FF;
-// return FF.RenderFractal(ScreenPosition, SceneColor).rgb;
+// return FF.RenderFractal(ScreenPosition, SceneColor, FractalType, Power).rgb;
+//
+// FractalType values:
+// 0 = Mandelbulb
+// 1 = Burning Ship
+// 2 = Julia Set
+// 3 = Mandelbox
+// 4 = Menger Sponge
+// 5 = Sierpinski

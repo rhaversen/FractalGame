@@ -85,10 +85,12 @@ struct FractalFunctions
 		phi *= power;
 	}
 
-	// Final distance estimate calculation
-	static float FinalDE(float r, float dr)
+	static DEResult MakeDEResult(float radius, float derivative, int iterations)
 	{
-		return 0.5 * log(r) * r / dr;
+		DEResult result;
+		result.distance = 0.5 * log(radius) * radius / derivative;
+		result.iterations = iterations;
+		return result;
 	}
 
 	// Computes the world-space radius that a sphere must have to appear 1 pixel tall on screen at a given distance.
@@ -133,10 +135,7 @@ struct FractalFunctions
 			}
 		}
 
-		DEResult result;
-		result.distance = FinalDE(r, dr);
-		result.iterations = i;
-		return result;
+		return MakeDEResult(r, dr, i);
 	}
 
 	// ============================================================================
@@ -195,11 +194,7 @@ struct FractalFunctions
 				break;
 		}
 		
-		float r = length(z);
-		DEResult result;
-		result.distance = FinalDE(r, dr);
-		result.iterations = i;
-		return result;
+		return MakeDEResult(length(z), dr, i);
 	}
 
 	// ============================================================================
@@ -208,18 +203,15 @@ struct FractalFunctions
 
 	static DEResult FractalDE(float3 pos, int fractalType, float power)
 	{
-		// Power Fractals: Smooth algebraic iteration
 		switch (fractalType)
 		{
+			// Power Fractals: Smooth algebraic iteration
 			case FRACTAL_TYPE_MANDELBULB:
 			case FRACTAL_TYPE_BURNING_SHIP:
 			case FRACTAL_TYPE_JULIA_SET:
 				return PowerFractalDE(pos, fractalType, power);
-		}
-		
-		// IFS Fractals: Geometric folding
-		switch (fractalType)
-		{
+
+			// IFS Fractals: Geometric folding
 			case FRACTAL_TYPE_MANDELBOX:
 			case FRACTAL_TYPE_INVERTED_MENGER:
 			case FRACTAL_TYPE_KLEINIAN:
@@ -227,14 +219,14 @@ struct FractalFunctions
 			case FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON:
 			case FRACTAL_TYPE_KALEIDOSCOPIC_IFS:
 				return IFSFractalDE(pos, power, fractalType);
+
+			// Special case: Quaternion (hybrid approach)
+			case FRACTAL_TYPE_QUATERNION:
+				return QuaternionDE(pos, power);
+
+			default:
+				return PowerFractalDE(pos, FRACTAL_TYPE_MANDELBULB, power);
 		}
-		
-		// Special case: Quaternion (hybrid approach)
-		if (fractalType == FRACTAL_TYPE_QUATERNION)
-			return QuaternionDE(pos, power);
-			
-		// Default fallback
-		return PowerFractalDE(pos, FRACTAL_TYPE_MANDELBULB, power);
 	}
 
 	// Marching function
@@ -582,10 +574,8 @@ struct FractalFunctions
 		}
 		
 		float r = length(z);
-		DEResult result;
-		result.distance = FinalDE(r, dr);
-		result.iterations = i;
-		return result;
+
+		return MakeDEResult(r, dr, i);
 	}
 };
 

@@ -155,8 +155,11 @@ void AFractalPlayerController::Tick(float DeltaTime)
 
 	const FVector Loc = (PlayerCameraManager) ? PlayerCameraManager->GetCameraLocation() : P->GetActorLocation();
 
-	// Update fractal parameters with current power value
+	// Update fractal parameters with current power value and scale
 	FractalParams.Power = CurrentPower;
+	// The shader multiplies camera position by scaleMultiplier (e.g., 0.001).
+	// The C++ DE divides position by Scale, so we need: Scale = 1.0 / scaleMultiplier
+	FractalParams.Scale = 1.0 / CurrentScaleMultiplier;
 
 	const double Distance = DistanceEstimator->ComputeDistance(Loc, FractalParams);
 	const float DistanceFloat = static_cast<float>(Distance);
@@ -367,6 +370,58 @@ void AFractalPlayerController::SetupInputComponent()
 			}
 		});
 	}
+
+	// Scale adjustment - uses axis so it works while held
+	{
+		FInputAxisBinding &ScaleAdjust = InputComponent->BindAxis(TEXT("AdjustScale"));
+		ScaleAdjust.AxisDelegate.GetDelegateForManualSet().BindLambda([this](float Value)
+		{
+			const float DeltaTime = GetWorld() ? GetWorld()->GetDeltaSeconds() : 0.016f;
+			
+			// Target velocity based on input
+			const float TargetScaleVelocity = Value * ScaleAdjustSpeed;
+			
+			// Apply acceleration or deceleration
+			if (FMath::IsNearlyZero(Value))
+			{
+				// No input - decelerate to zero
+				if (CurrentScaleVelocity > 0.0f)
+				{
+					CurrentScaleVelocity = FMath::Max(0.0f, CurrentScaleVelocity - ScaleAdjustDeceleration * DeltaTime);
+				}
+				else if (CurrentScaleVelocity < 0.0f)
+				{
+					CurrentScaleVelocity = FMath::Min(0.0f, CurrentScaleVelocity + ScaleAdjustDeceleration * DeltaTime);
+				}
+			}
+			else
+			{
+				// Check if input direction opposes current velocity (directional braking)
+				const bool bOpposingDirection = (Value > 0.0f && CurrentScaleVelocity < 0.0f) || 
+												(Value < 0.0f && CurrentScaleVelocity > 0.0f);
+				
+				// Use deceleration rate when changing direction, acceleration rate otherwise
+				const float RateToApply = bOpposingDirection ? ScaleAdjustDeceleration : ScaleAdjustAcceleration;
+				
+				// Accelerate toward target velocity
+				if (CurrentScaleVelocity < TargetScaleVelocity)
+				{
+					CurrentScaleVelocity = FMath::Min(TargetScaleVelocity, CurrentScaleVelocity + RateToApply * DeltaTime);
+				}
+				else if (CurrentScaleVelocity > TargetScaleVelocity)
+				{
+					CurrentScaleVelocity = FMath::Max(TargetScaleVelocity, CurrentScaleVelocity - RateToApply * DeltaTime);
+				}
+			}
+			
+			// Apply scale adjustment if there's any velocity
+			if (!FMath::IsNearlyZero(CurrentScaleVelocity))
+			{
+				CurrentScaleMultiplier = FMath::Clamp(CurrentScaleMultiplier + (CurrentScaleVelocity * DeltaTime), 0.00001f, 0.01f);
+				UpdateMaterialParameters();
+			}
+		});
+	}
 }
 
 void AFractalPlayerController::HandleQuit()
@@ -539,11 +594,13 @@ void AFractalPlayerController::UpdateMaterialParameters()
 	{
 		MPCInstance->SetScalarParameterValue(FName("FractalType"), static_cast<float>(CurrentFractalType));
 		MPCInstance->SetScalarParameterValue(FName("Power"), CurrentPower);
+		MPCInstance->SetScalarParameterValue(FName("ScaleMultiplier"), CurrentScaleMultiplier);
 	}
 	
 	if (AFractalHUD* FractalHUD = Cast<AFractalHUD>(GetHUD()))
 	{
 		FractalHUD->CurrentFractalType = CurrentFractalType;
 		FractalHUD->CurrentPower = CurrentPower;
+		FractalHUD->CurrentScaleMultiplier = CurrentScaleMultiplier;
 	}
 }

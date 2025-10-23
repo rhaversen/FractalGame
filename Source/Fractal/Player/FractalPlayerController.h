@@ -46,6 +46,20 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Material")
 	float PowerAdjustDeceleration = 4.0f; // How fast it slows down
 
+	// Current scale multiplier for the fractal (multiplies the base scale from GetScaleFromPower)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Material", meta = (ClampMin = "0.00001", ClampMax = "0.01"))
+	float CurrentScaleMultiplier = 0.001f;
+
+	// Scale adjustment parameters
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Material")
+	float ScaleAdjustSpeed = 0.001f; // Max units per second
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Material")
+	float ScaleAdjustAcceleration = 0.00005f; // How fast it ramps up
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Material")
+	float ScaleAdjustDeceleration = 2.0f; // How fast it slows down
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
@@ -80,6 +94,9 @@ private:
 
 	// Current power adjustment velocity
 	float CurrentPowerVelocity = 0.0f;
+
+	// Current scale adjustment velocity
+	float CurrentScaleVelocity = 0.0f;
 
 	// Accumulated movement input for this frame (processed in Tick)
 	FVector AccumulatedMovementInput = FVector::ZeroVector;

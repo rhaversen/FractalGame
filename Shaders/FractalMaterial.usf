@@ -141,48 +141,6 @@ struct FractalFunctions
 	}
 
 	// ============================================================================
-	// POWER-TO-SCALE CONVERSION
-	// Centralizes how the "power" parameter maps to scale for each fractal type
-	// ============================================================================
-
-	static float GetScaleFromPower(int fractalType, float power)
-	{
-		switch (fractalType)
-		{
-			// Power fractals: use power directly in spherical transform
-			case FRACTAL_TYPE_MANDELBULB:
-			case FRACTAL_TYPE_BURNING_SHIP:
-			case FRACTAL_TYPE_JULIA_SET:
-			case FRACTAL_TYPE_QUATERNION:
-				return power;
-			
-			// IFS fractals with reduced scale (too large by default)
-			case FRACTAL_TYPE_KALEIDOSCOPIC_IFS:
-				return 1.0 + (power - 1.0) * 0.25;
-			
-			case FRACTAL_TYPE_INVERTED_MENGER:
-				return 1.0 + (power - 1.0) * 0.6;
-			
-			case FRACTAL_TYPE_MANDELBOX:
-				return 1.0 + (power - 1.0) * 0.3;
-
-			// IFS fractals with direct scale mapping
-			case FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON:
-				return power;
-			
-			// IFS fractals with increased scale (too small by default)
-			case FRACTAL_TYPE_APOLLONIAN:
-				return 1.0 + (power - 1.0) * 2.0;
-			
-			case FRACTAL_TYPE_KLEINIAN:
-				return 1.0 + (power - 1.0) * 5.0;
-			
-			default:
-				return power;
-		}
-	}
-
-	// ============================================================================
 	// IFS FRACTALS - Iterated Function Systems (geometric folding)
 	// Uses repeated folding/inversion operations for crisp, geometric structures
 	// ============================================================================
@@ -191,7 +149,7 @@ struct FractalFunctions
 	{
 		float3 z = pos;
 		float dr = 1.0;
-		float scale = GetScaleFromPower(fractalType, power);
+		float scale = power;
 		int i;
 		
 		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
@@ -301,7 +259,7 @@ struct FractalFunctions
 		return result;
 	}
 
-	static float3 RenderFractal(float2 screenUV, float3 sceneColor, int fractalType, float power)
+	static float3 RenderFractal(float2 screenUV, float3 sceneColor, int fractalType, float power, float scaleMultiplier)
 	{
 		// Get camera parameters
 		float3 cameraOrigin = LWCHackToFloat(ResolvedView.WorldCameraOrigin);
@@ -317,8 +275,8 @@ struct FractalFunctions
 		// Transform view direction to world space
 		float3 worldDir = normalize(mul(viewPos.xyz, (float3x3)ResolvedView.ViewToTranslatedWorld));
 
-		// Scale down the camera origin for better framing
-		float3 rayOrigin = cameraOrigin * 0.001;
+		// Scale the camera origin by the scale multiplier
+		float3 rayOrigin = cameraOrigin * scaleMultiplier;
 		float3 rayDir = worldDir;
 
 		// Ray march
@@ -610,7 +568,12 @@ struct FractalFunctions
 // Usage in material custom node:
 // #include "/Project/FractalMaterial.usf"
 // FractalFunctions FF;
-// return FF.RenderFractal(ScreenPosition, SceneColor, FractalType, Power).rgb;
+// return FF.RenderFractal(ScreenPosition, SceneColor, FractalType, Power, ScaleMultiplier).rgb;
+//
+// Parameters:
+// - FractalType: Integer fractal type (see values below)
+// - Power: Float power parameter (typically 1.0-19.0)
+// - ScaleMultiplier: Float world scale (0.0001-0.01, default 0.001) - controls zoom level/world size
 //
 // FractalType values:
 // 0 = Mandelbulb

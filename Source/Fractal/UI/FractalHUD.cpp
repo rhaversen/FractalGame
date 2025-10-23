@@ -257,6 +257,30 @@ void AFractalHUD::DrawFractalParameters(float X, float Y, float UIScale)
 	FString PowerText = FString::Printf(TEXT("%.1f"), CurrentPower);
 	DrawText(PowerText, FVector2D(SliderX + SliderWidth + 15.0f * UIScale, PowerBarY - 3.0f * UIScale),
 			 FLinearColor(1.0f, 0.9f, 0.3f, 0.95f), UIScale * 1.3f);
+	
+	// Scale bar below power bar
+	const float ScaleBarY = PowerBarY + PowerBarHeight + 35.0f * UIScale;
+	
+	DrawText(TEXT("SCALE"), FVector2D(PowerBarX, ScaleBarY - 20.0f * UIScale),
+			 FLinearColor(0.6f, 0.6f, 0.7f, 0.9f), UIScale * 1.2f);
+
+	const float MinScale = 0.0001f;
+	const float MaxScale = 0.01f;
+	const float ScalePercent = (CurrentScaleMultiplier - MinScale) / (MaxScale - MinScale);
+	
+	const float ScaleSplitX = SliderX + (SliderWidth * ScalePercent);
+	
+	FCanvasTileItem ScaleLeftRect(FVector2D(SliderX, ScaleBarY), FVector2D(ScaleSplitX - SliderX, PowerBarHeight), FLinearColor(0.2f, 0.8f, 1.0f, 0.9f));
+	ScaleLeftRect.BlendMode = SE_BLEND_Translucent;
+	Canvas->DrawItem(ScaleLeftRect);
+	
+	FCanvasTileItem ScaleRightRect(FVector2D(ScaleSplitX, ScaleBarY), FVector2D((SliderX + SliderWidth) - ScaleSplitX, PowerBarHeight), FLinearColor(0.15f, 0.15f, 0.2f, 0.9f));
+	ScaleRightRect.BlendMode = SE_BLEND_Translucent;
+	Canvas->DrawItem(ScaleRightRect);
+	
+	FString ScaleText = FString::Printf(TEXT("%.2f"), CurrentScaleMultiplier);
+	DrawText(ScaleText, FVector2D(SliderX + SliderWidth + 15.0f * UIScale, ScaleBarY - 3.0f * UIScale),
+			 FLinearColor(0.3f, 0.9f, 1.0f, 0.95f), UIScale * 1.3f);
 }
 
 void AFractalHUD::DrawInfoPanel(float X, float Y, float UIScale)
@@ -397,6 +421,7 @@ void AFractalHUD::DrawMouseControls(float X, float Y, float UIScale)
 void AFractalHUD::DrawMouseButtons(float X, float Y, float UIScale)
 {
 	const FLinearColor MouseColor = FLinearColor(1.0f, 0.6f, 0.9f, 1.0f);
+	const FLinearColor ScaleColor = FLinearColor(0.3f, 0.9f, 1.0f, 1.0f);
 	
 	float ButtonY = Y;
 	
@@ -411,6 +436,20 @@ void AFractalHUD::DrawMouseButtons(float X, float Y, float UIScale)
 			 FLinearColor(0.7f, 0.7f, 0.8f, 0.9f), UIScale * 0.95f);
 	DrawText(TEXT("Increase Power"), FVector2D(X - 60.0f * UIScale, ButtonY + 18.0f * UIScale),
 			 MouseColor, UIScale * 0.75f);
+	
+	ButtonY += 42.0f * UIScale;
+	
+	DrawText(TEXT("MOUSE BACK"), FVector2D(X - 50.0f * UIScale, ButtonY),
+			 FLinearColor(0.7f, 0.7f, 0.8f, 0.9f), UIScale * 0.95f);
+	DrawText(TEXT("Decrease Scale"), FVector2D(X - 60.0f * UIScale, ButtonY + 18.0f * UIScale),
+			 ScaleColor, UIScale * 0.75f);
+	
+	ButtonY += 42.0f * UIScale;
+	
+	DrawText(TEXT("MOUSE FORWARD"), FVector2D(X - 60.0f * UIScale, ButtonY),
+			 FLinearColor(0.7f, 0.7f, 0.8f, 0.9f), UIScale * 0.95f);
+	DrawText(TEXT("Increase Scale"), FVector2D(X - 60.0f * UIScale, ButtonY + 18.0f * UIScale),
+			 ScaleColor, UIScale * 0.75f);
 }
 
 void AFractalHUD::DrawMouseWheel(float X, float Y, float Width, float Height, const FLinearColor &Color, float UIScale)

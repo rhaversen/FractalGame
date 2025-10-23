@@ -25,6 +25,7 @@ public:
 	
 	int32 CurrentFractalType = 0;
 	float CurrentPower = 8.0f;
+	float CurrentScaleMultiplier = 0.001f;
 	
 	int32 PreviousFractalType = 0;
 	float TypeTransitionProgress = 0.0f;

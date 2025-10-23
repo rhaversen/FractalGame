@@ -12,7 +12,7 @@ When changing power, limit the rate of change based on how close the player is t
 
 When reaching the end of the power scale, smoothly slow down the rate of change to zero, instead of reaching the limit abruptly.
 
-Have custom power range for each fractal type.
+Have custom power range for each fractal type. Each fractal should have a default power, and clicking r should reset to that default power.
 
 We should interpolate between two different DE functions by making hybrid fractals and sliding the start/stop from the max de iter and 0, to gradually convert from one fractal to another. Then, we string all fractals together in a big list, and loop through them when changing fractal type.
 
@@ -24,3 +24,5 @@ We do the same for morphing between fractal types and powers.
 Add seamless support for higher dimensional fractals, like the quaternion fractal. Swap between different dimension float vectors.
 
 Fractals should have their own scaling factor based on power, instead of using a universal one. This will allow us to have better control over the appearance of each fractal type.
+
+There are many places where we should hit the surface, but are running out of DE iterations before we get close enough. This even happens when fractal is not far away. We should keep doing DE iterations until the marcher determines we are less than a pixel away, or we hit some very high iteration limit. This way both stepcount and DE iterations are adaptive to the situation, but we avoid infinite loops by having a hard cap on both stepcount and DE iterations.

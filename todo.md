@@ -22,3 +22,5 @@ Alternative fractal movement mode: Let the player move, but when changing speed,
 We do the same for morphing between fractal types and powers.
 
 Add seamless support for higher dimensional fractals, like the quaternion fractal. Swap between different dimension float vectors.
+
+Fractals should have their own scaling factor based on power, instead of using a universal one. This will allow us to have better control over the appearance of each fractal type.

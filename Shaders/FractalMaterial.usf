@@ -13,8 +13,10 @@
 
 #define FRACTAL_MARCH_MAX_STEPS 200
 #define FRACTAL_MARCH_MAX_DISTANCE 500.0
-#define FRACTAL_DE_MAX_ITER 25
+#define FRACTAL_DE_MAX_ITER 200  // Safety cap - adaptive iteration will stop earlier when stable
 #define FRACTAL_DE_BAILOUT 10.0
+#define FRACTAL_DE_MIN_ITERATIONS 5  // Always do at least this many iterations for stability
+#define FRACTAL_DE_CONVERGENCE_FACTOR 0.01  // Stop when DE change is 1% of required precision
 
 // Fractal type definitions - ADD NEW TYPES HERE and increment COUNT
 #define FRACTAL_TYPE_MANDELBULB 0
@@ -108,21 +110,37 @@ struct FractalFunctions
 	// Uses spherical coordinates for smooth, organic shapes
 	// ============================================================================
 
-	static DEResult PowerFractalDE(float3 pos, int fractalType, float power)
+	static DEResult PowerFractalDE(float3 pos, int fractalType, float power, float precisionThreshold)
 	{
 		float3 z = pos;
 		float dr = 1.0;
-		float r = 0.0;
+		float prevDE = 1e10; // Start with large value
 		int i;
 
 		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
 		{
-			r = length(z);
+			float r = length(z);
 			if (r > FRACTAL_DE_BAILOUT)
 				break;
 
+			// Calculate distance estimate BEFORE updating dr and transforming z
+			float currentDE = 0.5 * log(r) * r / max(dr, 1e-10);
+			
+			// Check if estimate has converged enough for required precision
+			// Only check after minimum iterations to ensure stability
+			if (i >= FRACTAL_DE_MIN_ITERATIONS)
+			{
+				float deChange = abs(currentDE - prevDE);
+				if (deChange < precisionThreshold * FRACTAL_DE_CONVERGENCE_FACTOR)
+					break; // Estimate is stable enough!
+			}
+			
+			prevDE = currentDE;
+
+			// Update derivative
 			dr = pow(r, power - 1.0) * power * dr + 1.0;
 
+			// Do fractal transformation
 			switch (fractalType)
 			{
 				case FRACTAL_TYPE_MANDELBULB:
@@ -137,6 +155,7 @@ struct FractalFunctions
 			}
 		}
 
+		float r = length(z);
 		return MakeDEResult(r, dr, i);
 	}
 
@@ -145,15 +164,37 @@ struct FractalFunctions
 	// Uses repeated folding/inversion operations for crisp, geometric structures
 	// ============================================================================
 
-	static DEResult IFSFractalDE(float3 pos, float power, int fractalType)
+	static DEResult IFSFractalDE(float3 pos, float power, int fractalType, float precisionThreshold)
 	{
 		float3 z = pos;
 		float dr = 1.0;
 		float scale = power;
+		float prevDE = 1e10; // Start with large value
 		int i;
 		
 		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
 		{
+			float r = length(z);
+			
+			// Check escape condition
+			if (r * r > FRACTAL_DE_BAILOUT * FRACTAL_DE_BAILOUT)
+				break;
+			
+			// Calculate distance estimate BEFORE transformation
+			float currentDE = 0.5 * log(r) * r / max(dr, 1e-10);
+			
+			// Check if estimate has converged enough for required precision
+			// Only check after minimum iterations to ensure stability
+			if (i >= FRACTAL_DE_MIN_ITERATIONS)
+			{
+				float deChange = abs(currentDE - prevDE);
+				if (deChange < precisionThreshold * FRACTAL_DE_CONVERGENCE_FACTOR)
+					break; // Estimate is stable enough!
+			}
+			
+			prevDE = currentDE;
+			
+			// Do fractal transformation
 			switch (fractalType)
 			{
 				case FRACTAL_TYPE_MANDELBOX:
@@ -175,9 +216,6 @@ struct FractalFunctions
 					KaleidoscopicIFSLoop(z, dr, pos, scale);
 					break;
 			}
-			
-			if (dot(z, z) > FRACTAL_DE_BAILOUT * FRACTAL_DE_BAILOUT)
-				break;
 		}
 		
 		return MakeDEResult(length(z), dr, i);
@@ -187,7 +225,7 @@ struct FractalFunctions
 	// MAIN FRACTAL DISPATCHER - Routes to Power or IFS fractals
 	// ============================================================================
 
-	static DEResult FractalDE(float3 pos, int fractalType, float power)
+	static DEResult FractalDE(float3 pos, int fractalType, float power, float precisionThreshold)
 	{
 		switch (fractalType)
 		{
@@ -195,7 +233,7 @@ struct FractalFunctions
 			case FRACTAL_TYPE_MANDELBULB:
 			case FRACTAL_TYPE_BURNING_SHIP:
 			case FRACTAL_TYPE_JULIA_SET:
-				return PowerFractalDE(pos, fractalType, power);
+				return PowerFractalDE(pos, fractalType, power, precisionThreshold);
 
 			// IFS Fractals: Geometric folding
 			case FRACTAL_TYPE_MANDELBOX:
@@ -204,14 +242,14 @@ struct FractalFunctions
 			case FRACTAL_TYPE_APOLLONIAN:
 			case FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON:
 			case FRACTAL_TYPE_KALEIDOSCOPIC_IFS:
-				return IFSFractalDE(pos, power, fractalType);
+				return IFSFractalDE(pos, power, fractalType, precisionThreshold);
 
 			// Special case: Quaternion (hybrid approach)
 			case FRACTAL_TYPE_QUATERNION:
-				return QuaternionDE(pos, power);
+				return QuaternionDE(pos, power, precisionThreshold);
 
 			default:
-				return PowerFractalDE(pos, FRACTAL_TYPE_MANDELBULB, power);
+				return PowerFractalDE(pos, FRACTAL_TYPE_MANDELBULB, power, precisionThreshold);
 		}
 	}
 
@@ -226,13 +264,16 @@ struct FractalFunctions
 		{
 			steps++;
 			float3 pos = RayOrigin + RayDir * totalDist;
-			DEResult deResult = FractalDE(pos, fractalType, power);
+			
+			// Calculate precision threshold for adaptive DE iterations
+			float pixelSize = GetPixelWorldRadius(totalDist);
+			
+			// Call DE with precision threshold - it will iterate until stable enough
+			DEResult deResult = FractalDE(pos, fractalType, power, pixelSize);
 			
 			// Accumulate total DE iterations
 			totalDEIterations += deResult.iterations;
 
-			// Calculate precision threshold based on whether we're cone marching or ray marching
-			float pixelSize = GetPixelWorldRadius(totalDist);
 			float threshold = pixelSize;
 
 			// Check if we've hit the fractal
@@ -529,11 +570,12 @@ struct FractalFunctions
 	// Distance Estimator Functions
 	// ============================================================================
 	
-	static DEResult QuaternionDE(float3 pos, float power)
+	static DEResult QuaternionDE(float3 pos, float power, float precisionThreshold)
 	{
 		float4 z = float4(pos, 0.0);
 		float4 c = float4(pos, 0.0);
 		float dr = 1.0;
+		float prevDE = 1e10; // Start with large value
 		int i;
 		
 		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
@@ -541,6 +583,23 @@ struct FractalFunctions
 			float r = length(z);
 			if (r > FRACTAL_DE_BAILOUT)
 				break;
+			
+			// Calculate distance estimate BEFORE updating dr and transforming z
+			float currentDE = 0.5 * log(r) * r / max(dr, 1e-10);
+			
+			// Check if estimate has converged enough for required precision
+			// Only check after minimum iterations to ensure stability
+			if (i >= FRACTAL_DE_MIN_ITERATIONS)
+			{
+				float deChange = abs(currentDE - prevDE);
+				if (deChange < precisionThreshold * FRACTAL_DE_CONVERGENCE_FACTOR)
+					break; // Estimate is stable enough!
+			}
+			
+			prevDE = currentDE;
+			
+			// Update derivative
+			dr = pow(r, power - 1.0) * power * dr + 1.0;
 			
 			// Quaternion multiplication (z^power)
 			float theta = acos(z.w / r) * power;
@@ -556,11 +615,9 @@ struct FractalFunctions
 			);
 			
 			z += c;
-			dr = pow(r, power - 1.0) * power * dr + 1.0;
 		}
 		
 		float r = length(z);
-
 		return MakeDEResult(r, dr, i);
 	}
 };

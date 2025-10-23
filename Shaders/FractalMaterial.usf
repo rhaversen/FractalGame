@@ -1,13 +1,15 @@
 // Post-process fractal rendering shader functions for use in material custom node
 //
-// ADDING NEW FRACTALS - Update these 3 locations:
+// ADDING NEW FRACTALS - Update these locations:
 // 1. Add #define FRACTAL_TYPE_YOURFRACTAL below and increment FRACTAL_TYPE_COUNT
 // 2. Add case in FractalDE() switch statement to call your DE function
-// 3. Update FractalNames array in FractalHUD.cpp
-// 4. Update MaxFractalType in FractalPlayerController.h
-// 5. Add implementation using common transformation functions (BoxFold, SphereFold, etc.)
+// 3. Add case in GetScaleFromPower() to define power-to-scale mapping
+// 4. Update FractalNames array in FractalHUD.cpp
+// 5. Update MaxFractalType in FractalPlayerController.h
+// 6. Add implementation using common transformation functions (BoxFold, SphereFold, etc.)
 //
 // Common transformation building blocks are provided to make hybrid fractals easier.
+// Power-to-scale conversion is centralized in GetScaleFromPower() for easy adjustment.
 
 #define FRACTAL_MARCH_MAX_STEPS 200
 #define FRACTAL_MARCH_MAX_DISTANCE 500.0
@@ -139,6 +141,48 @@ struct FractalFunctions
 	}
 
 	// ============================================================================
+	// POWER-TO-SCALE CONVERSION
+	// Centralizes how the "power" parameter maps to scale for each fractal type
+	// ============================================================================
+
+	static float GetScaleFromPower(int fractalType, float power)
+	{
+		switch (fractalType)
+		{
+			// Power fractals: use power directly in spherical transform
+			case FRACTAL_TYPE_MANDELBULB:
+			case FRACTAL_TYPE_BURNING_SHIP:
+			case FRACTAL_TYPE_JULIA_SET:
+			case FRACTAL_TYPE_QUATERNION:
+				return power;
+			
+			// IFS fractals with reduced scale (too large by default)
+			case FRACTAL_TYPE_KALEIDOSCOPIC_IFS:
+				return 1.0 + (power - 1.0) * 0.25;
+			
+			case FRACTAL_TYPE_INVERTED_MENGER:
+				return 1.0 + (power - 1.0) * 0.6;
+			
+			case FRACTAL_TYPE_MANDELBOX:
+				return 1.0 + (power - 1.0) * 0.3;
+
+			// IFS fractals with direct scale mapping
+			case FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON:
+				return power;
+			
+			// IFS fractals with increased scale (too small by default)
+			case FRACTAL_TYPE_APOLLONIAN:
+				return 1.0 + (power - 1.0) * 2.0;
+			
+			case FRACTAL_TYPE_KLEINIAN:
+				return 1.0 + (power - 1.0) * 5.0;
+			
+			default:
+				return power;
+		}
+	}
+
+	// ============================================================================
 	// IFS FRACTALS - Iterated Function Systems (geometric folding)
 	// Uses repeated folding/inversion operations for crisp, geometric structures
 	// ============================================================================
@@ -147,24 +191,8 @@ struct FractalFunctions
 	{
 		float3 z = pos;
 		float dr = 1.0;
-		float scale;
+		float scale = GetScaleFromPower(fractalType, power);
 		int i;
-		
-		switch (fractalType)
-		{
-			case FRACTAL_TYPE_MANDELBOX:
-				scale = power;
-				break;
-			case FRACTAL_TYPE_KLEINIAN:
-				scale = 1.0 + (power - 1.0) * 0.1;
-				break;
-			case FRACTAL_TYPE_APOLLONIAN:
-				scale = 1.0 + (power - 1.0) * 0.15;
-				break;
-			default:
-				scale = power;
-				break;
-		}
 		
 		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
 		{

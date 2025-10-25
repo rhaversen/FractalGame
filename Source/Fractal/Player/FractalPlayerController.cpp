@@ -9,8 +9,6 @@
 #include "MengerSpongeDE.h"
 #include "SierpinskiDE.h"
 #include "BurningShipDE.h"
-#include "KleinianDE.h"
-#include "ApollonianDE.h"
 #include "QuaternionDE.h"
 #include "KaleidoscopicIFSDE.h"
 #include "FractalTracing.h"
@@ -566,19 +564,13 @@ void AFractalPlayerController::UpdateDistanceEstimator()
 		case 4: // FRACTAL_TYPE_INVERTED_MENGER
 			DistanceEstimator = MakeUnique<FMengerSpongeDE>();
 			break;
-		case 5: // FRACTAL_TYPE_KLEINIAN
-			DistanceEstimator = MakeUnique<FKleinianDE>();
-			break;
-		case 6: // FRACTAL_TYPE_APOLLONIAN
-			DistanceEstimator = MakeUnique<FApollonianDE>();
-			break;
-		case 7: // FRACTAL_TYPE_QUATERNION
+		case 5: // FRACTAL_TYPE_QUATERNION
 			DistanceEstimator = MakeUnique<FQuaternionDE>();
 			break;
-		case 8: // FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON
+		case 6: // FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON
 			DistanceEstimator = MakeUnique<FSierpinskiDE>();
 			break;
-		case 9: // FRACTAL_TYPE_KALEIDOSCOPIC_IFS
+		case 7: // FRACTAL_TYPE_KALEIDOSCOPIC_IFS
 			DistanceEstimator = MakeUnique<FKaleidoscopicIFSDE>();
 			break;
 		default:

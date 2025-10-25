@@ -111,8 +111,6 @@ void AFractalHUD::DrawFractalParameters(float X, float Y, float UIScale)
 		TEXT("Julia Set"),
 		TEXT("Mandelbox"),
 		TEXT("Inverted Menger"),
-		TEXT("Kleinian"),
-		TEXT("Apollonian"),
 		TEXT("Quaternion"),
 		TEXT("Sierpinski Tetrahedron"),
 		TEXT("Kaleidoscopic IFS")

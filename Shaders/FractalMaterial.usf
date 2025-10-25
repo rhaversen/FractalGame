@@ -24,12 +24,10 @@
 #define FRACTAL_TYPE_JULIA_SET 2
 #define FRACTAL_TYPE_MANDELBOX 3
 #define FRACTAL_TYPE_INVERTED_MENGER 4
-#define FRACTAL_TYPE_KLEINIAN 5
-#define FRACTAL_TYPE_APOLLONIAN 6
-#define FRACTAL_TYPE_QUATERNION 7
-#define FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON 8
-#define FRACTAL_TYPE_KALEIDOSCOPIC_IFS 9
-#define FRACTAL_TYPE_COUNT 10
+#define FRACTAL_TYPE_QUATERNION 5
+#define FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON 6
+#define FRACTAL_TYPE_KALEIDOSCOPIC_IFS 7
+#define FRACTAL_TYPE_COUNT 8
 
 #define HIT_STATUS_NONE 0
 #define HIT_STATUS_HIT 1
@@ -203,12 +201,6 @@ struct FractalFunctions
 				case FRACTAL_TYPE_INVERTED_MENGER:
 					InvertedMengerLoop(z, dr, pos, scale);
 					break;
-				case FRACTAL_TYPE_KLEINIAN:
-					KleinianLoop(z, dr, pos, scale);
-					break;
-				case FRACTAL_TYPE_APOLLONIAN:
-					ApollonianLoop(z, dr, pos, scale);
-					break;
 				case FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON:
 					SierpinskiTetrahedronLoop(z, dr, pos, scale);
 					break;
@@ -238,8 +230,6 @@ struct FractalFunctions
 			// IFS Fractals: Geometric folding
 			case FRACTAL_TYPE_MANDELBOX:
 			case FRACTAL_TYPE_INVERTED_MENGER:
-			case FRACTAL_TYPE_KLEINIAN:
-			case FRACTAL_TYPE_APOLLONIAN:
 			case FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON:
 			case FRACTAL_TYPE_KALEIDOSCOPIC_IFS:
 				return IFSFractalDE(pos, power, fractalType, precisionThreshold);
@@ -500,52 +490,6 @@ struct FractalFunctions
 		dr *= scale;
 	}
 	
-	static void KleinianLoop(inout float3 z, inout float dr, float3 pos, float scale)
-	{
-		const float minRadius = 0.3;
-		const float fixedRadius = 1.0;
-		
-		SphereFold(z, dr, minRadius, fixedRadius);
-		
-		z = z * scale + pos;
-		dr = dr * abs(scale) + 1.0;
-	}
-	
-	static void ApollonianLoop(inout float3 z, inout float dr, float3 pos, float scale)
-	{
-		const float3 center1 = float3(1.0, 1.0, 1.0);
-		const float3 center2 = float3(1.0, -1.0, -1.0);
-		const float3 center3 = float3(-1.0, 1.0, -1.0);
-		const float3 center4 = float3(-1.0, -1.0, 1.0);
-		const float radius = 1.0;
-		
-		float3 diff1 = z - center1;
-		float3 diff2 = z - center2;
-		float3 diff3 = z - center3;
-		float3 diff4 = z - center4;
-		
-		float d1 = dot(diff1, diff1);
-		float d2 = dot(diff2, diff2);
-		float d3 = dot(diff3, diff3);
-		float d4 = dot(diff4, diff4);
-		
-		float3 closest = center1;
-		float closestD = d1;
-		
-		if (d2 < closestD) { closest = center2; closestD = d2; }
-		if (d3 < closestD) { closest = center3; closestD = d3; }
-		if (d4 < closestD) { closest = center4; closestD = d4; }
-		
-		float3 diff = z - closest;
-		float r2 = dot(diff, diff);
-		float k = radius * radius / max(r2, 0.01);
-		z = closest + diff * k;
-		dr *= k;
-		
-		z *= scale;
-		dr *= scale;
-	}
-	
 	static void SierpinskiTetrahedronLoop(inout float3 z, inout float dr, float3 pos, float scale)
 	{
 		TetrahedralSortFold(z);
@@ -638,8 +582,6 @@ struct FractalFunctions
 // 2 = Julia Set
 // 3 = Mandelbox
 // 4 = Inverted Menger (cube-based IFS with holes as surface)
-// 5 = Kleinian (bubble-like sphere inversions)
-// 6 = Apollonian (sphere packing)
-// 7 = Quaternion (4D Julia set)
-// 8 = Sierpinski Tetrahedron (triangular pyramid fractal with 4 faces)
-// 9 = Kaleidoscopic IFS (complex mirrored patterns)
+// 5 = Quaternion (4D Julia set)
+// 6 = Sierpinski Tetrahedron (triangular pyramid fractal with 4 faces)
+// 7 = Kaleidoscopic IFS (complex mirrored patterns)

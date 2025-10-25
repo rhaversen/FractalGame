@@ -22,14 +22,14 @@ public:
 
 	// Maximum fractal type index (must match FRACTAL_TYPE_COUNT - 1 in shader)
 	// When adding fractals: Update shader defines, HUD names array, and this constant
-	static constexpr int32 MaxFractalType = 9;
+	static constexpr int32 MaxFractalType = 7;
 
 	// Material Parameter Collection for shader control
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Material")
 	TObjectPtr<UMaterialParameterCollection> FractalMaterialCollection;
 
 	// Current fractal type (0-MaxFractalType based on shader defines)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Material", meta = (ClampMin = "0", ClampMax = "9"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Material", meta = (ClampMin = "0", ClampMax = "7"))
 	int32 CurrentFractalType = 0;
 
 	// Current power value for the fractal

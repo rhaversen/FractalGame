@@ -157,8 +157,10 @@ void AFractalHUD::DrawFractalParameters(float X, float Y, float UIScale)
 			 FLinearColor(0.5f, 0.5f, 0.6f, 0.9f), UIScale * 1.0f);
 	CurrentY += 28.0f * UIScale;
 	
-	const float WheelCenterY = CurrentY + 30.0f * UIScale;
+	const float ListCenterBase = TypePanelY + (TypePanelHeight * 0.5f);
+	const float WheelCenterY = ListCenterBase + 30.0f * UIScale;
 	const float ItemSpacing = 35.0f * UIScale;
+	const float PrevItemSpacing = ItemSpacing * 0.65f;
 	const float TransitionOffset = ItemSpacing * EasedProgress;
 	
 	int32 NumTypes = FractalNames.Num();
@@ -174,7 +176,7 @@ void AFractalHUD::DrawFractalParameters(float X, float Y, float UIScale)
 	const float BrightScale = 1.1f;
 	
 	// Draw previous (above, fading out and shrinking)
-	float PrevY = WheelCenterY - ItemSpacing - TransitionOffset;
+	float PrevY = WheelCenterY - PrevItemSpacing - TransitionOffset;
 	if (PrevY >= TypePanelY - 20.0f * UIScale && PrevY <= TypePanelY + TypePanelHeight)
 	{
 		// Previous is becoming more faded and smaller as it moves out

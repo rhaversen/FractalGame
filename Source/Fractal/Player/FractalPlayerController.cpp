@@ -85,7 +85,7 @@ namespace
 			{2.0f, 4.0f,  2.5f,  0.0002f,  0.0020f, 0.0010f},	 // Inverted Menger
 			{1.0f, 25.0f, 5.0f,  0.0002f,  0.0020f, 0.0010f},    // Quaternion
 			{1.5f, 5.0f, 2.0f,   0.0002f,  0.0020f, 0.0010f},    // Sierpinski Tetrahedron
-			{1.5f, 2.0f, 1.7f,   0.0002f,  0.0020f, 0.0010f} 	 // Kaleidoscopic IFS
+			{1.3f, 2.0f, 1.7f,   0.0002f,  0.0020f, 0.0010f} 	 // Kaleidoscopic IFS
 		};
 
 		static_assert(UE_ARRAY_COUNT(GFractalParameterPresets) == AFractalPlayerController::MaxFractalType + 1, "Fractal preset table must match fractal types.");

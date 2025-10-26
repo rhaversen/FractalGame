@@ -24,3 +24,5 @@ We do the same for morphing between fractal types and powers.
 Add seamless support for higher dimensional fractals, like the quaternion fractal. Swap between different dimension float vectors.
 
 DONE: There are many places where we should hit the surface, but are running out of DE iterations before we get close enough. This even happens when fractal is not far away. We should keep doing DE iterations until the marcher determines we are less than a pixel away, or we hit some very high iteration limit. This way both stepcount and DE iterations are adaptive to the situation, but we avoid infinite loops by having a hard cap on both stepcount and DE iterations.
+
+Have dynamic detail adjustment based on frame time. If frame time is too high, reduce max steps and max DE iterations. If frame time is low, increase them again, up to a set maximum. This way we can keep a steady framerate while maximizing visual quality.

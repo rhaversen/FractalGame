@@ -46,7 +46,7 @@ private:
 	void DrawPanel(float X, float Y, float Width, float Height, const FLinearColor &Color);
 	void DrawBox(float X, float Y, float Width, float Height, float Thickness, const FLinearColor &Color);
 	void DrawCompactStatBar(float X, float Y, float Width, float Height, const FString &Label,
-							float Value, float MaxValue, const FString &Unit, const FLinearColor &BarColor, float UIScale);
+							float Value, float MaxValue, const FString &Unit, const FLinearColor &BarColor, float UIScale, int32 DecimalPlaces = 1);
 	void DrawStatBar(float X, float Y, float Width, float Height, const FString &Label,
 					 float Value, float MaxValue, const FLinearColor &BarColor, float UIScale, bool ShowValue = false);
 	void DrawGradientBar(float X, float Y, float Width, float Height,

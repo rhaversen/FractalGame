@@ -102,6 +102,10 @@ void AFractalHUD::DrawFractalParameters(float X, float Y, float UIScale)
 	const float ScreenWidth = Canvas->SizeX;
 	const float Margin = 30.0f * UIScale;
 	const float BottomMargin = 15.0f * UIScale;
+	const float StatBarWidth = 280.0f * UIScale;
+	const float StatBarHeight = 8.0f * UIScale;
+	const float StatLineSpacing = 36.0f * UIScale;
+	const float BottomAlignY = Y - BottomMargin - (StatLineSpacing - StatBarHeight);
 	
 	// Fractal names - must match order of FRACTAL_TYPE_* defines in shader
 	// When adding fractals: Update this array, shader defines, and PlayerController::MaxFractalType
@@ -146,7 +150,7 @@ void AFractalHUD::DrawFractalParameters(float X, float Y, float UIScale)
 	const float TypePanelWidth = 240.0f * UIScale;
 	const float TypePanelHeight = 120.0f * UIScale;
 	const float TypePanelX = X - TypePanelWidth;
-	const float TypePanelY = Y - BottomMargin - 80.0f * UIScale - TypePanelHeight;
+	const float TypePanelY = BottomAlignY - TypePanelHeight;
 	const float Padding = 12.0f * UIScale;
 	
 	DrawPanel(TypePanelX, TypePanelY, TypePanelWidth, TypePanelHeight, FLinearColor(0.01f, 0.01f, 0.03f, 0.75f));
@@ -158,7 +162,7 @@ void AFractalHUD::DrawFractalParameters(float X, float Y, float UIScale)
 	CurrentY += 28.0f * UIScale;
 	
 	const float ListCenterBase = TypePanelY + (TypePanelHeight * 0.5f);
-	const float WheelCenterY = ListCenterBase + 30.0f * UIScale;
+	const float WheelCenterY = ListCenterBase + 8.0f * UIScale;
 	const float ItemSpacing = 35.0f * UIScale;
 	const float PrevItemSpacing = ItemSpacing * 0.65f;
 	const float TransitionOffset = ItemSpacing * EasedProgress;
@@ -211,76 +215,40 @@ void AFractalHUD::DrawFractalParameters(float X, float Y, float UIScale)
 				 NextColor, UIScale * NextScale);
 	}
 	
-	// Hints and version above power bar
+	// Hints and version centered along bottom alignment
 	if (!bShowHelp)
 	{
-		const float HintY = Y - BottomMargin - 115.0f * UIScale;
+		const float HintSpacing = 8.0f * UIScale;
+		FVector2D TitleSize(0.0f, 0.0f);
+		FVector2D HintSize(0.0f, 0.0f);
+		Canvas->TextSize(GEngine->GetMediumFont(), TEXT("FRACTAL EXPLORER v1.0"), TitleSize.X, TitleSize.Y, UIScale * 0.85f, UIScale * 0.85f);
+		Canvas->TextSize(GEngine->GetMediumFont(), TEXT("[ H ] CONTROLS  •  [ R ] RESET"), HintSize.X, HintSize.Y, UIScale * 0.9f, UIScale * 0.9f);
+		const float HintTopY = BottomAlignY - (TitleSize.Y + HintSpacing + HintSize.Y);
 		
-		DrawCenteredText(TEXT("FRACTAL EXPLORER v1.0"), 
-			FVector2D(ScreenWidth / 2, HintY), 
+		DrawCenteredText(TEXT("FRACTAL EXPLORER v1.0"),
+			FVector2D(ScreenWidth / 2, HintTopY),
 			FLinearColor(0.4f, 0.4f, 0.5f, 0.5f), UIScale * 0.85f);
 		
-		DrawCenteredText(TEXT("[ H ] CONTROLS  •  [ R ] RESET"), 
-			FVector2D(ScreenWidth / 2, HintY + 22.0f * UIScale), 
+		DrawCenteredText(TEXT("[ H ] CONTROLS  •  [ R ] RESET"),
+			FVector2D(ScreenWidth / 2, HintTopY + TitleSize.Y + HintSpacing),
 			FLinearColor(0.5f, 0.7f, 0.9f, 0.6f), UIScale * 0.9f);
 	}
-	
-	// Power bar at bottom - simple two-color slider
-	const float PowerBarHeight = 12.0f * UIScale;
-	const float PowerBarY = Y - BottomMargin - PowerBarHeight - 15.0f * UIScale;
-	const float PowerBarX = Margin;
-	const float PowerBarWidth = ScreenWidth - (Margin * 2);
-	
-	const float LabelWidth = 70.0f * UIScale;
-	const float ValueWidth = 90.0f * UIScale;
-	
-	DrawText(TEXT("POWER"), FVector2D(PowerBarX, PowerBarY - 20.0f * UIScale),
-			 FLinearColor(0.6f, 0.6f, 0.7f, 0.9f), UIScale * 1.2f);
-	
-	const float SliderX = PowerBarX + LabelWidth;
-	const float SliderWidth = PowerBarWidth - LabelWidth - ValueWidth;
-	
+
+	// Power and scale bars in bottom-left corner (mirrors top-left stats)
+	const float StatX = Margin;
+	float StatY = BottomAlignY - StatLineSpacing - StatBarHeight;
+
 	const float MinPower = 1.0f;
 	const float MaxPower = 19.0f;
-	const float PowerPercent = (CurrentPower - MinPower) / (MaxPower - MinPower);
-	
-	const float SplitX = SliderX + (SliderWidth * PowerPercent);
-	
-	FCanvasTileItem LeftRect(FVector2D(SliderX, PowerBarY), FVector2D(SplitX - SliderX, PowerBarHeight), FLinearColor(1.0f, 0.6f, 0.2f, 0.9f));
-	LeftRect.BlendMode = SE_BLEND_Translucent;
-	Canvas->DrawItem(LeftRect);
-	
-	FCanvasTileItem RightRect(FVector2D(SplitX, PowerBarY), FVector2D((SliderX + SliderWidth) - SplitX, PowerBarHeight), FLinearColor(0.15f, 0.15f, 0.2f, 0.9f));
-	RightRect.BlendMode = SE_BLEND_Translucent;
-	Canvas->DrawItem(RightRect);
-	
-	FString PowerText = FString::Printf(TEXT("%.1f"), CurrentPower);
-	DrawText(PowerText, FVector2D(SliderX + SliderWidth + 15.0f * UIScale, PowerBarY - 3.0f * UIScale),
-			 FLinearColor(1.0f, 0.9f, 0.3f, 0.95f), UIScale * 1.3f);
-	
-	// Scale bar below power bar
-	const float ScaleBarY = PowerBarY + PowerBarHeight + 35.0f * UIScale;
-	
-	DrawText(TEXT("SCALE"), FVector2D(PowerBarX, ScaleBarY - 20.0f * UIScale),
-			 FLinearColor(0.6f, 0.6f, 0.7f, 0.9f), UIScale * 1.2f);
+	DrawCompactStatBar(StatX, StatY, StatBarWidth, StatBarHeight,
+		TEXT("POWER"), CurrentPower, MaxPower, TEXT(""), FLinearColor(1.0f, 0.6f, 0.2f, 0.9f), UIScale, 1);
 
 	const float MinScale = 0.0001f;
 	const float MaxScale = 0.01f;
-	const float ScalePercent = (CurrentScaleMultiplier - MinScale) / (MaxScale - MinScale);
-	
-	const float ScaleSplitX = SliderX + (SliderWidth * ScalePercent);
-	
-	FCanvasTileItem ScaleLeftRect(FVector2D(SliderX, ScaleBarY), FVector2D(ScaleSplitX - SliderX, PowerBarHeight), FLinearColor(0.2f, 0.8f, 1.0f, 0.9f));
-	ScaleLeftRect.BlendMode = SE_BLEND_Translucent;
-	Canvas->DrawItem(ScaleLeftRect);
-	
-	FCanvasTileItem ScaleRightRect(FVector2D(ScaleSplitX, ScaleBarY), FVector2D((SliderX + SliderWidth) - ScaleSplitX, PowerBarHeight), FLinearColor(0.15f, 0.15f, 0.2f, 0.9f));
-	ScaleRightRect.BlendMode = SE_BLEND_Translucent;
-	Canvas->DrawItem(ScaleRightRect);
-	
-	FString ScaleText = FString::Printf(TEXT("%.2f"), CurrentScaleMultiplier);
-	DrawText(ScaleText, FVector2D(SliderX + SliderWidth + 15.0f * UIScale, ScaleBarY - 3.0f * UIScale),
-			 FLinearColor(0.3f, 0.9f, 1.0f, 0.95f), UIScale * 1.3f);
+	const float ScaleDisplay = CurrentScaleMultiplier * 1000.0f;
+	const float ScaleMaxDisplay = MaxScale * 1000.0f;
+	DrawCompactStatBar(StatX, StatY + StatLineSpacing, StatBarWidth, StatBarHeight,
+		TEXT("SCALE"), ScaleDisplay, ScaleMaxDisplay, TEXT("x10^-3"), FLinearColor(0.3f, 0.9f, 1.0f, 0.9f), UIScale, 2);
 }
 
 void AFractalHUD::DrawInfoPanel(float X, float Y, float UIScale)
@@ -604,7 +572,7 @@ void AFractalHUD::DrawBox(float X, float Y, float Width, float Height, float Thi
 }
 
 void AFractalHUD::DrawCompactStatBar(float X, float Y, float Width, float Height,
-									 const FString &Label, float Value, float MaxValue, const FString &Unit, const FLinearColor &BarColor, float UIScale)
+								 const FString &Label, float Value, float MaxValue, const FString &Unit, const FLinearColor &BarColor, float UIScale, int32 DecimalPlaces)
 {
 	const float LabelY = Y - 22.0f * UIScale;
 	DrawText(Label, FVector2D(X, LabelY),
@@ -615,7 +583,8 @@ void AFractalHUD::DrawCompactStatBar(float X, float Y, float Width, float Height
 	Background.BlendMode = SE_BLEND_Translucent;
 	Canvas->DrawItem(Background);
 
-	float Percentage = FMath::Clamp(Value / FMath::Max(MaxValue, 0.01f), 0.0f, 1.0f);
+	const float SafeMax = FMath::Max(MaxValue, 0.01f);
+	float Percentage = FMath::Clamp(Value / SafeMax, 0.0f, 1.0f);
 	float FilledWidth = Width * Percentage;
 
 	if (FilledWidth > 2.0f)
@@ -633,7 +602,9 @@ void AFractalHUD::DrawCompactStatBar(float X, float Y, float Width, float Height
 
 	DrawBox(X, Y, Width, Height, 1.0f, FLinearColor(0.3f, 0.3f, 0.4f, 0.8f));
 
-	FString ValueText = FString::Printf(TEXT("%.1f %s"), Value, *Unit);
+	const int32 Precision = FMath::Max(DecimalPlaces, 0);
+	FString NumericText = FString::Printf(TEXT("%.*f"), Precision, Value);
+	FString ValueText = Unit.IsEmpty() ? NumericText : FString::Printf(TEXT("%s %s"), *NumericText, *Unit);
 	const float ValueX = X + Width + 12.0f * UIScale;
 	DrawText(ValueText, FVector2D(ValueX, Y - 6.0f * UIScale),
 			 BarColor, UIScale * 1.0f);

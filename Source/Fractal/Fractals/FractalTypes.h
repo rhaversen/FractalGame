@@ -55,6 +55,30 @@ struct FRaymarchParameters
 	}
 };
 
+USTRUCT(BlueprintType)
+struct FFractalParameterPreset
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal")
+	float MinPower = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal")
+	float MaxPower = 19.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal")
+	float DefaultPower = 8.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal")
+	float MinScale = 0.0001f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal")
+	float MaxScale = 0.01f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal")
+	float DefaultScale = 0.001f;
+};
+
 class IFractalDistanceEstimator
 {
 public:

@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "FractalTypes.h"
 #include "GameFramework/HUD.h"
 #include "FractalHUD.generated.h"
 
@@ -26,6 +27,7 @@ public:
 	int32 CurrentFractalType = 0;
 	float CurrentPower = 8.0f;
 	float CurrentScaleMultiplier = 0.001f;
+	FFractalParameterPreset CurrentFractalPreset;
 	
 	int32 PreviousFractalType = 0;
 	float TypeTransitionProgress = 0.0f;
@@ -46,7 +48,7 @@ private:
 	void DrawPanel(float X, float Y, float Width, float Height, const FLinearColor &Color);
 	void DrawBox(float X, float Y, float Width, float Height, float Thickness, const FLinearColor &Color);
 	void DrawCompactStatBar(float X, float Y, float Width, float Height, const FString &Label,
-							float Value, float MaxValue, const FString &Unit, const FLinearColor &BarColor, float UIScale, int32 DecimalPlaces = 1);
+						float Value, float MinValue, float MaxValue, const FString &Unit, const FLinearColor &BarColor, float UIScale, int32 DecimalPlaces = 1);
 	void DrawStatBar(float X, float Y, float Width, float Height, const FString &Label,
 					 float Value, float MaxValue, const FLinearColor &BarColor, float UIScale, bool ShowValue = false);
 	void DrawGradientBar(float X, float Y, float Width, float Height,

@@ -75,6 +75,26 @@ namespace
 		// Clamp to min/max range to prevent extreme values
 		return FMath::Clamp(CalculatedSpeed, MinSpd, MaxSpd);
 	}
+
+		static constexpr FFractalParameterPreset GFractalParameterPresets[] = {
+		// 	MinP,  MaxP,  DefP,  MinS,     MaxS,    DefS
+			{1.0f, 16.0f, 8.0f,  0.0002f,  0.0020f, 0.0010f},	 // Mandelbulb
+			{1.5f, 16.0f, 2.0f,  0.0002f,  0.0020f, 0.0010f},	 // Burning Ship
+			{1.0f, 16.0f, 4.0f,  0.0002f,  0.0020f, 0.0010f},	 // Julia Set
+			{2.0f, 6.0f,  3.0f,  0.0020f,  0.0050f, 0.0030f},	 // Mandelbox
+			{2.0f, 4.0f,  2.5f,  0.0002f,  0.0020f, 0.0010f},	 // Inverted Menger
+			{1.0f, 25.0f, 5.0f,  0.0002f,  0.0020f, 0.0010f},    // Quaternion
+			{1.5f, 5.0f, 2.0f,   0.0002f,  0.0020f, 0.0010f},    // Sierpinski Tetrahedron
+			{1.5f, 2.0f, 1.7f,   0.0002f,  0.0020f, 0.0010f} 	 // Kaleidoscopic IFS
+		};
+
+		static_assert(UE_ARRAY_COUNT(GFractalParameterPresets) == AFractalPlayerController::MaxFractalType + 1, "Fractal preset table must match fractal types.");
+
+		static const FFractalParameterPreset &GetPresetForType(int32 FractalType)
+		{
+			const int32 Index = FMath::Clamp(FractalType, 0, static_cast<int32>(UE_ARRAY_COUNT(GFractalParameterPresets)) - 1);
+			return GFractalParameterPresets[Index];
+		}
 }
 
 AFractalPlayerController::AFractalPlayerController()
@@ -101,6 +121,7 @@ void AFractalPlayerController::BeginPlay()
 	Super::BeginPlay();
 
 	UpdateDistanceEstimator();
+	ApplyFractalDefaults();
 
 	// If MPC not assigned in Blueprint, try to find it by name
 	if (!FractalMaterialCollection)
@@ -114,11 +135,9 @@ void AFractalPlayerController::BeginPlay()
 	if (FractalMaterialCollection && GetWorld())
 	{
 		MPCInstance = GetWorld()->GetParameterCollectionInstance(FractalMaterialCollection);
-		if (MPCInstance)
-		{
-			UpdateMaterialParameters();
-		}
 	}
+
+	UpdateMaterialParameters();
 }
 
 void AFractalPlayerController::Tick(float DeltaTime)
@@ -301,7 +320,9 @@ void AFractalPlayerController::SetupInputComponent()
 					Move->Velocity = FVector::ZeroVector;
 				}
 			}
-			SpeedPercentage = GInitialSpeedPercent; });
+			SpeedPercentage = GInitialSpeedPercent;
+			ApplyFractalDefaults();
+			UpdateMaterialParameters(); });
 	}
 
 	// H key shows help while held
@@ -363,7 +384,9 @@ void AFractalPlayerController::SetupInputComponent()
 			// Apply power adjustment if there's any velocity
 			if (!FMath::IsNearlyZero(CurrentPowerVelocity))
 			{
-				CurrentPower = FMath::Clamp(CurrentPower + (CurrentPowerVelocity * DeltaTime), 1.0f, 19.0f);
+				CurrentPower += CurrentPowerVelocity * DeltaTime;
+				const FFractalParameterPreset &Preset = GetFractalPreset(CurrentFractalType);
+				CurrentPower = FMath::Clamp(CurrentPower, Preset.MinPower, Preset.MaxPower);
 				UpdateMaterialParameters();
 			}
 		});
@@ -415,7 +438,9 @@ void AFractalPlayerController::SetupInputComponent()
 			// Apply scale adjustment if there's any velocity
 			if (!FMath::IsNearlyZero(CurrentScaleVelocity))
 			{
-				CurrentScaleMultiplier = FMath::Clamp(CurrentScaleMultiplier + (CurrentScaleVelocity * DeltaTime), 0.00001f, 0.01f);
+				CurrentScaleMultiplier += CurrentScaleVelocity * DeltaTime;
+				const FFractalParameterPreset &Preset = GetFractalPreset(CurrentFractalType);
+				CurrentScaleMultiplier = FMath::Clamp(CurrentScaleMultiplier, Preset.MinScale, Preset.MaxScale);
 				UpdateMaterialParameters();
 			}
 		});
@@ -539,6 +564,7 @@ void AFractalPlayerController::Roll(float Value)
 void AFractalPlayerController::CycleFractalType()
 {
 	CurrentFractalType = (CurrentFractalType + 1) % (MaxFractalType + 1);
+	ApplyFractalDefaults();
 	UpdateDistanceEstimator();
 	UpdateMaterialParameters();
 }
@@ -582,6 +608,9 @@ void AFractalPlayerController::UpdateDistanceEstimator()
 
 void AFractalPlayerController::UpdateMaterialParameters()
 {
+	ClampFractalParameters();
+	const FFractalParameterPreset &Preset = GetFractalPreset(CurrentFractalType);
+
 	if (MPCInstance)
 	{
 		MPCInstance->SetScalarParameterValue(FName("FractalType"), static_cast<float>(CurrentFractalType));
@@ -594,5 +623,28 @@ void AFractalPlayerController::UpdateMaterialParameters()
 		FractalHUD->CurrentFractalType = CurrentFractalType;
 		FractalHUD->CurrentPower = CurrentPower;
 		FractalHUD->CurrentScaleMultiplier = CurrentScaleMultiplier;
+		FractalHUD->CurrentFractalPreset = Preset;
 	}
+}
+
+const FFractalParameterPreset &AFractalPlayerController::GetFractalPreset(int32 FractalType) const
+{
+	return GetPresetForType(FractalType);
+}
+
+void AFractalPlayerController::ApplyFractalDefaults()
+{
+	const FFractalParameterPreset &Preset = GetFractalPreset(CurrentFractalType);
+	CurrentPower = Preset.DefaultPower;
+	CurrentScaleMultiplier = Preset.DefaultScale;
+	CurrentPowerVelocity = 0.0f;
+	CurrentScaleVelocity = 0.0f;
+	ClampFractalParameters();
+}
+
+void AFractalPlayerController::ClampFractalParameters()
+{
+	const FFractalParameterPreset &Preset = GetFractalPreset(CurrentFractalType);
+	CurrentPower = FMath::Clamp(CurrentPower, Preset.MinPower, Preset.MaxPower);
+	CurrentScaleMultiplier = FMath::Clamp(CurrentScaleMultiplier, Preset.MinScale, Preset.MaxScale);
 }

@@ -47,17 +47,17 @@ void AFractalHUD::DrawTopLeftInfo(float X, float Y, float UIScale)
 	const float BarHeight = 8.0f * UIScale;
 
 	DrawCompactStatBar(X, CurrentY, BarWidth, BarHeight,
-					   TEXT("ZOOM"), ZoomLevel, 100.0f, TEXT("x"), FLinearColor(1.0f, 0.6f, 0.2f, 0.9f), UIScale);
+					   TEXT("ZOOM"), ZoomLevel, 0.0f, 100.0f, TEXT("x"), FLinearColor(1.0f, 0.6f, 0.2f, 0.9f), UIScale);
 	CurrentY += LineSpacing;
 
 	DrawCompactStatBar(X, CurrentY, BarWidth, BarHeight,
-					   TEXT("SPEED LIMIT"), SpeedPercent, 100.0f, TEXT("%"), FLinearColor(0.3f, 1.0f, 0.5f, 0.9f), UIScale);
+					   TEXT("SPEED LIMIT"), SpeedPercent, 0.0f, 100.0f, TEXT("%"), FLinearColor(0.3f, 1.0f, 0.5f, 0.9f), UIScale);
 	CurrentY += LineSpacing;
 
 	const float VelMagnitude = CurrentVelocity.Size() * 0.01f;
 	const float VelMax = MaxSpeed * 0.01f;
 	DrawCompactStatBar(X, CurrentY, BarWidth, BarHeight,
-					   TEXT("VELOCITY"), VelMagnitude, VelMax > 0 ? VelMax : 1.0f, TEXT("m/s"),
+					   TEXT("VELOCITY"), VelMagnitude, 0.0f, VelMax > 0 ? VelMax : 1.0f, TEXT("m/s"),
 					   FLinearColor(0.4f, 0.9f, 1.0f, 0.9f), UIScale);
 }
 
@@ -106,6 +106,7 @@ void AFractalHUD::DrawFractalParameters(float X, float Y, float UIScale)
 	const float StatBarHeight = 8.0f * UIScale;
 	const float StatLineSpacing = 36.0f * UIScale;
 	const float BottomAlignY = Y - BottomMargin - (StatLineSpacing - StatBarHeight);
+	const FFractalParameterPreset &Preset = CurrentFractalPreset;
 	
 	// Fractal names - must match order of FRACTAL_TYPE_* defines in shader
 	// When adding fractals: Update this array, shader defines, and PlayerController::MaxFractalType
@@ -238,17 +239,16 @@ void AFractalHUD::DrawFractalParameters(float X, float Y, float UIScale)
 	const float StatX = Margin;
 	float StatY = BottomAlignY - StatLineSpacing - StatBarHeight;
 
-	const float MinPower = 1.0f;
-	const float MaxPower = 19.0f;
 	DrawCompactStatBar(StatX, StatY, StatBarWidth, StatBarHeight,
-		TEXT("POWER"), CurrentPower, MaxPower, TEXT(""), FLinearColor(1.0f, 0.6f, 0.2f, 0.9f), UIScale, 1);
+		TEXT("POWER"), CurrentPower, Preset.MinPower, Preset.MaxPower, TEXT(""),
+		FLinearColor(1.0f, 0.6f, 0.2f, 0.9f), UIScale, 1);
 
-	const float MinScale = 0.0001f;
-	const float MaxScale = 0.01f;
 	const float ScaleDisplay = CurrentScaleMultiplier * 1000.0f;
-	const float ScaleMaxDisplay = MaxScale * 1000.0f;
+	const float ScaleMinDisplay = Preset.MinScale * 1000.0f;
+	const float ScaleMaxDisplay = Preset.MaxScale * 1000.0f;
 	DrawCompactStatBar(StatX, StatY + StatLineSpacing, StatBarWidth, StatBarHeight,
-		TEXT("SCALE"), ScaleDisplay, ScaleMaxDisplay, TEXT("x10^-3"), FLinearColor(0.3f, 0.9f, 1.0f, 0.9f), UIScale, 2);
+		TEXT("SCALE"), ScaleDisplay, ScaleMinDisplay, ScaleMaxDisplay, TEXT("x10^-3"),
+		FLinearColor(0.3f, 0.9f, 1.0f, 0.9f), UIScale, 2);
 }
 
 void AFractalHUD::DrawInfoPanel(float X, float Y, float UIScale)
@@ -572,7 +572,7 @@ void AFractalHUD::DrawBox(float X, float Y, float Width, float Height, float Thi
 }
 
 void AFractalHUD::DrawCompactStatBar(float X, float Y, float Width, float Height,
-								 const FString &Label, float Value, float MaxValue, const FString &Unit, const FLinearColor &BarColor, float UIScale, int32 DecimalPlaces)
+							 const FString &Label, float Value, float MinValue, float MaxValue, const FString &Unit, const FLinearColor &BarColor, float UIScale, int32 DecimalPlaces)
 {
 	const float LabelY = Y - 22.0f * UIScale;
 	DrawText(Label, FVector2D(X, LabelY),
@@ -583,9 +583,10 @@ void AFractalHUD::DrawCompactStatBar(float X, float Y, float Width, float Height
 	Background.BlendMode = SE_BLEND_Translucent;
 	Canvas->DrawItem(Background);
 
-	const float SafeMax = FMath::Max(MaxValue, 0.01f);
-	float Percentage = FMath::Clamp(Value / SafeMax, 0.0f, 1.0f);
-	float FilledWidth = Width * Percentage;
+	const float ClampedValue = FMath::Clamp(Value, MinValue, MaxValue);
+	const float SafeRange = FMath::Max(MaxValue - MinValue, KINDA_SMALL_NUMBER);
+	const float Percentage = FMath::Clamp((ClampedValue - MinValue) / SafeRange, 0.0f, 1.0f);
+	const float FilledWidth = Width * Percentage;
 
 	if (FilledWidth > 2.0f)
 	{
@@ -603,7 +604,7 @@ void AFractalHUD::DrawCompactStatBar(float X, float Y, float Width, float Height
 	DrawBox(X, Y, Width, Height, 1.0f, FLinearColor(0.3f, 0.3f, 0.4f, 0.8f));
 
 	const int32 Precision = FMath::Max(DecimalPlaces, 0);
-	FString NumericText = FString::Printf(TEXT("%.*f"), Precision, Value);
+	FString NumericText = FString::Printf(TEXT("%.*f"), Precision, ClampedValue);
 	FString ValueText = Unit.IsEmpty() ? NumericText : FString::Printf(TEXT("%s %s"), *NumericText, *Unit);
 	const float ValueX = X + Width + 12.0f * UIScale;
 	DrawText(ValueText, FVector2D(ValueX, Y - 6.0f * UIScale),
@@ -648,7 +649,7 @@ void AFractalHUD::DrawRightAlignedText(const FString &Text, const FVector2D &Pos
 void AFractalHUD::DrawStatBar(float X, float Y, float Width, float Height,
 							  const FString &Label, float Value, float MaxValue, const FLinearColor &BarColor, float UIScale, bool ShowValue)
 {
-	DrawCompactStatBar(X, Y, Width, Height, Label, Value, MaxValue, TEXT("%"), BarColor, UIScale);
+	DrawCompactStatBar(X, Y, Width, Height, Label, Value, 0.0f, MaxValue, TEXT("%"), BarColor, UIScale);
 }
 
 void AFractalHUD::DrawGradientBar(float X, float Y, float Width, float Height,

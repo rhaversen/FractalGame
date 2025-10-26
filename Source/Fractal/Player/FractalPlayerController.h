@@ -79,6 +79,9 @@ private:
 	void CycleFractalType();
 	void UpdateDistanceEstimator();
 	void UpdateMaterialParameters();
+	void ApplyFractalDefaults();
+	void ClampFractalParameters();
+	const FFractalParameterPreset &GetFractalPreset(int32 FractalType) const;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Movement", meta = (AllowPrivateAccess = "true"))
 	float RollSpeedDegPerSec = 90.0f;

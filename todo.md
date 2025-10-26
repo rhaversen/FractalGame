@@ -12,7 +12,7 @@ When changing power, limit the rate of change based on how close the player is t
 
 When reaching the end of the power scale, smoothly slow down the rate of change to zero, instead of reaching the limit abruptly.
 
-Have custom power range for each fractal type. Each fractal should have a default power, and clicking r should reset to that default power. Fractals should also have their own min, max and default scale values, and clicking r should also reset the scale to the default for that fractal type. Switching fractal should also reset both.
+DONE: Have custom power range for each fractal type. Each fractal should have a default power, and clicking r should reset to that default power. Fractals should also have their own min, max and default scale values, and clicking r should also reset the scale to the default for that fractal type. Switching fractal should also reset both.
 
 We should interpolate between two different DE functions by making hybrid fractals and sliding the start/stop from the max de iter and 0, to gradually convert from one fractal to another. Then, we string all fractals together in a big list, and loop through them when changing fractal type.
 

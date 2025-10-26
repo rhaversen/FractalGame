@@ -11,9 +11,9 @@
 // Common transformation building blocks are provided to make hybrid fractals easier.
 // Power-to-scale conversion is centralized in GetScaleFromPower() for easy adjustment.
 
-#define FRACTAL_MARCH_MAX_STEPS 200
+#define FRACTAL_MARCH_MAX_STEPS 150
 #define FRACTAL_MARCH_MAX_DISTANCE 500.0
-#define FRACTAL_DE_MAX_ITER 200  // Safety cap - adaptive iteration will stop earlier when stable
+#define FRACTAL_DE_MAX_ITER 150  // Safety cap - adaptive iteration will stop earlier when stable
 #define FRACTAL_DE_BAILOUT 10.0
 #define FRACTAL_DE_MIN_ITERATIONS 5  // Always do at least this many iterations for stability
 #define FRACTAL_DE_CONVERGENCE_FACTOR 0.01  // Stop when DE change is 1% of required precision

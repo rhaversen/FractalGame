@@ -2,6 +2,18 @@
 
 #include "MandelboxDE.h"
 
+namespace
+{
+constexpr double kDerivativeEpsilon = 1e-6;
+
+double ComputeIFSDistance(const FVector &Z, double Derivative)
+{
+	// Guard against tiny derivatives so the distance estimate remains well behaved.
+	const double SafeDerivative = FMath::Max(FMath::Abs(Derivative), kDerivativeEpsilon);
+	return FMath::Max(Z.Size() / SafeDerivative, 0.0);
+}
+}
+
 void FMandelboxDE::BoxFold(FVector &z, double FoldingLimit)
 {
 	z.X = FMath::Clamp(z.X, -FoldingLimit, FoldingLimit) * 2.0 - z.X;
@@ -36,22 +48,23 @@ double FMandelboxDE::ComputeDistance(const FVector &WorldPos, const FFractalPara
 
 	FVector z = LocalPos;
 	double dr = 1.0;
-	const double Scale = Params.Power;
-	const double Bailout = Params.Bailout;
+	const double scale = Params.Power;
+	const double bailoutSquared = Params.Bailout * Params.Bailout;
 
-	for (int32 i = 0; i < Params.Iterations; i++)
+	for (int32 iteration = 0; iteration < Params.Iterations; ++iteration)
 	{
 		BoxFold(z);
 		SphereFold(z, dr);
 
-		z = z * Scale + c;
-		dr = dr * FMath::Abs(Scale) + 1.0;
+		z = z * scale + c;
+		dr = dr * FMath::Abs(scale) + 1.0;
 
-		if (z.SizeSquared() > Bailout * Bailout)
+		if (z.SizeSquared() > bailoutSquared)
+		{
 			break;
+		}
 	}
 
-	const double r = z.Size();
-	const double DE = r / FMath::Abs(dr);
-	return DE * Params.Scale;
+	const double distance = ComputeIFSDistance(z, dr);
+	return distance * Params.Scale;
 }

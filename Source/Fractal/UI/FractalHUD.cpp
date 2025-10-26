@@ -92,7 +92,7 @@ void AFractalHUD::DrawBottomLeftInfo(float X, float Y, float UIScale)
 	const float LineHeight = 28.0f * UIScale;
 	float CurrentY = Y - LineHeight;
 
-	FString BuildInfo = TEXT("FRACTAL EXPLORER v1.0");
+	FString BuildInfo = TEXT("FRACTAL EXPLORER v1.1");
 	DrawText(BuildInfo, FVector2D(X, CurrentY),
 			 FLinearColor(0.5f, 0.5f, 0.6f, 0.6f), UIScale * 0.9f);
 }
@@ -222,11 +222,11 @@ void AFractalHUD::DrawFractalParameters(float X, float Y, float UIScale)
 		const float HintSpacing = 8.0f * UIScale;
 		FVector2D TitleSize(0.0f, 0.0f);
 		FVector2D HintSize(0.0f, 0.0f);
-		Canvas->TextSize(GEngine->GetMediumFont(), TEXT("FRACTAL EXPLORER v1.0"), TitleSize.X, TitleSize.Y, UIScale * 0.85f, UIScale * 0.85f);
+		Canvas->TextSize(GEngine->GetMediumFont(), TEXT("FRACTAL EXPLORER v1.1"), TitleSize.X, TitleSize.Y, UIScale * 0.85f, UIScale * 0.85f);
 		Canvas->TextSize(GEngine->GetMediumFont(), TEXT("[ H ] CONTROLS  •  [ R ] RESET"), HintSize.X, HintSize.Y, UIScale * 0.9f, UIScale * 0.9f);
 		const float HintTopY = BottomAlignY - (TitleSize.Y + HintSpacing + HintSize.Y);
-		
-		DrawCenteredText(TEXT("FRACTAL EXPLORER v1.0"),
+
+		DrawCenteredText(TEXT("FRACTAL EXPLORER v1.1"),
 			FVector2D(ScreenWidth / 2, HintTopY),
 			FLinearColor(0.4f, 0.4f, 0.5f, 0.5f), UIScale * 0.85f);
 		

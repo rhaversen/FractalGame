@@ -95,6 +95,12 @@ struct FractalFunctions
 		return result;
 	}
 
+	static float ComputeIFSDistance(float3 z, float dr)
+	{
+		float safeDR = max(abs(dr), 1e-6);
+		return max(length(z) / safeDR, 0.0);
+	}
+
 	// Computes the world-space radius that a sphere must have to appear 1 pixel tall on screen at a given distance.
 	static float GetPixelWorldRadius(float distance)
 	{
@@ -172,27 +178,7 @@ struct FractalFunctions
 		
 		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
 		{
-			float r = length(z);
-			
-			// Check escape condition
-			if (r * r > FRACTAL_DE_BAILOUT * FRACTAL_DE_BAILOUT)
-				break;
-			
-			// Calculate distance estimate BEFORE transformation
-			float currentDE = 0.5 * log(r) * r / max(dr, 1e-10);
-			
-			// Check if estimate has converged enough for required precision
-			// Only check after minimum iterations to ensure stability
-			if (i >= FRACTAL_DE_MIN_ITERATIONS)
-			{
-				float deChange = abs(currentDE - prevDE);
-				if (deChange < precisionThreshold * FRACTAL_DE_CONVERGENCE_FACTOR)
-					break; // Estimate is stable enough!
-			}
-			
-			prevDE = currentDE;
-			
-			// Do fractal transformation
+			// Apply the fractal's folding/inversion steps
 			switch (fractalType)
 			{
 				case FRACTAL_TYPE_MANDELBOX:
@@ -208,9 +194,30 @@ struct FractalFunctions
 					KaleidoscopicIFSLoop(z, dr, pos, scale);
 					break;
 			}
+
+			float currentDE = ComputeIFSDistance(z, dr);
+			float r = length(z);
+			
+			// Check escape condition
+			if (r * r > FRACTAL_DE_BAILOUT * FRACTAL_DE_BAILOUT)
+				break;
+			
+			// Check if estimate has converged enough for required precision
+			// Only check after minimum iterations to ensure stability
+			if (i >= FRACTAL_DE_MIN_ITERATIONS)
+			{
+				float deChange = abs(currentDE - prevDE);
+				if (deChange < precisionThreshold * FRACTAL_DE_CONVERGENCE_FACTOR)
+					break; // Estimate is stable enough!
+			}
+			
+			prevDE = currentDE;
 		}
 		
-		return MakeDEResult(length(z), dr, i);
+		DEResult result;
+		result.distance = ComputeIFSDistance(z, dr);
+		result.iterations = i;
+		return result;
 	}
 
 	// ============================================================================

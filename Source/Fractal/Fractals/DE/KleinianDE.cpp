@@ -2,6 +2,18 @@
 
 #include "KleinianDE.h"
 
+namespace
+{
+constexpr double kDerivativeEpsilon = 1e-6;
+
+double ComputeIFSDistance(const FVector &Z, double Derivative)
+{
+	// Guard against tiny derivatives so the distance estimate remains well behaved.
+	const double SafeDerivative = FMath::Max(FMath::Abs(Derivative), kDerivativeEpsilon);
+	return FMath::Max(Z.Size() / SafeDerivative, 0.0);
+}
+}
+
 void FKleinianDE::SphereFold(FVector &z, double &dz, double MinRadius, double FixedRadius)
 {
 	const double r2 = z.SizeSquared();
@@ -29,21 +41,22 @@ double FKleinianDE::ComputeDistance(const FVector &WorldPos, const FFractalParam
 
 	FVector z = LocalPos;
 	double dr = 1.0;
-	const double Scale = 1.0 + (Params.Power - 1.0) * 0.1;
-	const double Bailout = Params.Bailout;
+	const double scale = 1.0 + (Params.Power - 1.0) * 0.1;
+	const double bailoutSquared = Params.Bailout * Params.Bailout;
 
-	for (int32 i = 0; i < Params.Iterations; i++)
+	for (int32 iteration = 0; iteration < Params.Iterations; ++iteration)
 	{
 		SphereFold(z, dr);
 
-		z = z * Scale + c;
-		dr = dr * FMath::Abs(Scale) + 1.0;
+		z = z * scale + c;
+		dr = dr * FMath::Abs(scale) + 1.0;
 
-		if (z.SizeSquared() > Bailout * Bailout)
+		if (z.SizeSquared() > bailoutSquared)
+		{
 			break;
+		}
 	}
 
-	const double r = z.Size();
-	const double DE = r / FMath::Abs(dr);
-	return DE * Params.Scale;
+	const double distance = ComputeIFSDistance(z, dr);
+	return distance * Params.Scale;
 }

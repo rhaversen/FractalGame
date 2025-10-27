@@ -11,7 +11,6 @@
 #include "BurningShipDE.h"
 #include "QuaternionDE.h"
 #include "KaleidoscopicIFSDE.h"
-#include "FractalTracing.h"
 #include "GameFramework/FloatingPawnMovement.h"
 #include "Engine/Engine.h"
 #include "Materials/MaterialParameterCollection.h"

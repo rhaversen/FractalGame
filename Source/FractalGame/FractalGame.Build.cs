@@ -3,9 +3,9 @@
 using UnrealBuildTool;
 using System.IO;
 
-public class Fractal : ModuleRules
+public class FractalGame : ModuleRules
 {
-	public Fractal(ReadOnlyTargetRules Target) : base(Target)
+	public FractalGame(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 

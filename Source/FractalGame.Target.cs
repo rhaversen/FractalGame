@@ -3,13 +3,13 @@
 using UnrealBuildTool;
 using System.Collections.Generic;
 
-public class FractalTarget : TargetRules
+public class FractalGameTarget : TargetRules
 {
-	public FractalTarget(TargetInfo Target) : base(Target)
+	public FractalGameTarget(TargetInfo Target) : base(Target)
 	{
 		Type = TargetType.Game;
 		DefaultBuildSettings = BuildSettingsVersion.V5;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_6;
-		ExtraModuleNames.Add("Fractal");
+		ExtraModuleNames.Add("FractalGame");
 	}
 }

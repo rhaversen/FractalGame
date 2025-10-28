@@ -38,6 +38,7 @@ git clone https://github.com/rhaversen/FractalGame.git "C:\Users\<username>\Docu
 
 ### Build & Run
 
-1. Open `Fractal.code-workspace` in VS Code, or open the .uproject in Unreal Editor.
-2. In VS Code Debug, run `Launch FractalEditor (Development) (workspace)` to start the editor.
-3. Alternatively, open the solution in Visual Studio, set configuration to Development Editor, build, then open the .uproject.
+1. Right click the `FractalGame.uproject` file and select `Generate Visual Studio project files`.
+2. Open `Fractal.code-workspace` in VS Code, or open the .uproject in Unreal Editor.
+3. In VS Code Debug, run `Launch FractalEditor (Development) (workspace)` to start the editor.
+4. Alternatively, open the solution in Visual Studio, set configuration to Development Editor, build, then open the .uproject.

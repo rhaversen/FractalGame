@@ -26,3 +26,7 @@ Add seamless support for higher dimensional fractals, like the quaternion fracta
 DONE: There are many places where we should hit the surface, but are running out of DE iterations before we get close enough. This even happens when fractal is not far away. We should keep doing DE iterations until the marcher determines we are less than a pixel away, or we hit some very high iteration limit. This way both stepcount and DE iterations are adaptive to the situation, but we avoid infinite loops by having a hard cap on both stepcount and DE iterations.
 
 Have dynamic detail adjustment based on frame time. If frame time is too high, reduce max steps and max DE iterations. If frame time is low, increase them again, up to a set maximum. This way we can keep a steady framerate while maximizing visual quality.
+
+When marching, keep a count of how many times the change of convergence is less than some small value, like the change of convergence percentage of the pixel size at that distance. If this count exceeds a threshold, we can stop early since more iterations wont improve the result. We can also decrease the count when convergence changes significantly, to slowly allow more iterations again.
+Similarly, if the DE is gaining size rapidly, we can also stop early since we are clearly far away from the fractal.
+This should help with performance in areas where the DE is not changing much, like deep inside the fractal or far away from it.

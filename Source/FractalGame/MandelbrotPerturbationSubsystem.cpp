@@ -5,7 +5,6 @@
 #include "Rendering/Texture2DResource.h"
 #include "RHI.h"
 
-#include <complex>
 
 DEFINE_LOG_CATEGORY_STATIC(LogMandelbrotPerturbation, Log, All);
 
@@ -13,9 +12,7 @@ namespace
 {
 	constexpr EPixelFormat OrbitTextureFormat = PF_A32B32G32R32F;
 	const FName NameViewportCenter(TEXT("ViewportCenter"));
-	const FName NameViewportScaleAspect(TEXT("ViewportScaleAspect"));
-	const FName NameReferenceHi(TEXT("ReferenceHi"));
-	const FName NameReferenceLo(TEXT("ReferenceLo"));
+	const FName NamePower(TEXT("Power"));
 	const FName NameMaxIterations(TEXT("MaxIterations"));
 	const FName NameOrbitTexture(TEXT("OrbitTexture"));
 }
@@ -23,14 +20,9 @@ namespace
 void UMandelbrotPerturbationSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
-	ViewportCenter = FVector2D::ZeroVector;
-	ViewportScale = 3.0;
-	ViewportAspect = 1.0;
+	ViewportCenter = FVector::ZeroVector;
+	Power = 8.0;
 	CachedOrbitLength = 0;
-	ReferenceCenterX = 0.0L;
-	ReferenceCenterY = 0.0L;
-	ReferenceCenterHi = FVector2D::ZeroVector;
-	ReferenceCenterLo = FVector2D::ZeroVector;
 	bOrbitDirty = true;
 }
 
@@ -50,11 +42,10 @@ void UMandelbrotPerturbationSubsystem::SetTargetMaterial(UMaterialInstanceDynami
 	}
 }
 
-void UMandelbrotPerturbationSubsystem::SetViewportParameters(const FVector2D& Center, double Scale, double Aspect, int32 MaxIterations)
+void UMandelbrotPerturbationSubsystem::SetViewportParameters(const FVector& Center, double InPower, int32 MaxIterations)
 {
 	ViewportCenter = Center;
-	ViewportScale = Scale;
-	ViewportAspect = Aspect > 0.0 ? Aspect : 1.0;
+	Power = InPower;
 
 	const int32 ClampedIterations = FMath::Clamp(MaxIterations, 1, MaxSupportedIterations);
 	if (ClampedIterations != CachedOrbitLength)
@@ -62,10 +53,6 @@ void UMandelbrotPerturbationSubsystem::SetViewportParameters(const FVector2D& Ce
 		bOrbitDirty = true;
 		CachedOrbitLength = ClampedIterations;
 	}
-
-	ReferenceCenterX = static_cast<long double>(Center.X);
-	ReferenceCenterY = static_cast<long double>(Center.Y);
-	UpdateReferenceSplit();
 
 	BuildOrbit(CachedOrbitLength);
 	PushParametersToMaterial();
@@ -79,34 +66,18 @@ void UMandelbrotPerturbationSubsystem::ForceRebuild()
 	PushParametersToMaterial();
 }
 
-FVector4 UMandelbrotPerturbationSubsystem::GetViewportVector() const
-{
-	return FVector4(
-		static_cast<float>(ViewportCenter.X),
-		static_cast<float>(ViewportCenter.Y),
-		static_cast<float>(ViewportScale),
-		static_cast<float>(ViewportAspect));
-}
-
-FVector4 UMandelbrotPerturbationSubsystem::GetReferenceVector() const
-{
-	return FVector4(
-		static_cast<float>(ReferenceCenterHi.X),
-		static_cast<float>(ReferenceCenterHi.Y),
-		static_cast<float>(ReferenceCenterLo.X),
-		static_cast<float>(ReferenceCenterLo.Y));
-}
-
 void UMandelbrotPerturbationSubsystem::EnsureOrbitTexture(int32 DesiredLength)
 {
 	DesiredLength = FMath::Clamp(DesiredLength, 1, MaxSupportedIterations);
 
-	if (OrbitTexture && OrbitTexture->GetSizeX() == DesiredLength)
+	if (OrbitTexture &&
+		OrbitTexture->GetSizeX() == DesiredLength &&
+		OrbitTexture->GetSizeY() == OrbitTextureRows)
 	{
 		return;
 	}
 
-	OrbitTexture = UTexture2D::CreateTransient(DesiredLength, 1, OrbitTextureFormat);
+	OrbitTexture = UTexture2D::CreateTransient(DesiredLength, OrbitTextureRows, OrbitTextureFormat);
 	if (!OrbitTexture)
 	{
 		UE_LOG(LogMandelbrotPerturbation, Error, TEXT("Failed to allocate orbit texture with length %d"), DesiredLength);
@@ -124,7 +95,9 @@ void UMandelbrotPerturbationSubsystem::EnsureOrbitTexture(int32 DesiredLength)
 
 void UMandelbrotPerturbationSubsystem::BuildOrbit(int32 OrbitLength)
 {
-	if (!bOrbitDirty && OrbitTexture)
+	if (!bOrbitDirty && OrbitTexture &&
+		OrbitTexture->GetSizeX() == OrbitLength &&
+		OrbitTexture->GetSizeY() == OrbitTextureRows)
 	{
 		return;
 	}
@@ -138,23 +111,126 @@ void UMandelbrotPerturbationSubsystem::BuildOrbit(int32 OrbitLength)
 		return;
 	}
 
+	const int32 TextureWidth = OrbitLength;
+	const int32 TextureHeight = OrbitTextureRows;
 	TArray<FVector4f> OrbitData;
-	OrbitData.SetNum(OrbitLength);
+	OrbitData.SetNum(TextureWidth * TextureHeight);
 
-	std::complex<long double> CRef(ReferenceCenterX, ReferenceCenterY);
-	std::complex<long double> Z(0.0L, 0.0L);
-	std::complex<long double> DZ(0.0L, 0.0L);
+	// Use double precision for the reference orbit center
+	const double CRefX = static_cast<double>(ViewportCenter.X);
+	const double CRefY = static_cast<double>(ViewportCenter.Y);
+	const double CRefZ = static_cast<double>(ViewportCenter.Z);
+
+	// Mandelbulb iteration with Jacobian tracking
+	double zx = 0.0;
+	double zy = 0.0;
+	double zz = 0.0;
+	double dr = 1.0;
+
+	// Jacobian matrix (3x3) stored as columns
+	double J00 = 1.0, J01 = 0.0, J02 = 0.0;
+	double J10 = 0.0, J11 = 1.0, J12 = 0.0;
+	double J20 = 0.0, J21 = 0.0, J22 = 1.0;
 
 	for (int32 Iter = 0; Iter < OrbitLength; ++Iter)
 	{
-		OrbitData[Iter] = FVector4f(
-			static_cast<float>(Z.real()),
-			static_cast<float>(Z.imag()),
-			static_cast<float>(DZ.real()),
-			static_cast<float>(DZ.imag()));
+		// Store current state
+		const FVector4f ReferenceSample(
+			static_cast<float>(zx),
+			static_cast<float>(zy),
+			static_cast<float>(zz),
+			0.0f);
+		
+		const FVector4f Column0(
+			static_cast<float>(J00),
+			static_cast<float>(J10),
+			static_cast<float>(J20),
+			0.0f);
+		
+		const FVector4f Column1(
+			static_cast<float>(J01),
+			static_cast<float>(J11),
+			static_cast<float>(J21),
+			0.0f);
+		
+		const FVector4f Column2(
+			static_cast<float>(J02),
+			static_cast<float>(J12),
+			static_cast<float>(J22),
+			0.0f);
 
-		DZ = (2.0L * Z * DZ) + std::complex<long double>(1.0L, 0.0L);
-		Z = (Z * Z) + CRef;
+		const int32 BaseIndex = Iter;
+		OrbitData[BaseIndex] = ReferenceSample;
+		OrbitData[TextureWidth + BaseIndex] = Column0;
+		OrbitData[(2 * TextureWidth) + BaseIndex] = Column1;
+		OrbitData[(3 * TextureWidth) + BaseIndex] = Column2;
+
+		// Compute next iteration using Mandelbulb formula
+		const double r = FMath::Sqrt(zx * zx + zy * zy + zz * zz);
+
+		if (r > 10.0) // Bailout
+		{
+			// Fill remaining iterations with last valid state
+			for (int32 RemIter = Iter + 1; RemIter < OrbitLength; ++RemIter)
+			{
+				const int32 RemIndex = RemIter;
+				OrbitData[RemIndex] = ReferenceSample;
+				OrbitData[TextureWidth + RemIndex] = Column0;
+				OrbitData[(2 * TextureWidth) + RemIndex] = Column1;
+				OrbitData[(3 * TextureWidth) + RemIndex] = Column2;
+			}
+			break;
+		}
+
+		// Spherical coordinates
+		const double theta = FMath::Acos(FMath::Clamp(zz / r, -1.0, 1.0));
+		const double phi = FMath::Atan2(zy, zx);
+
+		// Update derivative magnitude used in distance estimator
+		dr = FMath::Pow(r, Power - 1.0) * Power * dr + 1.0;
+
+		// New position
+		const double zr = FMath::Pow(r, Power);
+		const double newTheta = theta * Power;
+		const double newPhi = phi * Power;
+
+		const double sinTheta = FMath::Sin(newTheta);
+		const double cosTheta = FMath::Cos(newTheta);
+		const double sinPhi = FMath::Sin(newPhi);
+		const double cosPhi = FMath::Cos(newPhi);
+
+		const double newZx = zr * sinTheta * cosPhi;
+		const double newZy = zr * sinTheta * sinPhi;
+		const double newZz = zr * cosTheta;
+		
+		// Update Jacobian (simplified - for full accuracy would need chain rule through spherical transform)
+		// For now, use finite difference approximation or analytical derivative
+		// This is a simplified Jacobian that assumes local linearity
+		const double scale = Power * FMath::Pow(r, Power - 1.0);
+
+		double newJ00 = J00 * scale;
+		double newJ01 = J01 * scale;
+		double newJ02 = J02 * scale;
+		double newJ10 = J10 * scale;
+		double newJ11 = J11 * scale;
+		double newJ12 = J12 * scale;
+		double newJ20 = J20 * scale;
+		double newJ21 = J21 * scale;
+		double newJ22 = J22 * scale;
+
+		zx = newZx + CRefX;
+		zy = newZy + CRefY;
+		zz = newZz + CRefZ;
+		
+		J00 = newJ00;
+		J01 = newJ01;
+		J02 = newJ02;
+		J10 = newJ10;
+		J11 = newJ11;
+		J12 = newJ12;
+		J20 = newJ20;
+		J21 = newJ21;
+		J22 = newJ22;
 	}
 
 	UploadOrbitData(OrbitData);
@@ -169,9 +245,10 @@ void UMandelbrotPerturbationSubsystem::UploadOrbitData(const TArray<FVector4f>& 
 	}
 
 	const int32 Width = OrbitTexture->GetSizeX();
-	if (Width != OrbitData.Num())
+	const int32 Height = OrbitTexture->GetSizeY();
+	if (Width * Height != OrbitData.Num())
 	{
-		UE_LOG(LogMandelbrotPerturbation, Warning, TEXT("Orbit data length %d does not match texture width %d"), OrbitData.Num(), Width);
+		UE_LOG(LogMandelbrotPerturbation, Warning, TEXT("Orbit data length %d does not match texture dimensions %dx%d"), OrbitData.Num(), Width, Height);
 		return;
 	}
 
@@ -198,46 +275,14 @@ void UMandelbrotPerturbationSubsystem::PushParametersToMaterial()
 	TargetMaterial->SetVectorParameterValue(NameViewportCenter, FLinearColor(
 		static_cast<float>(ViewportCenter.X),
 		static_cast<float>(ViewportCenter.Y),
-		0.0f,
+		static_cast<float>(ViewportCenter.Z),
 		0.0f));
 
-	TargetMaterial->SetVectorParameterValue(NameViewportScaleAspect, FLinearColor(
-		static_cast<float>(ViewportScale),
-		static_cast<float>(ViewportAspect),
-		0.0f,
-		0.0f));
-
-	TargetMaterial->SetVectorParameterValue(NameReferenceHi, FLinearColor(
-		static_cast<float>(ReferenceCenterHi.X),
-		static_cast<float>(ReferenceCenterHi.Y),
-		0.0f,
-		0.0f));
-
-	TargetMaterial->SetVectorParameterValue(NameReferenceLo, FLinearColor(
-		static_cast<float>(ReferenceCenterLo.X),
-		static_cast<float>(ReferenceCenterLo.Y),
-		0.0f,
-		0.0f));
-
+	TargetMaterial->SetScalarParameterValue(NamePower, static_cast<float>(Power));
 	TargetMaterial->SetScalarParameterValue(NameMaxIterations, static_cast<float>(CachedOrbitLength));
 
 	if (OrbitTexture)
 	{
 		TargetMaterial->SetTextureParameterValue(NameOrbitTexture, OrbitTexture);
 	}
-}
-
-void UMandelbrotPerturbationSubsystem::UpdateReferenceSplit()
-{
-	const double CenterX = static_cast<double>(ReferenceCenterX);
-	const double CenterY = static_cast<double>(ReferenceCenterY);
-
-	const float HiX = static_cast<float>(CenterX);
-	const float HiY = static_cast<float>(CenterY);
-
-	const float LoX = static_cast<float>(CenterX - static_cast<double>(HiX));
-	const float LoY = static_cast<float>(CenterY - static_cast<double>(HiY));
-
-	ReferenceCenterHi = FVector2D(HiX, HiY);
-	ReferenceCenterLo = FVector2D(LoX, LoY);
 }

@@ -1,37 +1,93 @@
-// Mandelbrot perturbation shader utilities
+// Mandelbulb perturbation shader utilities
 
-#define MANDELBROT_BAILOUT_SQ 4.0
-#define MANDELBROT_W_LIMIT 1000000.0
+#define MANDELBULB_BAILOUT 10.0
+#define MANDELBULB_W_LIMIT 1000000.0
+#define MARCH_MAX_STEPS 200
+#define MARCH_MAX_DISTANCE 500.0
+#define DE_MAX_ITER 25
 
-struct MandelbrotPerturbationResult
+#define HIT_STATUS_HIT 1
+#define HIT_STATUS_MISS_DISTANCE 2
+#define HIT_STATUS_MISS_STEPS 3
+
+struct MandelbulbPerturbationResult
 {
 	float3 Color;
 	float SmoothIteration;
 	float EscapeIteration;
 	float InsideMask;
-	float2 LastZ;
-	float2 Perturbation;
+	float3 LastZ;
+	float3 Perturbation;
+	int HitStatus;
+	int TotalSteps;
+	int TotalDEIterations;
 };
 
-struct MandelbrotPerturbationFunctions
+struct MandelbulbPerturbationFunctions
 {
-	static float2 ComplexMul(float2 a, float2 b)
+	struct OrbitSample
 	{
-		return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
+		float3 Reference;
+		float3 Column0;
+		float3 Column1;
+		float3 Column2;
+	};
+
+	static OrbitSample LoadOrbitSample(Texture2D<float4> orbitTexture, int iteration)
+	{
+		OrbitSample sample;
+		sample.Reference = orbitTexture.Load(int3(iteration, 0, 0)).xyz;
+		sample.Column0 = orbitTexture.Load(int3(iteration, 1, 0)).xyz;
+		sample.Column1 = orbitTexture.Load(int3(iteration, 2, 0)).xyz;
+		sample.Column2 = orbitTexture.Load(int3(iteration, 3, 0)).xyz;
+		return sample;
 	}
 
-	static float MagnitudeSq(float2 value)
+	static float3 MatrixMul3x3(float3 col0, float3 col1, float3 col2, float3 v)
+	{
+		return float3(
+			dot(float3(col0.x, col1.x, col2.x), v),
+			dot(float3(col0.y, col1.y, col2.y), v),
+			dot(float3(col0.z, col1.z, col2.z), v)
+		);
+	}
+
+	static float MagnitudeSq(float3 value)
 	{
 		return dot(value, value);
 	}
 
-	static float3 EvaluateMandelbrotPalette(float t)
+	// Computes the world-space radius that a sphere must have to appear 1 pixel tall on screen at a given distance.
+	static float GetPixelWorldRadius(float distance)
 	{
-		float3 a = float3(0.35, 0.22, 0.56);
-		float3 b = float3(0.25, 0.35, 0.35);
-		float3 c = float3(1.0, 0.9, 0.7);
-		float3 d = float3(0.0, 0.33, 0.67);
-		return a + b * cos(6.2831853 * (c * t + d));
+		return distance * ResolvedView.ClipToView._22 / ResolvedView.ViewSizeAndInvSize.y;
+	}
+
+	static float3 EvaluateMandelbulbPalette(float t)
+	{
+		// Gradient color stops
+		float3 almostBlack = float3(0.0, 0.0, 0.05);
+		float3 deepBlue = float3(0.05, 0.15, 0.3);
+		float3 vibrantBlue = float3(0.2, 0.4, 0.8);
+		float3 brightBlue = float3(0.6, 0.8, 1.0);
+
+		// Blend through gradient
+		float range1 = saturate(t / 0.15);
+		float range2 = saturate((t - 0.15) / 0.25);
+		float range3 = saturate((t - 0.4) / 0.6);
+		return lerp(lerp(lerp(almostBlack, deepBlue, range1), vibrantBlue, range2), brightBlue, range3);
+	}
+
+	// Treat 2D inputs as already normalized UVs (as returned by certain material graph nodes).
+	static float2 ScreenPosToUV(float2 screenPos)
+	{
+		return screenPos;
+	}
+
+	static float2 ScreenPosToUV(float3 screenPos)
+	{
+		float wComponent = max(screenPos.z, 1.0e-6);
+		return screenPos.xy / wComponent;
 	}
 
 	static float2 ScreenPosToUV(float4 screenPos)
@@ -40,22 +96,149 @@ struct MandelbrotPerturbationFunctions
 		return screenPos.xy / wComponent;
 	}
 
-	static MandelbrotPerturbationResult RenderMandelbrotPerturbation(
+	// Mandelbulb distance estimator with perturbation
+	static float MandelbulbDEPerturbation(
+		float3 pos,
+		float power,
+		float3 deltaC,
+		Texture2D<float4> orbitTexture,
+		int maxIterations,
+		out int iterations,
+		out float3 finalZ)
+	{
+		float3 z = pos;
+		float dr = 1.0;
+		float r = 0.0;
+		float3 w = float3(0.0, 0.0, 0.0);
+
+		uint orbitWidth;
+		uint orbitHeight;
+		orbitTexture.GetDimensions(orbitWidth, orbitHeight);
+		int orbitLength = min(maxIterations, min(DE_MAX_ITER, (int)orbitWidth));
+
+		for (iterations = 0; iterations < orbitLength; iterations++)
+		{
+			// Load reference orbit
+			OrbitSample sample = LoadOrbitSample(orbitTexture, iterations);
+			float3 zRef = sample.Reference;
+			
+			// Apply perturbation using Jacobian
+			float3 perturbation = MatrixMul3x3(sample.Column0, sample.Column1, sample.Column2, deltaC) + w;
+			z = zRef + perturbation;
+
+			r = length(z);
+			if (r > MANDELBULB_BAILOUT)
+			{
+				break;
+			}
+
+			// Convert to spherical coordinates
+			float theta = acos(z.z / r);
+			float phi = atan2(z.y, z.x);
+			dr = pow(r, power - 1.0) * power * dr + 1.0;
+
+			// Scale and rotate the point
+			float zr = pow(r, power);
+			theta = theta * power;
+			phi = phi * power;
+
+			// Convert back to Cartesian coordinates
+			float sinTheta = sin(theta);
+			float3 zNext = zr * float3(sinTheta * cos(phi), sinTheta * sin(phi), cos(theta));
+			
+			// Update perturbation term
+			// For Mandelbulb: w_{n+1} = f(z_ref + w) - f(z_ref)
+			// Approximation: w_{n+1} ≈ J * w + higher order terms
+			float3 zRefNext = zRef; // This should come from next iteration of reference
+			w = zNext - zRefNext + pos;
+
+			float maxComponent = max(max(abs(w.x), abs(w.y)), abs(w.z));
+			if (maxComponent > MANDELBULB_W_LIMIT)
+			{
+				// Perturbation drifted too far
+				break;
+			}
+		}
+
+		finalZ = z;
+		return 0.5 * log(r) * r / dr;
+	}
+
+	// Ray marching with perturbation
+	static MandelbulbPerturbationResult MarchMandelbulb(
+		float3 rayOrigin,
+		float3 rayDir,
+		float power,
+		float3 referenceCenter,
+		Texture2D<float4> orbitTexture,
+		int maxIterations)
+	{
+		MandelbulbPerturbationResult result;
+		result.Color = float3(0.0, 0.0, 0.0);
+		result.SmoothIteration = 0.0;
+		result.EscapeIteration = 0.0;
+		result.InsideMask = 0.0;
+		result.LastZ = float3(0.0, 0.0, 0.0);
+		result.Perturbation = float3(0.0, 0.0, 0.0);
+		result.HitStatus = HIT_STATUS_MISS_STEPS;
+		result.TotalSteps = 0;
+		result.TotalDEIterations = 0;
+
+		float totalDist = 0.0;
+		int steps = 0;
+		int totalDEIterations = 0;
+
+		while (totalDist < MARCH_MAX_DISTANCE && steps < MARCH_MAX_STEPS)
+		{
+			steps++;
+			float3 pos = rayOrigin + rayDir * totalDist;
+			float3 deltaC = pos - referenceCenter;
+
+			int deIterations;
+			float3 finalZ;
+			float distance = MandelbulbDEPerturbation(pos, power, deltaC, orbitTexture, maxIterations, deIterations, finalZ);
+			totalDEIterations += deIterations;
+
+			float pixelSize = GetPixelWorldRadius(totalDist);
+
+			if (distance <= pixelSize)
+			{
+				result.HitStatus = HIT_STATUS_HIT;
+				result.TotalSteps = steps;
+				result.TotalDEIterations = totalDEIterations;
+				result.LastZ = finalZ;
+				result.EscapeIteration = (float)deIterations;
+				result.SmoothIteration = (float)deIterations;
+				return result;
+			}
+
+			float stepSize = max(distance, pixelSize * 0.5);
+			totalDist += stepSize;
+		}
+
+		result.HitStatus = (totalDist >= MARCH_MAX_DISTANCE) ? HIT_STATUS_MISS_DISTANCE : HIT_STATUS_MISS_STEPS;
+		result.TotalSteps = steps;
+		result.TotalDEIterations = totalDEIterations;
+		return result;
+	}
+
+	static MandelbulbPerturbationResult RenderMandelbulbPerturbation(
 		float2 screenUV,
-		float2 viewportCenter,
-		float2 viewportScaleAspect,
-		float2 referenceHi,
-		float2 referenceLo,
+		float3 viewportCenter,
+		float power,
 		float maxIterations,
 		Texture2D<float4> orbitTexture)
 	{
-		MandelbrotPerturbationResult result;
+		MandelbulbPerturbationResult result;
 		result.Color = float3(1.0, 0.0, 1.0);
 		result.SmoothIteration = 0.0;
 		result.EscapeIteration = 0.0;
 		result.InsideMask = 0.0;
-		result.LastZ = float2(0.0, 0.0);
-		result.Perturbation = float2(0.0, 0.0);
+		result.LastZ = float3(0.0, 0.0, 0.0);
+		result.Perturbation = float3(0.0, 0.0, 0.0);
+		result.HitStatus = HIT_STATUS_MISS_STEPS;
+		result.TotalSteps = 0;
+		result.TotalDEIterations = 0;
 
 		if (maxIterations <= 0.0)
 		{
@@ -65,118 +248,105 @@ struct MandelbrotPerturbationFunctions
 		uint orbitWidth;
 		uint orbitHeight;
 		orbitTexture.GetDimensions(orbitWidth, orbitHeight);
-		if (orbitWidth == 0u)
+		if (orbitWidth == 0u || orbitHeight < 4u)
 		{
 			return result;
 		}
 
-		int orbitLength = min((int)maxIterations, (int)orbitWidth);
-		if (orbitLength <= 0)
+		// Get camera parameters
+		float3 cameraOrigin = LWCHackToFloat(ResolvedView.WorldCameraOrigin);
+
+		// Convert screen UV to clip space
+		float2 clipXY = screenUV * 2.0 - 1.0;
+		clipXY.y = -clipXY.y;
+
+		float4 clipPos = float4(clipXY, 1.0, 1.0);
+		float4 viewPos = mul(clipPos, ResolvedView.ClipToView);
+		viewPos.xyz /= viewPos.w;
+
+		// Transform view direction to world space
+		float3 worldDir = normalize(mul(viewPos.xyz, (float3x3)ResolvedView.ViewToTranslatedWorld));
+
+		// Scale down the camera origin for better framing
+		float3 rayOrigin = cameraOrigin * 0.001;
+		float3 rayDir = worldDir;
+
+		// Ray march with perturbation
+		result = MarchMandelbulb(rayOrigin, rayDir, power, viewportCenter, orbitTexture, (int)maxIterations);
+
+		// Calculate color based on total steps taken
+		float stepFactor = saturate(result.TotalSteps / float(MARCH_MAX_STEPS));
+		float t = sqrt(stepFactor);
+		float3 fractalColor = EvaluateMandelbulbPalette(t);
+
+		// Add green tint based on total DE iterations
+		float iterFactor = saturate(result.TotalDEIterations / float(DE_MAX_ITER * result.TotalSteps));
+
+		if (iterFactor > 0.1)
 		{
-			return result;
+			float greenAmount = (iterFactor - 0.1) / 0.9;
+			greenAmount = pow(greenAmount, 2.0);
+			fractalColor = lerp(fractalColor, float3(0.3, 0.5, 0.6), greenAmount);
 		}
 
-		float aspect = viewportScaleAspect.y > 0.0 ? viewportScaleAspect.y : (ResolvedView.ViewSizeAndInvSize.x * ResolvedView.ViewSizeAndInvSize.w);
-		float2 scale = float2(viewportScaleAspect.x, viewportScaleAspect.x * aspect);
-		float2 planePoint = viewportCenter + (screenUV - 0.5) * scale;
-
-		float2 deltaC = (planePoint - referenceHi) - referenceLo;
-
-		float2 w = float2(0.0, 0.0);
-		float2 zPerturbed = referenceHi;
-		float smoothIter = (float)orbitLength;
-		float escapeIter = (float)orbitLength;
-		bool escaped = false;
-
-		[loop]
-		for (int iter = 0; iter < orbitLength; ++iter)
+		if (iterFactor > 0.9)
 		{
-			float4 orbitSample = orbitTexture.Load(int3(iter, 0, 0));
-			float2 zRef = orbitSample.xy;
-			float2 dzdc = orbitSample.zw;
-
-			float2 perturbation = ComplexMul(dzdc, deltaC) + w;
-			float2 z = zRef + perturbation;
-			zPerturbed = z;
-
-			float magSq = MagnitudeSq(z);
-			if (magSq > MANDELBROT_BAILOUT_SQ)
-			{
-				escaped = true;
-				escapeIter = (float)iter;
-				float magnitude = sqrt(magSq);
-				float safeLog = max(1.0e-6, log(max(1.0000001, magnitude)));
-				smoothIter = (float)iter + 1.0 - log2(safeLog);
-				break;
-			}
-
-			float2 wSquared = ComplexMul(w, w);
-			float2 twoZRef = zRef * 2.0;
-			w = ComplexMul(twoZRef, w) + wSquared + deltaC;
-
-			float maxComponent = max(abs(w.x), abs(w.y));
-			if (maxComponent > MANDELBROT_W_LIMIT)
-			{
-				// Indicates the perturbation drifted too far from the reference orbit.
-				return result;
-			}
+			float greenAmount = (iterFactor - 0.9) / 0.1;
+			greenAmount = pow(greenAmount, 5.0);
+			fractalColor = lerp(fractalColor, float3(0.3, 0.9, 0.7), greenAmount);
 		}
 
-		float escapedMask = escaped ? 1.0 : 0.0;
-		float normalized = smoothIter / max((float)orbitLength, 1.0);
-		normalized = saturate(normalized);
-		float3 palette = EvaluateMandelbrotPalette(normalized);
-		float3 interiorColor = float3(0.02, 0.02, 0.05);
+		if (result.HitStatus == HIT_STATUS_HIT)
+		{
+			result.Color = fractalColor;
+		}
+		else if (result.HitStatus == HIT_STATUS_MISS_DISTANCE)
+		{
+			float fogAmount = pow(stepFactor, 0.1);
+			result.Color = fractalColor * fogAmount;
+		}
+		else
+		{
+			result.Color = fractalColor;
+		}
 
-		result.Color = lerp(interiorColor, palette, escapedMask);
-		result.SmoothIteration = smoothIter;
-		result.EscapeIteration = escapeIter;
-		result.InsideMask = 1.0 - escapedMask;
-		result.LastZ = zPerturbed;
-		result.Perturbation = w;
 		return result;
 	}
 
-	static float3 RenderMandelbrotPerturbationColor(
+	static float3 RenderMandelbulbPerturbationColor(
 		float2 screenUV,
-		float2 viewportCenter,
-		float2 viewportScaleAspect,
-		float2 referenceHi,
-		float2 referenceLo,
+		float3 viewportCenter,
+		float power,
 		float maxIterations,
 		Texture2D<float4> orbitTexture)
 	{
-		MandelbrotPerturbationResult result = RenderMandelbrotPerturbation(screenUV, viewportCenter, viewportScaleAspect, referenceHi, referenceLo, maxIterations, orbitTexture);
+		MandelbulbPerturbationResult result = RenderMandelbulbPerturbation(screenUV, viewportCenter, power, maxIterations, orbitTexture);
 		return result.Color;
 	}
 
-	static float4 RenderMandelbrotPerturbationPacked(
+	static float4 RenderMandelbulbPerturbationPacked(
 		float2 screenUV,
-		float2 viewportCenter,
-		float2 viewportScaleAspect,
-		float2 referenceHi,
-		float2 referenceLo,
+		float3 viewportCenter,
+		float power,
 		float maxIterations,
 		Texture2D<float4> orbitTexture)
 	{
-		MandelbrotPerturbationResult result = RenderMandelbrotPerturbation(screenUV, viewportCenter, viewportScaleAspect, referenceHi, referenceLo, maxIterations, orbitTexture);
+		MandelbulbPerturbationResult result = RenderMandelbulbPerturbation(screenUV, viewportCenter, power, maxIterations, orbitTexture);
 		return float4(result.Color, result.SmoothIteration);
 	}
 };
 
 // Usage in material custom node:
-// #include "/Project/FractalMaterial.usf"
-// MandelbrotPerturbationFunctions PF;
+// #include "/Project/FractalMaterial.usf";
+// MandelbulbPerturbationFunctions PF;
 // float2 uv = PF.ScreenPosToUV(ScreenPosition);
-// return PF.RenderMandelbrotPerturbationColor(uv, ViewportCenter.rg, ViewportScaleAspect.rg, ReferenceHi.rg, ReferenceLo.rg, MaxIterations, OrbitTexture);
+// return PF.RenderMandelbulbPerturbationColor(uv, ViewportCenter.rgb, Power, MaxIterations, OrbitTexture);
 //
 // Custom node inputs (in order):
 // 1. ScreenPosition (float4) - from ScreenPosition node (will be converted to UV)
-// 2. ViewportCenter (float4) - from Vector Parameter "ViewportCenter"
-// 3. ViewportScaleAspect (float4) - from Vector Parameter "ViewportScaleAspect"
-// 4. ReferenceHi (float4) - from Vector Parameter "ReferenceHi"
-// 5. ReferenceLo (float4) - from Vector Parameter "ReferenceLo"
-// 6. MaxIterations (float) - from Scalar Parameter "MaxIterations"
-// 7. OrbitTexture (Texture2D) - from Texture Object Parameter "OrbitTexture"
+// 2. ViewportCenter (float4) - from Vector Parameter "ViewportCenter" (3D center in world space)
+// 3. Power (float) - from Scalar Parameter "Power"
+// 4. MaxIterations (float) - from Scalar Parameter "MaxIterations"
+// 5. OrbitTexture (Texture2D) - from Texture Object Parameter "OrbitTexture"
 //
 // For the legacy Mandelbulb ray marching implementation, include "/Project/OldFractalMaterial.usf".

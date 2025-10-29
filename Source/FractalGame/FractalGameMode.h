@@ -11,4 +11,7 @@ class FRACTALGAME_API AFractalGameMode : public AGameModeBase
 
 public:
     AFractalGameMode();
+
+protected:
+    virtual void BeginPlay() override;
 };

@@ -16,7 +16,7 @@ public class FractalGame : ModuleRules
 			"InputCore",
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] { });
+		PrivateDependencyModuleNames.AddRange(new string[] { "RenderCore", "RHI" });
 
 		// Uncomment to add subdirectories to include paths
 		// PublicIncludePaths.AddRange(new string[] {

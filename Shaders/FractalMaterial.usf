@@ -1,35 +1,13 @@
-// Post-process fractal rendering shader functions for use in material custom node
-//
-// ADDING NEW FRACTALS - Update these locations:
-// 1. Add #define FRACTAL_TYPE_YOURFRACTAL below and increment FRACTAL_TYPE_COUNT
-// 2. Add case in FractalDE() switch statement to call your DE function
-// 3. Add case in GetScaleFromPower() to define power-to-scale mapping
-// 4. Update FractalNames array in FractalHUD.cpp
-// 5. Update MaxFractalType in FractalPlayerController.h
-// 6. Add implementation using common transformation functions (BoxFold, SphereFold, etc.)
-//
-// Common transformation building blocks are provided to make hybrid fractals easier.
-// Power-to-scale conversion is centralized in GetScaleFromPower() for easy adjustment.
+// Fractal shader utilities combining Mandelbulb ray marching and Mandelbrot perturbation helpers
 
-#define FRACTAL_MARCH_MAX_STEPS 150
-#define FRACTAL_MARCH_MAX_DISTANCE 500.0
-#define FRACTAL_DE_MAX_ITER 150  // Safety cap - adaptive iteration will stop earlier when stable
-#define FRACTAL_DE_BAILOUT 10.0
-#define FRACTAL_DE_MIN_ITERATIONS 5  // Always do at least this many iterations for stability
-#define FRACTAL_DE_CONVERGENCE_FACTOR 0.01  // Stop when DE change is 1% of required precision
+#define MARCH_MAX_STEPS 200
+#define MARCH_MAX_DISTANCE 500.0
+#define DE_MAX_ITER 25
+#define DE_BAILOUT 10.0
 
-// Fractal type definitions - ADD NEW TYPES HERE and increment COUNT
-#define FRACTAL_TYPE_MANDELBULB 0
-#define FRACTAL_TYPE_BURNING_SHIP 1
-#define FRACTAL_TYPE_JULIA_SET 2
-#define FRACTAL_TYPE_MANDELBOX 3
-#define FRACTAL_TYPE_INVERTED_MENGER 4
-#define FRACTAL_TYPE_QUATERNION 5
-#define FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON 6
-#define FRACTAL_TYPE_KALEIDOSCOPIC_IFS 7
-#define FRACTAL_TYPE_COUNT 8
+#define MANDELBROT_BAILOUT_SQ 4.0
+#define MANDELBROT_W_LIMIT 1000000.0
 
-#define HIT_STATUS_NONE 0
 #define HIT_STATUS_HIT 1
 #define HIT_STATUS_MISS_DISTANCE 2
 #define HIT_STATUS_MISS_STEPS 3
@@ -42,239 +20,75 @@ struct MarchResult
 	int totalDEIterations;
 };
 
-struct DEResult
+struct MandelbrotPerturbationResult
 {
-	float distance;
-	int iterations;
-};
-
-struct SphericalCoords
-{
-	float r;
-	float theta;
-	float phi;
-};
-
-struct SphereFoldResult
-{
-	float3 z;
-	float dz;
+	float3 Color;
+	float SmoothIteration;
+	float EscapeIteration;
+	float InsideMask;
+	float2 LastZ;
+	float2 Perturbation;
 };
 
 struct FractalFunctions
 {
-	// Convert Cartesian coordinates to spherical
-	static SphericalCoords CartesianToSpherical(float3 z)
-	{
-		SphericalCoords result;
-		result.r = length(z);
-		result.theta = acos(z.z / result.r);
-		result.phi = atan2(z.y, z.x);
-		return result;
-	}
-
-	// Convert spherical coordinates back to Cartesian
-	static float3 SphericalToCartesian(float r, float theta, float phi)
-	{
-		float sinTheta = sin(theta);
-		return r * float3(sinTheta * cos(phi), sinTheta * sin(phi), cos(theta));
-	}
-
-	// Apply power rotation in spherical domain
-	static void RotateSpherical(inout float theta, inout float phi, float power)
-	{
-		theta *= power;
-		phi *= power;
-	}
-
-	static DEResult MakeDEResult(float radius, float derivative, int iterations)
-	{
-		DEResult result;
-		result.distance = 0.5 * log(radius) * radius / derivative;
-		result.iterations = iterations;
-		return result;
-	}
-
-	static float ComputeIFSDistance(float3 z, float dr)
-	{
-		float safeDR = max(abs(dr), 1e-6);
-		return max(length(z) / safeDR, 0.0);
-	}
-
 	// Computes the world-space radius that a sphere must have to appear 1 pixel tall on screen at a given distance.
 	static float GetPixelWorldRadius(float distance)
 	{
-		// This is derived from the projection formula: pixel_size = (world_radius / distance) * screen_height / tan(fov/2)
-		// Solving for world_radius when pixel_size = 1 gives:
 		return distance * ResolvedView.ClipToView._22 / ResolvedView.ViewSizeAndInvSize.y;
 	}
 
-	// ============================================================================
-	// POWER FRACTALS - Algebraic power iteration (z^n + c)
-	// Uses spherical coordinates for smooth, organic shapes
-	// ============================================================================
-
-	static DEResult PowerFractalDE(float3 pos, int fractalType, float power, float precisionThreshold)
+	// Mandelbulb distance estimator
+	static float MandelbulbDE(float3 pos, float power, out int iterations)
 	{
 		float3 z = pos;
 		float dr = 1.0;
-		float prevDE = 1e10; // Start with large value
-		int i;
-
-		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+		float r = 0.0;
+		
+		for (iterations = 0; iterations < DE_MAX_ITER; iterations++)
 		{
-			float r = length(z);
-			if (r > FRACTAL_DE_BAILOUT)
+			r = length(z);
+			if (r > DE_BAILOUT)
 				break;
-
-			// Calculate distance estimate BEFORE updating dr and transforming z
-			float currentDE = 0.5 * log(r) * r / max(dr, 1e-10);
 			
-			// Check if estimate has converged enough for required precision
-			// Only check after minimum iterations to ensure stability
-			if (i >= FRACTAL_DE_MIN_ITERATIONS)
-			{
-				float deChange = abs(currentDE - prevDE);
-				if (deChange < precisionThreshold * FRACTAL_DE_CONVERGENCE_FACTOR)
-					break; // Estimate is stable enough!
-			}
-			
-			prevDE = currentDE;
-
-			// Update derivative
+			// Convert to spherical coordinates
+			float theta = acos(z.z / r);
+			float phi = atan2(z.y, z.x);
 			dr = pow(r, power - 1.0) * power * dr + 1.0;
-
-			// Do fractal transformation
-			switch (fractalType)
-			{
-				case FRACTAL_TYPE_MANDELBULB:
-					z = MandelbulbTransform(z, pos, power);
-					break;
-				case FRACTAL_TYPE_BURNING_SHIP:
-					z = BurningShipTransform(z, pos, power);
-					break;
-				case FRACTAL_TYPE_JULIA_SET:
-					z = JuliaSetTransform(z, pos, power);
-					break;
-			}
-		}
-
-		float r = length(z);
-		return MakeDEResult(r, dr, i);
-	}
-
-	// ============================================================================
-	// IFS FRACTALS - Iterated Function Systems (geometric folding)
-	// Uses repeated folding/inversion operations for crisp, geometric structures
-	// ============================================================================
-
-	static DEResult IFSFractalDE(float3 pos, float power, int fractalType, float precisionThreshold)
-	{
-		float3 z = pos;
-		float dr = 1.0;
-		float scale = power;
-		float prevDE = 1e10; // Start with large value
-		int i;
-		
-		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
-		{
-			// Apply the fractal's folding/inversion steps
-			switch (fractalType)
-			{
-				case FRACTAL_TYPE_MANDELBOX:
-					MandelboxLoop(z, dr, pos, scale);
-					break;
-				case FRACTAL_TYPE_INVERTED_MENGER:
-					InvertedMengerLoop(z, dr, pos, scale);
-					break;
-				case FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON:
-					SierpinskiTetrahedronLoop(z, dr, pos, scale);
-					break;
-				case FRACTAL_TYPE_KALEIDOSCOPIC_IFS:
-					KaleidoscopicIFSLoop(z, dr, pos, scale);
-					break;
-			}
-
-			float currentDE = ComputeIFSDistance(z, dr);
-			float r = length(z);
 			
-			// Check escape condition
-			if (r * r > FRACTAL_DE_BAILOUT * FRACTAL_DE_BAILOUT)
-				break;
+			// Scale and rotate the point
+			float zr = pow(r, power);
+			theta = theta * power;
+			phi = phi * power;
 			
-			// Check if estimate has converged enough for required precision
-			// Only check after minimum iterations to ensure stability
-			if (i >= FRACTAL_DE_MIN_ITERATIONS)
-			{
-				float deChange = abs(currentDE - prevDE);
-				if (deChange < precisionThreshold * FRACTAL_DE_CONVERGENCE_FACTOR)
-					break; // Estimate is stable enough!
-			}
-			
-			prevDE = currentDE;
+			// Convert back to Cartesian coordinates
+			float sinTheta = sin(theta);
+			z = zr * float3(sinTheta * cos(phi), sinTheta * sin(phi), cos(theta));
+			z += pos;
 		}
 		
-		DEResult result;
-		result.distance = ComputeIFSDistance(z, dr);
-		result.iterations = i;
-		return result;
+		return 0.5 * log(r) * r / dr;
 	}
 
-	// ============================================================================
-	// MAIN FRACTAL DISPATCHER - Routes to Power or IFS fractals
-	// ============================================================================
-
-	static DEResult FractalDE(float3 pos, int fractalType, float power, float precisionThreshold)
-	{
-		switch (fractalType)
-		{
-			// Power Fractals: Smooth algebraic iteration
-			case FRACTAL_TYPE_MANDELBULB:
-			case FRACTAL_TYPE_BURNING_SHIP:
-			case FRACTAL_TYPE_JULIA_SET:
-				return PowerFractalDE(pos, fractalType, power, precisionThreshold);
-
-			// IFS Fractals: Geometric folding
-			case FRACTAL_TYPE_MANDELBOX:
-			case FRACTAL_TYPE_INVERTED_MENGER:
-			case FRACTAL_TYPE_SIERPINSKI_TETRAHEDRON:
-			case FRACTAL_TYPE_KALEIDOSCOPIC_IFS:
-				return IFSFractalDE(pos, power, fractalType, precisionThreshold);
-
-			// Special case: Quaternion (hybrid approach)
-			case FRACTAL_TYPE_QUATERNION:
-				return QuaternionDE(pos, power, precisionThreshold);
-
-			default:
-				return PowerFractalDE(pos, FRACTAL_TYPE_MANDELBULB, power, precisionThreshold);
-		}
-	}
-
-	// Marching function
-	static MarchResult MarchFractal(float3 RayOrigin, float3 RayDir, int fractalType, float power)
+	// Ray marching
+	static MarchResult MarchFractal(float3 rayOrigin, float3 rayDir, float power)
 	{
 		float totalDist = 0.0;
 		int steps = 0;
 		int totalDEIterations = 0;
 
-		while (totalDist < FRACTAL_MARCH_MAX_DISTANCE && steps < FRACTAL_MARCH_MAX_STEPS)
+		while (totalDist < MARCH_MAX_DISTANCE && steps < MARCH_MAX_STEPS)
 		{
 			steps++;
-			float3 pos = RayOrigin + RayDir * totalDist;
+			float3 pos = rayOrigin + rayDir * totalDist;
 			
-			// Calculate precision threshold for adaptive DE iterations
+			int deIterations;
+			float distance = MandelbulbDE(pos, power, deIterations);
+			totalDEIterations += deIterations;
+
 			float pixelSize = GetPixelWorldRadius(totalDist);
-			
-			// Call DE with precision threshold - it will iterate until stable enough
-			DEResult deResult = FractalDE(pos, fractalType, power, pixelSize);
-			
-			// Accumulate total DE iterations
-			totalDEIterations += deResult.iterations;
 
-			float threshold = pixelSize;
-
-			// Check if we've hit the fractal
-			if (deResult.distance <= threshold)
+			if (distance <= pixelSize)
 			{
 				MarchResult result;
 				result.distance = totalDist;
@@ -284,27 +98,26 @@ struct FractalFunctions
 				return result;
 			}
 
-			// Advance by the distance estimate, with minimum step to avoid precision issues
-			float stepSize = max(deResult.distance, pixelSize * 0.5); // Never step smaller than half a pixel
+			float stepSize = max(distance, pixelSize * 0.5);
 			totalDist += stepSize;
 		}
 
 		MarchResult result;
 		result.distance = totalDist;
 		result.steps = steps;
-		result.hitStatus = (totalDist >= FRACTAL_MARCH_MAX_DISTANCE) ? HIT_STATUS_MISS_DISTANCE : HIT_STATUS_MISS_STEPS;
+		result.hitStatus = (totalDist >= MARCH_MAX_DISTANCE) ? HIT_STATUS_MISS_DISTANCE : HIT_STATUS_MISS_STEPS;
 		result.totalDEIterations = totalDEIterations;
 		return result;
 	}
 
-	static float3 RenderFractal(float2 screenUV, float3 sceneColor, int fractalType, float power, float scaleMultiplier)
+	static float3 RenderFractal(float2 screenUV, float3 sceneColor, float power)
 	{
 		// Get camera parameters
 		float3 cameraOrigin = LWCHackToFloat(ResolvedView.WorldCameraOrigin);
 
 		// Convert screen UV to clip space
 		float2 clipXY = screenUV * 2.0 - 1.0;
-		clipXY.y = -clipXY.y; // Flip Y for clip space
+		clipXY.y = -clipXY.y;
 
 		float4 clipPos = float4(clipXY, 1.0, 1.0);
 		float4 viewPos = mul(clipPos, ResolvedView.ClipToView);
@@ -313,282 +126,226 @@ struct FractalFunctions
 		// Transform view direction to world space
 		float3 worldDir = normalize(mul(viewPos.xyz, (float3x3)ResolvedView.ViewToTranslatedWorld));
 
-		// Scale the camera origin by the scale multiplier
-		float3 rayOrigin = cameraOrigin * scaleMultiplier;
+		// Scale down the camera origin for better framing
+		float3 rayOrigin = cameraOrigin * 0.001;
 		float3 rayDir = worldDir;
 
 		// Ray march
-		MarchResult finalResult = MarchFractal(rayOrigin, rayDir, fractalType, power);
+		MarchResult finalResult = MarchFractal(rayOrigin, rayDir, power);
 
 		// Calculate color based on total steps taken
-		float stepFactor = saturate(finalResult.steps / float(FRACTAL_MARCH_MAX_STEPS));
+		float stepFactor = saturate(finalResult.steps / float(MARCH_MAX_STEPS));
 		float t = sqrt(stepFactor);
 		
-		// Gradient color stops: position -> color
-		float  almostBlackPos = 0.0;   float3 almostBlack = float3(0.0, 0.0, 0.05);    // Very few steps
-		float  deepBluePos = 0.15;     float3 deepBlue = float3(0.05, 0.15, 0.3);      // Low detail areas
-		float  vibrantBluePos = 0.4;   float3 vibrantBlue = float3(0.2, 0.4, 0.8);     // Medium detail
-		float  brightBluePos = 1.0;    float3 brightBlue = float3(0.6, 0.8, 1.0);      // Many steps
+		// Gradient color stops
+		float3 almostBlack = float3(0.0, 0.0, 0.05);
+		float3 deepBlue = float3(0.05, 0.15, 0.3);
+		float3 vibrantBlue = float3(0.2, 0.4, 0.8);
+		float3 brightBlue = float3(0.6, 0.8, 1.0);
 		
-		// Blend through gradient stops
-		float range1 = saturate((t - almostBlackPos) / (deepBluePos - almostBlackPos));
-		float range2 = saturate((t - deepBluePos) / (vibrantBluePos - deepBluePos));
-		float range3 = saturate((t - vibrantBluePos) / (brightBluePos - vibrantBluePos));
+		// Blend through gradient
+		float range1 = saturate(t / 0.15);
+		float range2 = saturate((t - 0.15) / 0.25);
+		float range3 = saturate((t - 0.4) / 0.6);
 		float3 fractalColor = lerp(lerp(lerp(almostBlack, deepBlue, range1), vibrantBlue, range2), brightBlue, range3);
 
 		// Add green tint based on total DE iterations
-		float iterFactor = saturate(finalResult.totalDEIterations / float(FRACTAL_DE_MAX_ITER * finalResult.steps));
-		float greenThreshold = 0.1;
-		if (iterFactor > greenThreshold)
+		float iterFactor = saturate(finalResult.totalDEIterations / float(DE_MAX_ITER * finalResult.steps));
+		
+		if (iterFactor > 0.1)
 		{
-			// Steep exponential curve from greenThreshold to 1.0
-			float greenAmount = (iterFactor - greenThreshold) / (1.0 - greenThreshold);
-			greenAmount = pow(greenAmount, 2.0); // Quadratic for steep ramp
+			float greenAmount = (iterFactor - 0.1) / 0.9;
+			greenAmount = pow(greenAmount, 2.0);
 			fractalColor = lerp(fractalColor, float3(0.3, 0.5, 0.6), greenAmount);
 		}
 
-		float greenPeak = 0.9;
-		if (iterFactor > greenPeak)
+		if (iterFactor > 0.9)
 		{
-			// Steep exponential curve from greenPeak to 1.0
-			float greenAmount = (iterFactor - greenPeak) / (1.0 - greenPeak);
-			greenAmount = pow(greenAmount, 5.0); // Quadratic for steep ramp
+			float greenAmount = (iterFactor - 0.9) / 0.1;
+			greenAmount = pow(greenAmount, 5.0);
 			fractalColor = lerp(fractalColor, float3(0.3, 0.9, 0.7), greenAmount);
 		}
 
 		if (finalResult.hitStatus == HIT_STATUS_HIT)
 		{
-			// Direct hit: show fractal color
 			return fractalColor;
 		}
 		else if (finalResult.hitStatus == HIT_STATUS_MISS_DISTANCE)
 		{
-			// Missed due to distance: blend fractal color with scene color based on steps taken
 			float fogAmount = pow(stepFactor, 0.1);
 			return lerp(sceneColor, fractalColor, fogAmount);
 		}
-		else if (finalResult.hitStatus == HIT_STATUS_MISS_STEPS)
-		{
-			// Missed due to max steps: show fractal color (TODO: Find a better way to handle this case, use depth?)
-			return fractalColor;
-		}
 		else
 		{
-			// Should not happen, fallback to scene color
-			return sceneColor;
+			return fractalColor;
 		}
 	}
 
-	// ============================================================================
-	// SHARED UTILITY FUNCTIONS
-	// ============================================================================
-	
-	// Box folding - reflects coordinates through box boundaries (IFS building block)
-	static void BoxFold(inout float3 z, float foldingLimit)
+	static float2 ComplexMul(float2 a, float2 b)
 	{
-		z.x = clamp(z.x, -foldingLimit, foldingLimit) * 2.0 - z.x;
-		z.y = clamp(z.y, -foldingLimit, foldingLimit) * 2.0 - z.y;
-		z.z = clamp(z.z, -foldingLimit, foldingLimit) * 2.0 - z.z;
+		return float2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
 	}
 
-	// Sphere folding - inverts points through spherical boundaries (IFS building block)
-	static void SphereFold(inout float3 z, inout float dr, float minRadius, float fixedRadius)
+	static float MagnitudeSq(float2 value)
 	{
-		float r2 = dot(z, z);
-		float minRadius2 = minRadius * minRadius;
-		float fixedRadius2 = fixedRadius * fixedRadius;
+		return dot(value, value);
+	}
 
-		if (r2 < minRadius2)
+	static float3 EvaluateMandelbrotPalette(float t)
+	{
+		float3 a = float3(0.35, 0.22, 0.56);
+		float3 b = float3(0.25, 0.35, 0.35);
+		float3 c = float3(1.0, 0.9, 0.7);
+		float3 d = float3(0.0, 0.33, 0.67);
+		return a + b * cos(6.2831853 * (c * t + d));
+	}
+
+	static float2 ScreenPosToUV(float4 screenPos)
+	{
+		float wComponent = max(screenPos.w, 1.0e-6);
+		return screenPos.xy / wComponent;
+	}
+
+	static MandelbrotPerturbationResult RenderMandelbrotPerturbation(
+		float2 screenUV,
+		float2 viewportCenter,
+		float2 viewportScaleAspect,
+		float2 referenceHi,
+		float2 referenceLo,
+		float maxIterations,
+		Texture2D<float4> orbitTexture)
+	{
+		MandelbrotPerturbationResult result;
+		result.Color = float3(1.0, 0.0, 1.0);
+		result.SmoothIteration = 0.0;
+		result.EscapeIteration = 0.0;
+		result.InsideMask = 0.0;
+		result.LastZ = float2(0.0, 0.0);
+		result.Perturbation = float2(0.0, 0.0);
+
+		if (maxIterations <= 0.0)
 		{
-			float temp = fixedRadius2 / minRadius2;
-			z *= temp;
-			dr *= temp;
+			return result;
 		}
-		else if (r2 < fixedRadius2)
+
+		uint orbitWidth;
+		uint orbitHeight;
+		orbitTexture.GetDimensions(orbitWidth, orbitHeight);
+		if (orbitWidth == 0u)
 		{
-			float temp = fixedRadius2 / r2;
-			z *= temp;
-			dr *= temp;
+			return result;
 		}
-	}
-	
-	// Tetrahedral folding - creates 4-faced pyramid symmetry
-	static void TetrahedralFold(inout float3 z)
-	{
-		if (z.x + z.y < 0.0) z.xy = -z.yx;
-		if (z.x + z.z < 0.0) z.xz = -z.zx;
-		if (z.y + z.z < 0.0) z.yz = -z.zy;
-	}
-	
-	// Octahedral folding - creates 8-faced symmetry
-	static void OctahedralFold(inout float3 z)
-	{
-		z = abs(z);
-		SortComponents(z);
-	}
-	
-	// Tetrahedral folding followed by component sorting (for Sierpinski-type fractals)
-	static void TetrahedralSortFold(inout float3 z)
-	{
-		TetrahedralFold(z);
-		SortComponents(z);
-	}
 
-	// Component sorting - sorts components in descending order
-	static void SortComponents(inout float3 z)
-	{
-		if (z.x < z.y) z.xy = z.yx;
-		if (z.x < z.z) z.xz = z.zx;
-		if (z.y < z.z) z.yz = z.zy;
-	}
-	
-
-	// Spherical power transformation (Mandelbulb-style)
-	static float3 SphericalPowerTransform(float3 z, float power)
-	{
-		SphericalCoords coords = CartesianToSpherical(z);
-		float zr = pow(coords.r, power);
-		RotateSpherical(coords.theta, coords.phi, power);
-		return SphericalToCartesian(zr, coords.theta, coords.phi);
-	}
-
-	// ============================================================================
-	// Specific Fractal Transformations
-	// ============================================================================
-	
-	static float3 MandelbulbTransform(float3 z, float3 pos, float power)
-	{
-		return SphericalPowerTransform(z, power) + pos;
-	}
-	
-	static float3 BurningShipTransform(float3 z, float3 pos, float power)
-	{
-		return SphericalPowerTransform(abs(z), power) + pos;
-	}
-	
-	static float3 JuliaSetTransform(float3 z, float3 pos, float power)
-	{
-		float3 c = float3(-0.8, 0.156, 0.0);
-		return SphericalPowerTransform(z, power) + c;
-	}
-
-	// ============================================================================
-	// Distance Estimator Loop Bodies (The unique part of each fractal)
-	// ============================================================================
-	
-	static void MandelboxLoop(inout float3 z, inout float dr, float3 pos, float scale)
-	{
-		const float foldingLimit = 1.0;
-		const float minRadius = 0.5;
-		const float fixedRadius = 1.0;
-		
-		BoxFold(z, foldingLimit);
-		SphereFold(z, dr, minRadius, fixedRadius);
-		
-		z = z * scale + pos;
-		dr = dr * abs(scale) + 1.0;
-	}
-	
-	static void InvertedMengerLoop(inout float3 z, inout float dr, float3 pos, float scale)
-	{
-		OctahedralFold(z);
-		
-		z = z * scale - float3(1.0, 1.0, 1.0) * (scale - 1.0);
-		dr *= scale;
-	}
-	
-	static void SierpinskiTetrahedronLoop(inout float3 z, inout float dr, float3 pos, float scale)
-	{
-		TetrahedralSortFold(z);
-		
-		z = z * scale - float3(1.0, 1.0, 1.0) * (scale - 1.0);
-		dr *= scale;
-	}
-	
-	static void KaleidoscopicIFSLoop(inout float3 z, inout float dr, float3 pos, float scale)
-	{
-		const float minRadius = 0.5;
-		const float fixedRadius = 1.0;
-		
-		OctahedralFold(z);
-		SphereFold(z, dr, minRadius, fixedRadius);
-		
-		z = z * scale + pos;
-		dr = dr * abs(scale) + 1.0;
-	}
-
-	// ============================================================================
-	// Distance Estimator Functions
-	// ============================================================================
-	
-	static DEResult QuaternionDE(float3 pos, float power, float precisionThreshold)
-	{
-		float4 z = float4(pos, 0.0);
-		float4 c = float4(pos, 0.0);
-		float dr = 1.0;
-		float prevDE = 1e10; // Start with large value
-		int i;
-		
-		for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+		int orbitLength = min((int)maxIterations, (int)orbitWidth);
+		if (orbitLength <= 0)
 		{
-			float r = length(z);
-			if (r > FRACTAL_DE_BAILOUT)
-				break;
-			
-			// Calculate distance estimate BEFORE updating dr and transforming z
-			float currentDE = 0.5 * log(r) * r / max(dr, 1e-10);
-			
-			// Check if estimate has converged enough for required precision
-			// Only check after minimum iterations to ensure stability
-			if (i >= FRACTAL_DE_MIN_ITERATIONS)
+			return result;
+		}
+
+		float2 uv = screenUV;
+		float aspect = viewportScaleAspect.y > 0.0 ? viewportScaleAspect.y : (ResolvedView.ViewSizeAndInvSize.x * ResolvedView.ViewSizeAndInvSize.w);
+		float2 scale = float2(viewportScaleAspect.x, viewportScaleAspect.x * aspect);
+		float2 planePoint = viewportCenter + (uv - 0.5) * scale;
+
+		float2 deltaC = (planePoint - referenceHi) - referenceLo;
+
+		float2 w = float2(0.0, 0.0);
+		float2 zPerturbed = referenceHi;
+		float smoothIter = (float)orbitLength;
+		float escapeIter = (float)orbitLength;
+		bool escaped = false;
+
+		[loop]
+		for (int iter = 0; iter < orbitLength; ++iter)
+		{
+			float4 orbitSample = orbitTexture.Load(int3(iter, 0, 0));
+			float2 zRef = orbitSample.xy;
+			float2 dzdc = orbitSample.zw;
+
+			float2 perturbation = ComplexMul(dzdc, deltaC) + w;
+			float2 z = zRef + perturbation;
+			zPerturbed = z;
+
+			float magSq = MagnitudeSq(z);
+			if (magSq > MANDELBROT_BAILOUT_SQ)
 			{
-				float deChange = abs(currentDE - prevDE);
-				if (deChange < precisionThreshold * FRACTAL_DE_CONVERGENCE_FACTOR)
-					break; // Estimate is stable enough!
+				escaped = true;
+				escapeIter = (float)iter;
+				float magnitude = sqrt(magSq);
+				float safeLog = max(1.0e-6, log(max(1.0000001, magnitude)));
+				smoothIter = (float)iter + 1.0 - log2(safeLog);
+				break;
 			}
-			
-			prevDE = currentDE;
-			
-			// Update derivative
-			dr = pow(r, power - 1.0) * power * dr + 1.0;
-			
-			// Quaternion multiplication (z^power)
-			float theta = acos(z.w / r) * power;
-			float phi = atan2(z.y, z.x) * power;
-			float zr = pow(r, power);
-			
-			float sinTheta = sin(theta);
-			z = float4(
-				zr * sinTheta * cos(phi),
-				zr * sinTheta * sin(phi),
-				zr * cos(theta),
-				0.0
-			);
-			
-			z += c;
+
+			float2 wSquared = ComplexMul(w, w);
+			float2 twoZRef = zRef * 2.0;
+			w = ComplexMul(twoZRef, w) + wSquared + deltaC;
+
+			float maxComponent = max(abs(w.x), abs(w.y));
+			if (maxComponent > MANDELBROT_W_LIMIT)
+			{
+				// Indicates the perturbation drifted too far from the reference orbit.
+				return result;
+			}
 		}
-		
-		float r = length(z);
-		return MakeDEResult(r, dr, i);
+
+		float escapedMask = escaped ? 1.0 : 0.0;
+		float normalized = smoothIter / max((float)orbitLength, 1.0);
+		normalized = saturate(normalized);
+		float3 palette = EvaluateMandelbrotPalette(normalized);
+		float3 interiorColor = float3(0.02, 0.02, 0.05);
+
+		result.Color = lerp(interiorColor, palette, escapedMask);
+		result.SmoothIteration = smoothIter;
+		result.EscapeIteration = escapeIter;
+		result.InsideMask = 1.0 - escapedMask;
+		result.LastZ = zPerturbed;
+		result.Perturbation = w;
+		return result;
+	}
+
+	static float3 RenderMandelbrotPerturbationColor(
+		float2 screenUV,
+		float2 viewportCenter,
+		float2 viewportScaleAspect,
+		float2 referenceHi,
+		float2 referenceLo,
+		float maxIterations,
+		Texture2D<float4> orbitTexture)
+	{
+		MandelbrotPerturbationResult result = RenderMandelbrotPerturbation(screenUV, viewportCenter, viewportScaleAspect, referenceHi, referenceLo, maxIterations, orbitTexture);
+		return result.Color;
+	}
+
+	static float4 RenderMandelbrotPerturbationPacked(
+		float2 screenUV,
+		float2 viewportCenter,
+		float2 viewportScaleAspect,
+		float2 referenceHi,
+		float2 referenceLo,
+		float maxIterations,
+		Texture2D<float4> orbitTexture)
+	{
+		MandelbrotPerturbationResult result = RenderMandelbrotPerturbation(screenUV, viewportCenter, viewportScaleAspect, referenceHi, referenceLo, maxIterations, orbitTexture);
+		return float4(result.Color, result.SmoothIteration);
 	}
 };
 
 // Usage in material custom node:
 // #include "/Project/FractalMaterial.usf"
 // FractalFunctions FF;
-// return FF.RenderFractal(ScreenPosition, SceneColor, FractalType, Power, ScaleMultiplier).rgb;
+// return FF.RenderFractal(ScreenPosition, SceneColor, Power).rgb;
 //
-// Parameters:
-// - FractalType: Integer fractal type (see values below)
-// - Power: Float power parameter (typically 1.0-19.0)
-// - ScaleMultiplier: Float world scale (0.0001-0.01, default 0.001) - controls zoom level/world size
+// Perturbation:
+// #include "/Project/FractalMaterial.usf"
+// FractalFunctions FF;
+// return FF.RenderMandelbrotPerturbationColor(ScreenPosition, ViewportCenter, ViewportScaleAspect, ReferenceHi, ReferenceLo, MaxIterations, OrbitTexture);
 //
-// FractalType values:
-// 0 = Mandelbulb
-// 1 = Burning Ship
-// 2 = Julia Set
-// 3 = Mandelbox
-// 4 = Inverted Menger (cube-based IFS with holes as surface)
-// 5 = Quaternion (4D Julia set)
-// 6 = Sierpinski Tetrahedron (triangular pyramid fractal with 4 faces)
-// 7 = Kaleidoscopic IFS (complex mirrored patterns)
+// Custom node inputs (in order):
+// 1. ScreenPosition (float2) - from ScreenPosition node
+// 2. ViewportCenter (float2) - from Vector Parameter "ViewportCenter" (use .rg)
+// 3. ViewportScaleAspect (float2) - from Vector Parameter "ViewportScaleAspect" (use .rg)
+// 4. ReferenceHi (float2) - from Vector Parameter "ReferenceHi" (use .rg)
+// 5. ReferenceLo (float2) - from Vector Parameter "ReferenceLo" (use .rg)
+// 6. MaxIterations (float) - from Scalar Parameter "MaxIterations"
+// 7. OrbitTexture (Texture2D) - from Texture Object Parameter "OrbitTexture"

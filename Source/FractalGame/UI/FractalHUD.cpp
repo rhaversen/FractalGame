@@ -32,8 +32,8 @@ void AFractalHUD::DrawHUD()
 	const float Margin = 24.0f * UIScale;
 	const float LineSpacing = 34.0f * UIScale;
 
-	const FString SpeedText = FString::Printf(TEXT("Speed: %.1f m/s"), SpeedMetersPerSecond);
-	const FString PositionText = FString::Printf(TEXT("Position: X %.2f m  Y %.2f m  Z %.2f m"), LocationMeters.X, LocationMeters.Y, LocationMeters.Z);
+	const FString SpeedText = FString::Printf(TEXT("%.1f m/s"), SpeedMetersPerSecond);
+	const FString PositionText = FString::Printf(TEXT("X %.2f m\nY %.2f m\nZ %.2f m"), LocationMeters.X, LocationMeters.Y, LocationMeters.Z);
 
 	const auto DrawLine = [&](const FString& Text, float Y)
 	{
@@ -44,5 +44,13 @@ void AFractalHUD::DrawHUD()
 	};
 
 	DrawLine(SpeedText, Margin);
-	DrawLine(PositionText, Margin + LineSpacing);
+
+	float CurrentY = Margin + LineSpacing;
+	TArray<FString> PositionLines;
+	PositionText.ParseIntoArrayLines(PositionLines);
+	for (const FString& Line : PositionLines)
+	{
+		DrawLine(Line, CurrentY);
+		CurrentY += LineSpacing;
+	}
 }

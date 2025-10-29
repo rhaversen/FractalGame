@@ -14,21 +14,14 @@ public class FractalGame : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"InputCore",
-			"ProceduralMeshComponent",
-			"RenderCore",
-			"RHI",
-			"Projects"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
 
-		// Add subdirectories to include paths
-		PublicIncludePaths.AddRange(new string[] {
-			Path.Combine(ModuleDirectory, "Fractals"),
-			Path.Combine(ModuleDirectory, "Fractals", "DE"),
-			Path.Combine(ModuleDirectory, "Player"),
-			Path.Combine(ModuleDirectory, "UI")
-		});
+		// Uncomment to add subdirectories to include paths
+		// PublicIncludePaths.AddRange(new string[] {
+		//    Path.Combine(ModuleDirectory, "SubdirectoryName"),
+		// });
 
 		// Uncomment if you are using Slate UI
 		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

@@ -12,13 +12,6 @@ class FRACTALGAME_API AFractalGameMode : public AGameModeBase
 public:
     AFractalGameMode();
 
-    /**
-     * Sets the post-process material for perturbation rendering.
-     * This must be called to connect the material to the subsystem.
-     */
-    UFUNCTION(BlueprintCallable, Category = "Fractals|Perturbation")
-    void SetPerturbationMaterial(class UMaterialInstanceDynamic* MaterialInstance);
-
 protected:
     virtual void BeginPlay() override;
 };

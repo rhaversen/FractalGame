@@ -1,0 +1,286 @@
+#include "/Engine/Public/Platform.ush"
+
+// Shader parameters
+float2 Center;
+int2 OutputSize;
+RWTexture2D<float4> OutputTexture;
+Texture2D<float4> BackgroundTexture;
+SamplerState BackgroundSampler;
+float2 BackgroundExtent;
+float2 BackgroundInvExtent;
+float2 BackgroundViewMin;
+float4x4 ClipToView;
+float4x4 ViewToWorld;
+float3 CameraOrigin;
+float2 ViewSize;
+float2 InvViewSize;
+
+// Controls the overall fractal scale; tweak as needed for composition changes.
+static const float FRACTAL_SCALE_MULTIPLIER = 0.00001;
+
+#define FRACTAL_MARCH_MAX_STEPS 150
+#define FRACTAL_MARCH_MAX_DISTANCE 1000000.0
+#define FRACTAL_DE_MAX_ITER 150  // Safety cap - adaptive iteration will stop earlier when stable
+#define FRACTAL_DE_BAILOUT 10.0
+#define FRACTAL_DE_MIN_ITERATIONS 5  // Always do at least this many iterations for stability
+#define FRACTAL_DE_CONVERGENCE_FACTOR 0.01  // Stop when DE change is 1% of required precision
+
+#define HIT_STATUS_NONE 0
+#define HIT_STATUS_HIT 1
+#define HIT_STATUS_MISS_DISTANCE 2
+#define HIT_STATUS_MISS_STEPS 3
+
+struct MarchResult
+{
+	float distance;
+	int steps;
+	int hitStatus;
+	int totalDEIterations;
+};
+
+struct DEResult
+{
+	float distance;
+	int iterations;
+};
+
+struct SphericalCoords
+{
+	float r;
+	float theta;
+	float phi;
+};
+
+SphericalCoords CartesianToSpherical(float3 z)
+{
+	SphericalCoords result;
+	result.r = length(z);
+	float invR = (result.r > 0.0) ? 1.0 / result.r : 0.0;
+	float cosTheta = clamp(z.z * invR, -1.0, 1.0);
+	result.theta = (result.r > 0.0) ? acos(cosTheta) : 0.0;
+	result.phi = atan2(z.y, z.x);
+	return result;
+}
+
+float3 SphericalToCartesian(float r, float theta, float phi)
+{
+	float sinTheta = sin(theta);
+	return r * float3(sinTheta * cos(phi), sinTheta * sin(phi), cos(theta));
+}
+
+void RotateSpherical(inout float theta, inout float phi, float power)
+{
+	theta *= power;
+	phi *= power;
+}
+
+DEResult MakeDEResult(float radius, float derivative, int iterations)
+{
+	float safeRadius = max(radius, 1e-6);
+	float safeDerivative = max(abs(derivative), 1e-10);
+
+	DEResult result;
+	result.distance = 0.5 * log(safeRadius) * safeRadius / safeDerivative;
+	result.iterations = iterations;
+	return result;
+}
+
+float GetPixelWorldRadius(float distance)
+{
+	float viewHeight = max(ViewSize.y, 1.0);
+	return distance * ClipToView._22 / viewHeight;
+}
+
+float3 SphericalPowerTransform(float3 z, float power)
+{
+	SphericalCoords coords = CartesianToSpherical(z);
+	float zr = pow(coords.r, power);
+	RotateSpherical(coords.theta, coords.phi, power);
+	return SphericalToCartesian(zr, coords.theta, coords.phi);
+}
+
+float3 MandelbulbTransform(float3 z, float3 pos, float power)
+{
+	return SphericalPowerTransform(z, power) + pos;
+}
+
+DEResult MandelbulbDE(float3 pos, float power, float precisionThreshold)
+{
+	float3 z = pos;
+	float dr = 1.0;
+	float prevDE = 1e10;
+	int i;
+
+	for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+	{
+		float r = length(z);
+		if (r > FRACTAL_DE_BAILOUT)
+		{
+			break;
+		}
+
+		float currentDE = 0.5 * log(max(r, 1e-6)) * r / max(dr, 1e-10);
+
+		if (i >= FRACTAL_DE_MIN_ITERATIONS)
+		{
+			float deChange = abs(currentDE - prevDE);
+			if (deChange < precisionThreshold * FRACTAL_DE_CONVERGENCE_FACTOR)
+			{
+				break;
+			}
+		}
+
+		prevDE = currentDE;
+
+		float safeR = max(r, 1e-6);
+		dr = pow(safeR, power - 1.0) * power * dr + 1.0;
+
+		z = MandelbulbTransform(z, pos, power);
+	}
+
+	return MakeDEResult(length(z), dr, i);
+}
+
+MarchResult MarchFractal(float3 rayOriginWorld, float3 rayDirWorld, float3 centerOffset, float scaleMultiplier, float maxWorldDistance, float power)
+{
+	float totalDist = 0.0;
+	int steps = 0;
+	int totalDEIterations = 0;
+
+	while (totalDist < maxWorldDistance && steps < FRACTAL_MARCH_MAX_STEPS)
+	{
+		steps++;
+		float3 worldPos = rayOriginWorld + rayDirWorld * totalDist;
+		float3 pos = centerOffset + worldPos * scaleMultiplier;
+
+		float pixelSizeWorld = GetPixelWorldRadius(totalDist);
+		float pixelSizeFractal = pixelSizeWorld * scaleMultiplier;
+		DEResult deResult = MandelbulbDE(pos, power, pixelSizeFractal);
+		totalDEIterations += deResult.iterations;
+
+		float threshold = pixelSizeFractal;
+		if (deResult.distance <= threshold)
+		{
+			MarchResult hitResult;
+			hitResult.distance = totalDist;
+			hitResult.steps = steps;
+			hitResult.hitStatus = HIT_STATUS_HIT;
+			hitResult.totalDEIterations = totalDEIterations;
+			return hitResult;
+		}
+
+		float fractalStep = max(deResult.distance, pixelSizeFractal * 0.5);
+		float worldStep = fractalStep / max(scaleMultiplier, 1e-6);
+		totalDist += worldStep;
+	}
+
+	MarchResult missResult;
+	missResult.distance = totalDist;
+	missResult.steps = steps;
+	missResult.hitStatus = (totalDist >= maxWorldDistance) ? HIT_STATUS_MISS_DISTANCE : HIT_STATUS_MISS_STEPS;
+	missResult.totalDEIterations = totalDEIterations;
+	return missResult;
+}
+
+float3 ShadeFractal(const MarchResult result)
+{
+	float stepFactor = result.steps > 0 ? saturate(result.steps / float(FRACTAL_MARCH_MAX_STEPS)) : 0.0;
+	float t = sqrt(stepFactor);
+
+	float3 almostBlack = float3(0.0, 0.0, 0.05);
+	float3 deepBlue = float3(0.05, 0.15, 0.3);
+	float3 vibrantBlue = float3(0.2, 0.4, 0.8);
+	float3 brightBlue = float3(0.6, 0.8, 1.0);
+
+	float range1 = saturate((t - 0.0) / max(0.15 - 0.0, 1e-3));
+	float range2 = saturate((t - 0.15) / max(0.4 - 0.15, 1e-3));
+	float range3 = saturate((t - 0.4) / max(1.0 - 0.4, 1e-3));
+	float3 fractalColor = lerp(lerp(lerp(almostBlack, deepBlue, range1), vibrantBlue, range2), brightBlue, range3);
+
+	if (result.steps > 0)
+	{
+		float iterFactor = saturate(result.totalDEIterations / max(float(FRACTAL_DE_MAX_ITER * result.steps), 1.0));
+		float greenThreshold = 0.1;
+		if (iterFactor > greenThreshold)
+		{
+			float greenAmount = (iterFactor - greenThreshold) / max(1.0 - greenThreshold, 1e-3);
+			greenAmount = pow(greenAmount, 2.0);
+			fractalColor = lerp(fractalColor, float3(0.3, 0.5, 0.6), greenAmount);
+		}
+
+		float greenPeak = 0.9;
+		if (iterFactor > greenPeak)
+		{
+			float greenAmount = (iterFactor - greenPeak) / max(1.0 - greenPeak, 1e-3);
+			greenAmount = pow(greenAmount, 5.0);
+			fractalColor = lerp(fractalColor, float3(0.3, 0.9, 0.7), greenAmount);
+		}
+	}
+
+	return fractalColor;
+}
+
+float3 RenderFractal(float3 rayOrigin, float3 rayDir, float3 backgroundColor)
+{
+	const float power = 8.0;
+	float scaleMultiplier = FRACTAL_SCALE_MULTIPLIER;
+	float3 centerOffset = float3(Center, 0.0);
+
+	MarchResult result = MarchFractal(rayOrigin, rayDir, centerOffset, scaleMultiplier, FRACTAL_MARCH_MAX_DISTANCE, power);
+	float3 fractalColor = ShadeFractal(result);
+
+	if (result.hitStatus == HIT_STATUS_HIT)
+	{
+		return fractalColor;
+	}
+	else if (result.hitStatus == HIT_STATUS_MISS_DISTANCE)
+	{
+		float stepFactor = result.steps > 0 ? saturate(result.steps / float(FRACTAL_MARCH_MAX_STEPS)) : 0.0;
+		float fogAmount = pow(stepFactor, 0.1);
+		return lerp(backgroundColor, fractalColor, fogAmount);
+	}
+	else if (result.hitStatus == HIT_STATUS_MISS_STEPS)
+	{
+		return fractalColor;
+	}
+	return backgroundColor;
+}
+
+// Utility: convert screen pixel to ray origin/direction using the view parameters
+void GetCameraRay(uint2 pixelCoord, out float3 rayOrigin, out float3 rayDir)
+{
+	float2 pixelNdc = (float2(pixelCoord) + 0.5f) * InvViewSize * 2.0f - 1.0f;
+	pixelNdc.y = -pixelNdc.y;
+
+	float4 clipPos = float4(pixelNdc, 1.0f, 1.0f);
+	float4 viewPos = mul(clipPos, ClipToView);
+	viewPos.xyz /= max(viewPos.w, 1e-6f);
+
+	float3 viewDir = normalize(viewPos.xyz);
+	float3 worldDir = mul(viewDir, (float3x3)ViewToWorld);
+
+	rayOrigin = CameraOrigin;
+	rayDir = normalize(worldDir);
+}
+
+[numthreads(THREADS_X, THREADS_Y, THREADS_Z)]
+void PerturbationShader(
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	// Check bounds
+	if (DispatchThreadId.x >= (uint)OutputSize.x || DispatchThreadId.y >= (uint)OutputSize.y)
+		return;
+	
+	// Calculate UV coordinates
+	float3 rayOrigin, rayDir;
+	GetCameraRay(DispatchThreadId.xy, rayOrigin, rayDir);
+
+	float2 pixelCoord = float2(DispatchThreadId.xy) + 0.5;
+	float2 backgroundCoord = pixelCoord + BackgroundViewMin;
+	float2 backgroundUV = backgroundCoord * BackgroundInvExtent;
+	backgroundUV = saturate(backgroundUV);
+	float3 backgroundColor = BackgroundTexture.SampleLevel(BackgroundSampler, backgroundUV, 0.0).rgb;
+
+	float3 color = RenderFractal(rayOrigin, rayDir, backgroundColor);
+	OutputTexture[DispatchThreadId.xy] = float4(color, 1.0);
+}

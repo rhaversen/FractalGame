@@ -37,7 +37,7 @@ protected:
 
     // Movement Settings
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
-    float MovementSpeed = 500.0f;
+    float MovementSpeed = 50000.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
     float LookSensitivity = 1.0f;

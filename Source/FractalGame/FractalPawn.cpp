@@ -15,8 +15,8 @@ AFractalPawn::AFractalPawn()
     // Create movement component
     MovementComponent = CreateDefaultSubobject<UFloatingPawnMovement>(TEXT("MovementComponent"));
     MovementComponent->MaxSpeed = MovementSpeed;
-    MovementComponent->Acceleration = 2000.0f;
-    MovementComponent->Deceleration = 4000.0f;
+    MovementComponent->Acceleration = 20000.0f;
+    MovementComponent->Deceleration = 40000.0f;
 
     bUseControllerRotationPitch = false;
     bUseControllerRotationYaw = false;

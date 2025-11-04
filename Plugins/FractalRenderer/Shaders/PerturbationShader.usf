@@ -22,6 +22,10 @@ float BailoutRadius;
 int MinIterations;
 float ConvergenceFactor;
 float FractalPower;
+Texture2D<float4> ReferenceOrbitTexture;
+SamplerState OrbitSampler;
+float3 ReferenceCenter;
+int OrbitLength;
 
 #define HIT_STATUS_NONE 0
 #define HIT_STATUS_HIT 1
@@ -41,6 +45,18 @@ struct DEResult
 	float distance;
 	int iterations;
 };
+
+bool HasValidOrbitData()
+{
+	return OrbitLength > 1;
+}
+
+float3 LoadOrbitPoint(int index)
+{
+	int safeLength = max(OrbitLength, 1);
+	int clampedIndex = min(max(index, 0), safeLength - 1);
+	return ReferenceOrbitTexture.Load(int3(clampedIndex, 0, 0)).xyz;
+}
 
 struct SphericalCoords
 {
@@ -102,7 +118,7 @@ float3 MandelbulbTransform(float3 z, float3 pos, float power)
 	return SphericalPowerTransform(z, power) + pos;
 }
 
-DEResult MandelbulbDE(float3 pos, float power, float precisionThreshold)
+DEResult MandelbulbDirectDE(float3 pos, float power, float precisionThreshold)
 {
 	float3 z = pos;
 	float dr = 1.0;
@@ -139,6 +155,83 @@ DEResult MandelbulbDE(float3 pos, float power, float precisionThreshold)
 	return MakeDEResult(length(z), dr, i);
 }
 
+DEResult MandelbulbPerturbationDE(float3 pos, float power, float precisionThreshold)
+{
+	if (!HasValidOrbitData())
+	{
+		return MandelbulbDirectDE(pos, power, precisionThreshold);
+	}
+
+	int maxPerturbIterations = min(MaxIterations, OrbitLength - 1);
+	if (maxPerturbIterations <= 0)
+	{
+		return MandelbulbDirectDE(pos, power, precisionThreshold);
+	}
+
+	const float epsilonBreakdown = max(BailoutRadius * 16.0, 4.0);
+	if (length(pos - ReferenceCenter) > epsilonBreakdown)
+	{
+		return MandelbulbDirectDE(pos, power, precisionThreshold);
+	}
+
+	float3 zRef = LoadOrbitPoint(0);
+	float3 zActual = zRef;
+	float3 epsilon = float3(0.0, 0.0, 0.0);
+	float dr = 1.0;
+	float prevDE = 1e10;
+	int iter;
+
+	[loop]
+	for (iter = 0; iter < maxPerturbIterations; ++iter)
+	{
+		float r = length(zActual);
+		if (r > BailoutRadius)
+		{
+			break;
+		}
+
+		float currentDE = 0.5 * log(max(r, 1e-6)) * r / max(dr, 1e-10);
+		if (iter >= MinIterations)
+		{
+			float deChange = abs(currentDE - prevDE);
+			if (deChange < precisionThreshold * ConvergenceFactor)
+			{
+				break;
+			}
+		}
+
+		prevDE = currentDE;
+
+		float safeR = max(r, 1e-6);
+		dr = pow(safeR, power - 1.0) * power * dr + 1.0;
+
+		if (iter + 1 >= OrbitLength)
+		{
+			return MandelbulbDirectDE(pos, power, precisionThreshold);
+		}
+
+		float3 zRefNext = LoadOrbitPoint(iter + 1);
+		float3 zInput = zRef + epsilon;
+		float3 perturbedNext = MandelbulbTransform(zInput, pos, power);
+
+		epsilon = perturbedNext - zRefNext;
+		if (length(epsilon) > epsilonBreakdown)
+		{
+			return MandelbulbDirectDE(pos, power, precisionThreshold);
+		}
+
+		zRef = zRefNext;
+		zActual = perturbedNext;
+	}
+
+	if (iter >= maxPerturbIterations && MaxIterations > maxPerturbIterations)
+	{
+		return MandelbulbDirectDE(pos, power, precisionThreshold);
+	}
+
+	return MakeDEResult(length(zActual), dr, iter);
+}
+
 MarchResult MarchFractal(float3 rayOriginWorld, float3 rayDirWorld, float3 centerOffset, float scaleMultiplier, float maxWorldDistance, float power)
 {
 	float totalDist = 0.0;
@@ -153,7 +246,7 @@ MarchResult MarchFractal(float3 rayOriginWorld, float3 rayDirWorld, float3 cente
 
 		float pixelSizeWorld = GetPixelWorldRadius(totalDist);
 		float pixelSizeFractal = pixelSizeWorld * scaleMultiplier;
-		DEResult deResult = MandelbulbDE(pos, power, pixelSizeFractal);
+		DEResult deResult = MandelbulbPerturbationDE(pos, power, pixelSizeFractal);
 		totalDEIterations += deResult.iterations;
 
 		float threshold = pixelSizeFractal;

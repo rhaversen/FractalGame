@@ -115,6 +115,11 @@ public:
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<float4>, BackgroundTexture)
 		SHADER_PARAMETER_SAMPLER(SamplerState, BackgroundSampler)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, OutputTexture)
+		// Perturbation orbit data
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<float4>, ReferenceOrbitTexture)
+		SHADER_PARAMETER_SAMPLER(SamplerState, OrbitSampler)
+		SHADER_PARAMETER(FVector3f, ReferenceCenter)
+		SHADER_PARAMETER(int32, OrbitLength)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)

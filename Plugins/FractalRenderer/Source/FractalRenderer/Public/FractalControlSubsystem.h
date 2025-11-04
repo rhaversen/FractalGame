@@ -3,7 +3,11 @@
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "FractalParameter.h"
+#include "MandelbulbOrbitGenerator.h"
 #include "FractalControlSubsystem.generated.h"
+
+// Forward declarations
+class FMandelbulbOrbitGenerator;
 
 /**
  * Game Instance Subsystem for controlling fractal rendering parameters
@@ -57,10 +61,32 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Fractal")
 	const FFractalParameter& GetFractalParameters() const { return FractalParameters; }
 
+	// Regenerate reference orbit (for testing/debugging)
+	UFUNCTION(BlueprintCallable, Category = "Fractal|Orbit")
+	void RegenerateOrbit();
+
+	// Get current reference orbit data (read-only)
+	const FReferenceOrbit& GetReferenceOrbit() const { return CurrentOrbit; }
+
+	// Check if orbit needs regeneration based on parameter changes
+	bool ShouldRegenerateOrbit(const FFractalParameter& NewParams) const;
+
 private:
 	UPROPERTY()
 	FFractalParameter FractalParameters;
 
+	// High-precision orbit generator
+	TUniquePtr<FMandelbulbOrbitGenerator> OrbitGenerator;
+
+	// Current reference orbit data
+	FReferenceOrbit CurrentOrbit;
+
+	// Last parameters used to generate orbit (for change detection)
+	FFractalParameter LastOrbitParams;
+
 	// Update the scene view extension with current parameters
 	void UpdateSceneViewExtension();
+
+	// Generate new reference orbit based on current parameters
+	void GenerateReferenceOrbit();
 };

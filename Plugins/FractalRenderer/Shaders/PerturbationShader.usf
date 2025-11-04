@@ -14,16 +14,14 @@ float4x4 ViewToWorld;
 float3 CameraOrigin;
 float2 ViewSize;
 float2 InvViewSize;
-
-// Controls the overall fractal scale; tweak as needed for composition changes.
-static const float FRACTAL_SCALE_MULTIPLIER = 0.00001;
-
-#define FRACTAL_MARCH_MAX_STEPS 150
-#define FRACTAL_MARCH_MAX_DISTANCE 1000000.0
-#define FRACTAL_DE_MAX_ITER 150  // Safety cap - adaptive iteration will stop earlier when stable
-#define FRACTAL_DE_BAILOUT 10.0
-#define FRACTAL_DE_MIN_ITERATIONS 5  // Always do at least this many iterations for stability
-#define FRACTAL_DE_CONVERGENCE_FACTOR 0.01  // Stop when DE change is 1% of required precision
+float Zoom;
+int MaxRaySteps;
+float MaxRayDistance;
+int MaxIterations;
+float BailoutRadius;
+int MinIterations;
+float ConvergenceFactor;
+float FractalPower;
 
 #define HIT_STATUS_NONE 0
 #define HIT_STATUS_HIT 1
@@ -111,20 +109,20 @@ DEResult MandelbulbDE(float3 pos, float power, float precisionThreshold)
 	float prevDE = 1e10;
 	int i;
 
-	for (i = 0; i < FRACTAL_DE_MAX_ITER; i++)
+	for (i = 0; i < MaxIterations; i++)
 	{
 		float r = length(z);
-		if (r > FRACTAL_DE_BAILOUT)
+		if (r > BailoutRadius)
 		{
 			break;
 		}
 
 		float currentDE = 0.5 * log(max(r, 1e-6)) * r / max(dr, 1e-10);
 
-		if (i >= FRACTAL_DE_MIN_ITERATIONS)
+		if (i >= MinIterations)
 		{
 			float deChange = abs(currentDE - prevDE);
-			if (deChange < precisionThreshold * FRACTAL_DE_CONVERGENCE_FACTOR)
+			if (deChange < precisionThreshold * ConvergenceFactor)
 			{
 				break;
 			}
@@ -147,7 +145,7 @@ MarchResult MarchFractal(float3 rayOriginWorld, float3 rayDirWorld, float3 cente
 	int steps = 0;
 	int totalDEIterations = 0;
 
-	while (totalDist < maxWorldDistance && steps < FRACTAL_MARCH_MAX_STEPS)
+	while (totalDist < maxWorldDistance && steps < MaxRaySteps)
 	{
 		steps++;
 		float3 worldPos = rayOriginWorld + rayDirWorld * totalDist;
@@ -184,7 +182,7 @@ MarchResult MarchFractal(float3 rayOriginWorld, float3 rayDirWorld, float3 cente
 
 float3 ShadeFractal(const MarchResult result)
 {
-	float stepFactor = result.steps > 0 ? saturate(result.steps / float(FRACTAL_MARCH_MAX_STEPS)) : 0.0;
+	float stepFactor = result.steps > 0 ? saturate(result.steps / max(float(MaxRaySteps), 1.0)) : 0.0;
 	float t = sqrt(stepFactor);
 
 	float3 almostBlack = float3(0.0, 0.0, 0.05);
@@ -199,7 +197,7 @@ float3 ShadeFractal(const MarchResult result)
 
 	if (result.steps > 0)
 	{
-		float iterFactor = saturate(result.totalDEIterations / max(float(FRACTAL_DE_MAX_ITER * result.steps), 1.0));
+		float iterFactor = saturate(result.totalDEIterations / max(float(MaxIterations * max(result.steps, 1)), 1.0));
 		float greenThreshold = 0.1;
 		if (iterFactor > greenThreshold)
 		{
@@ -222,11 +220,11 @@ float3 ShadeFractal(const MarchResult result)
 
 float3 RenderFractal(float3 rayOrigin, float3 rayDir, float3 backgroundColor)
 {
-	const float power = 8.0;
-	float scaleMultiplier = FRACTAL_SCALE_MULTIPLIER;
+	float power = FractalPower;
+	float scaleMultiplier = Zoom;
 	float3 centerOffset = float3(Center, 0.0);
 
-	MarchResult result = MarchFractal(rayOrigin, rayDir, centerOffset, scaleMultiplier, FRACTAL_MARCH_MAX_DISTANCE, power);
+	MarchResult result = MarchFractal(rayOrigin, rayDir, centerOffset, scaleMultiplier, MaxRayDistance, power);
 	float3 fractalColor = ShadeFractal(result);
 
 	if (result.hitStatus == HIT_STATUS_HIT)
@@ -235,7 +233,7 @@ float3 RenderFractal(float3 rayOrigin, float3 rayDir, float3 backgroundColor)
 	}
 	else if (result.hitStatus == HIT_STATUS_MISS_DISTANCE)
 	{
-		float stepFactor = result.steps > 0 ? saturate(result.steps / float(FRACTAL_MARCH_MAX_STEPS)) : 0.0;
+		float stepFactor = result.steps > 0 ? saturate(result.steps / max(float(MaxRaySteps), 1.0)) : 0.0;
 		float fogAmount = pow(stepFactor, 0.1);
 		return lerp(backgroundColor, fractalColor, fogAmount);
 	}

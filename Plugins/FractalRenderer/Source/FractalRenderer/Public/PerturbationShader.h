@@ -5,6 +5,7 @@
 #include "Kismet/BlueprintAsyncActionBase.h"
 #include "GlobalShader.h"
 #include "ShaderParameterStruct.h"
+#include "FractalParameter.h"
 #include "PerturbationShader.generated.h"
 
 // Thread counts for compute shader
@@ -24,15 +25,36 @@ struct FRACTALRENDERER_API FPerturbationShaderDispatchParams
 
 	// Fractal parameters
 	FVector2D Center;          // Center point in complex plane
+	float Zoom;
+	int32 MaxRaySteps;
+	float MaxRayDistance;
+	int32 MaxIterations;
+	float BailoutRadius;
+	int32 MinIterations;
+	float ConvergenceFactor;
+	float FractalPower;
 	
 	// Output texture
 	UTextureRenderTarget2D* OutputRenderTarget;
 
 	FPerturbationShaderDispatchParams(int x, int y, int z)
 		: X(x), Y(y), Z(z)
-		, Center(FVector2D::ZeroVector)
 		, OutputRenderTarget(nullptr)
 	{
+		ApplyFractalParameters(FFractalParameter());
+	}
+
+	void ApplyFractalParameters(const FFractalParameter& InParams)
+	{
+		Center = InParams.Center;
+		Zoom = InParams.Zoom;
+		MaxRaySteps = InParams.MaxRaySteps;
+		MaxRayDistance = InParams.MaxRayDistance;
+		MaxIterations = InParams.MaxIterations;
+		BailoutRadius = InParams.BailoutRadius;
+		MinIterations = InParams.MinIterations;
+		ConvergenceFactor = InParams.ConvergenceFactor;
+		FractalPower = InParams.FractalPower;
 	}
 };
 
@@ -74,6 +96,14 @@ public:
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER(FVector2f, Center)
 		SHADER_PARAMETER(FIntPoint, OutputSize)
+		SHADER_PARAMETER(float, Zoom)
+		SHADER_PARAMETER(int32, MaxRaySteps)
+		SHADER_PARAMETER(float, MaxRayDistance)
+		SHADER_PARAMETER(int32, MaxIterations)
+		SHADER_PARAMETER(float, BailoutRadius)
+		SHADER_PARAMETER(int32, MinIterations)
+		SHADER_PARAMETER(float, ConvergenceFactor)
+		SHADER_PARAMETER(float, FractalPower)
 		SHADER_PARAMETER(FMatrix44f, ClipToView)
 		SHADER_PARAMETER(FMatrix44f, ViewToWorld)
 		SHADER_PARAMETER(FVector3f, CameraOrigin)
@@ -126,5 +156,5 @@ public:
 
 private:
 	UTextureRenderTarget2D* OutputRenderTarget;
-	FVector2D Center;
+	FFractalParameter Parameters;
 };

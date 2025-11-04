@@ -19,12 +19,13 @@ public class FractalRenderer : ModuleRules
 			"Engine",
 			"RenderCore",
 			"RHI",
-			"Projects"
+			"Projects",
+			"Renderer"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
-			"Renderer"
+			// ... add private dependencies that you statically link with here ...
 		});
 
 		if (Target.bBuildEditor == true)

@@ -41,6 +41,14 @@ void FPerturbationShaderInterface::DispatchRenderThread(
 			// Set shader parameters
 			PassParameters->Center = FVector2f(Params.Center);
 			PassParameters->OutputSize = FIntPoint(Params.OutputRenderTarget->SizeX, Params.OutputRenderTarget->SizeY);
+			PassParameters->Zoom = Params.Zoom;
+			PassParameters->MaxRaySteps = Params.MaxRaySteps;
+			PassParameters->MaxRayDistance = Params.MaxRayDistance;
+			PassParameters->MaxIterations = Params.MaxIterations;
+			PassParameters->BailoutRadius = Params.BailoutRadius;
+			PassParameters->MinIterations = Params.MinIterations;
+			PassParameters->ConvergenceFactor = Params.ConvergenceFactor;
+			PassParameters->FractalPower = Params.FractalPower;
 
 			// Get the render target resource
 			FTextureRenderTargetResource* RTResource = Params.OutputRenderTarget->GameThread_GetRenderTargetResource();
@@ -108,7 +116,8 @@ UPerturbationShaderLibrary_AsyncExecution* UPerturbationShaderLibrary_AsyncExecu
 {
 	UPerturbationShaderLibrary_AsyncExecution* Action = NewObject<UPerturbationShaderLibrary_AsyncExecution>();
 	Action->OutputRenderTarget = InOutputRenderTarget;
-	Action->Center = InCenter;
+	Action->Parameters = FFractalParameter();
+	Action->Parameters.Center = InCenter;
 	Action->RegisterWithGameInstance(WorldContextObject);
 	return Action;
 }
@@ -116,7 +125,7 @@ UPerturbationShaderLibrary_AsyncExecution* UPerturbationShaderLibrary_AsyncExecu
 void UPerturbationShaderLibrary_AsyncExecution::Activate()
 {
 	FPerturbationShaderDispatchParams Params(1, 1, 1);
-	Params.Center = Center;
+	Params.ApplyFractalParameters(Parameters);
 	Params.OutputRenderTarget = OutputRenderTarget;
 
 	FPerturbationShaderInterface::Dispatch(Params, [this]()

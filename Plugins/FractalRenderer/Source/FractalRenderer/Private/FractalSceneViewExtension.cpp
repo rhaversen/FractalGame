@@ -10,8 +10,6 @@
 
 FFractalSceneViewExtension::FFractalSceneViewExtension(const FAutoRegister& AutoRegister)
 	: FSceneViewExtensionBase(AutoRegister)
-	, Center(FVector2D::ZeroVector)
-	, bEnabled(true)
 {
 }
 
@@ -27,12 +25,17 @@ void FFractalSceneViewExtension::SubscribeToPostProcessingPass(
 		return;
 	}
 
-	if (PassId == EPostProcessingPass::Tonemap && bEnabled)
+	if (PassId == EPostProcessingPass::Tonemap)
 	{
-		static_cast<void>(View);
-		InOutPassCallbacks.Add(FAfterPassCallbackDelegate::CreateRaw(
-			this, &FFractalSceneViewExtension::RenderFractal_RenderThread));
+		// The FScreenPassTexture is a temporary texture that is only valid for the duration of the render pass.
+		InOutPassCallbacks.Add(FPostProcessingPassDelegate::CreateRaw(this, &FFractalSceneViewExtension::RenderFractal_RenderThread));
 	}
+}
+
+void FFractalSceneViewExtension::SetFractalParameters(const FFractalParameter& InParams)
+{
+	FScopeLock Lock(&ParameterMutex);
+	FractalParameters = InParams;
 }
 
 FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
@@ -41,6 +44,17 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 	const FPostProcessMaterialInputs& Inputs)
 {
 	check(IsInRenderingThread());
+
+	FFractalParameter CurrentParams;
+	{
+		FScopeLock Lock(&ParameterMutex);
+		CurrentParams = FractalParameters;
+	}
+
+	if (!CurrentParams.bEnabled)
+	{
+		return FScreenPassTexture(Inputs.GetInput(EPostProcessMaterialInput::SceneColor));
+	}
 
 	// Get the input scene color slice that the post-process pass provides
 	const FScreenPassTextureSlice SceneColorSlice = Inputs.GetInput(EPostProcessMaterialInput::SceneColor);
@@ -54,7 +68,7 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 
 	if (!SceneColor.IsValid())
 	{
-		return FScreenPassTexture(SceneColorSlice);
+		return SceneColor;
 	}
 
 	// Get shader from global shader map
@@ -62,7 +76,7 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 
 	if (!ComputeShader.IsValid())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("FractalSceneViewExtension: Shader not valid"));
+		UE_LOG(LogTemp, Error, TEXT("FPerturbationComputeShader is not valid!"));
 		return SceneColor;
 	}
 
@@ -77,50 +91,42 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 
 	// Allocate shader parameters
 	auto* PassParameters = GraphBuilder.AllocParameters<FPerturbationComputeShader::FParameters>();
-	PassParameters->Center = FVector2f(Center);
+	PassParameters->Center = FVector2f(CurrentParams.Center);
 	const FIntPoint OutputExtent = SceneColor.ViewRect.Size();
 	PassParameters->OutputSize = OutputExtent;
+	PassParameters->Zoom = CurrentParams.Zoom;
+	PassParameters->MaxRaySteps = CurrentParams.MaxRaySteps;
+	PassParameters->MaxRayDistance = CurrentParams.MaxRayDistance;
+	PassParameters->MaxIterations = CurrentParams.MaxIterations;
+	PassParameters->BailoutRadius = CurrentParams.BailoutRadius;
+	PassParameters->MinIterations = CurrentParams.MinIterations;
+	PassParameters->ConvergenceFactor = CurrentParams.ConvergenceFactor;
+	PassParameters->FractalPower = CurrentParams.FractalPower;
 
 	const FRDGTextureDesc& SceneColorDesc = SceneColor.Texture->Desc;
 	const FIntPoint TextureExtent = SceneColorDesc.Extent;
 	const FIntPoint ViewMin = SceneColor.ViewRect.Min;
+	const FVector2f InvViewSize = FVector2f(1.0f / SceneColor.ViewRect.Width(), 1.0f / SceneColor.ViewRect.Height());
 
-	const FViewMatrices& ViewMatrices = View.ViewMatrices;
-	PassParameters->ClipToView = FMatrix44f(ViewMatrices.GetInvProjectionMatrix());
-	PassParameters->ViewToWorld = FMatrix44f(ViewMatrices.GetInvViewMatrix());
-	PassParameters->CameraOrigin = FVector3f(ViewMatrices.GetViewOrigin());
-	const FVector2f ViewSizeVector(static_cast<float>(OutputExtent.X), static_cast<float>(OutputExtent.Y));
-	PassParameters->ViewSize = ViewSizeVector;
-	PassParameters->InvViewSize = FVector2f(
-		OutputExtent.X > 0 ? 1.0f / static_cast<float>(OutputExtent.X) : 0.0f,
-		OutputExtent.Y > 0 ? 1.0f / static_cast<float>(OutputExtent.Y) : 0.0f);
-	PassParameters->BackgroundExtent = FVector2f(static_cast<float>(TextureExtent.X), static_cast<float>(TextureExtent.Y));
-	PassParameters->BackgroundInvExtent = FVector2f(
-		TextureExtent.X > 0 ? 1.0f / static_cast<float>(TextureExtent.X) : 0.0f,
-		TextureExtent.Y > 0 ? 1.0f / static_cast<float>(TextureExtent.Y) : 0.0f);
-	PassParameters->BackgroundViewMin = FVector2f(static_cast<float>(ViewMin.X), static_cast<float>(ViewMin.Y));
-	PassParameters->BackgroundTexture = SceneColor.Texture;
-	PassParameters->BackgroundSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 	PassParameters->OutputTexture = GraphBuilder.CreateUAV(OutputTexture);
+	PassParameters->BackgroundTexture = SceneColor.Texture;
+	PassParameters->BackgroundSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+	PassParameters->BackgroundExtent = FVector2f(TextureExtent.X, TextureExtent.Y);
+	PassParameters->BackgroundInvExtent = FVector2f(1.0f / TextureExtent.X, 1.0f / TextureExtent.Y);
+	PassParameters->BackgroundViewMin = FVector2f(ViewMin.X, ViewMin.Y);
+	PassParameters->ClipToView = FMatrix44f(View.ViewMatrices.GetInvProjectionMatrix());
+	PassParameters->ViewToWorld = FMatrix44f(View.ViewMatrices.GetInvViewMatrix());
+	PassParameters->CameraOrigin = (FVector3f)View.ViewMatrices.GetViewOrigin();
+	PassParameters->ViewSize = FVector2f(SceneColor.ViewRect.Width(), SceneColor.ViewRect.Height());
+	PassParameters->InvViewSize = InvViewSize;
 
-	// Calculate thread group count (8x8 groups)
-	FIntVector GroupCount = FIntVector(
-		FMath::DivideAndRoundUp(OutputExtent.X, NUM_THREADS_PerturbationShader_X),
-		FMath::DivideAndRoundUp(OutputExtent.Y, NUM_THREADS_PerturbationShader_Y),
-		1
-	);
-
-	// Add compute pass to render graph
-	GraphBuilder.AddPass(
-		RDG_EVENT_NAME("FractalSceneViewExtension"),
+	FComputeShaderUtils::AddPass(
+		GraphBuilder,
+		RDG_EVENT_NAME("RenderFractal"),
+		ComputeShader,
 		PassParameters,
-		ERDGPassFlags::Compute,
-		[PassParameters, ComputeShader, GroupCount](FRHIComputeCommandList& RHICmdList)
-		{
-			FComputeShaderUtils::Dispatch(RHICmdList, ComputeShader, *PassParameters, GroupCount);
-		}
+		FComputeShaderUtils::GetGroupCount(OutputExtent, FIntPoint(NUM_THREADS_PerturbationShader_X, NUM_THREADS_PerturbationShader_Y))
 	);
 
-	// Return the fractal output as the new scene color
 	return FScreenPassTexture(OutputTexture, SceneColor.ViewRect);
 }

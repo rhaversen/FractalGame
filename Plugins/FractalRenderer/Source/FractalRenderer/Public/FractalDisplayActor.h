@@ -23,10 +23,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal")
 	UTextureRenderTarget2D* RenderTarget;
 
-	// Fractal center point
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal")
-	FVector2D Center;
-
 	// Auto-render each frame
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal")
 	bool bAutoRender;

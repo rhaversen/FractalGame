@@ -4,13 +4,13 @@
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "UObject/ConstructorHelpers.h"
+#include "FractalControlSubsystem.h"
+#include "Engine/GameInstance.h"
 
 AFractalDisplayActor::AFractalDisplayActor()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
-	// Default values
-	Center = FVector2D(0.0f, 0.0f);
 	bAutoRender = true;
 	bIsRendering = false;
 
@@ -85,11 +85,30 @@ void AFractalDisplayActor::RenderFractal()
 		return; // Already rendering
 	}
 
+	UGameInstance* GameInstance = GetGameInstance();
+	if (!GameInstance)
+	{
+		UE_LOG(LogTemp, Error, TEXT("FractalDisplayActor: Could not get GameInstance!"));
+		return;
+	}
+
+	UFractalControlSubsystem* FractalControl = GameInstance->GetSubsystem<UFractalControlSubsystem>();
+	if (!FractalControl)
+	{
+		return;
+	}
+	
+	const FFractalParameter& FractalParameters = FractalControl->GetFractalParameters();
+	if (!FractalParameters.bEnabled)
+	{
+		return;
+	}
+
 	bIsRendering = true;
 
 	// Setup parameters
 	FPerturbationShaderDispatchParams Params(1, 1, 1);
-	Params.Center = Center;
+	Params.ApplyFractalParameters(FractalParameters);
 	Params.OutputRenderTarget = RenderTarget;
 
 	// Dispatch the shader

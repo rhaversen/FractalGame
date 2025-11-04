@@ -8,6 +8,13 @@
 /Intermediate
 /Saved
 
+################################
+# Builds #
+/Windows
+/Linux
+/Mac
+/Android
+
 #################################
 # Visual Studio Generated Files #
 #################################

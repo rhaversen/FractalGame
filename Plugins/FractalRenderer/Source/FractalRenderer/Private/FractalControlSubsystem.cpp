@@ -3,6 +3,7 @@
 #include "FractalSceneViewExtension.h"
 #include "MandelbulbOrbitGenerator.h"
 #include "Math/UnrealMathUtility.h"
+#include "Engine/Engine.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogFractalControl, Log, All);
 
@@ -224,6 +225,12 @@ void UFractalControlSubsystem::GenerateReferenceOrbit()
 		CurrentOrbit.GetLength(),
 		CurrentOrbit.IsValid() ? TEXT("Yes") : TEXT("No")
 	);
+
+	if (GEngine)
+	{
+		FString OrbitMessage = FString::Printf(TEXT("Fractal orbit regenerated (%d points)"), CurrentOrbit.GetLength());
+		GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Cyan, OrbitMessage);
+	}
 	
 	// Push orbit to view extension
 	FFractalRendererModule& Module = FModuleManager::GetModuleChecked<FFractalRendererModule>("FractalRenderer");

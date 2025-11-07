@@ -118,60 +118,32 @@ float3 MandelbulbTransform(float3 z, float3 pos, float power)
 	return SphericalPowerTransform(z, power) + pos;
 }
 
-DEResult MandelbulbDirectDE(float3 pos, float power, float precisionThreshold)
-{
-	float3 z = pos;
-	float dr = 1.0;
-	float prevDE = 1e10;
-	int i;
-
-	for (i = 0; i < MaxIterations; i++)
-	{
-		float r = length(z);
-		if (r > BailoutRadius)
-		{
-			break;
-		}
-
-		float currentDE = 0.5 * log(max(r, 1e-6)) * r / max(dr, 1e-10);
-
-		if (i >= MinIterations)
-		{
-			float deChange = abs(currentDE - prevDE);
-			if (deChange < precisionThreshold * ConvergenceFactor)
-			{
-				break;
-			}
-		}
-
-		prevDE = currentDE;
-
-		float safeR = max(r, 1e-6);
-		dr = pow(safeR, power - 1.0) * power * dr + 1.0;
-
-		z = MandelbulbTransform(z, pos, power);
-	}
-
-	return MakeDEResult(length(z), dr, i);
-}
-
 DEResult MandelbulbPerturbationDE(float3 pos, float power, float precisionThreshold)
 {
 	if (!HasValidOrbitData())
 	{
-		return MandelbulbDirectDE(pos, power, precisionThreshold);
+		DEResult fallback;
+		fallback.distance = precisionThreshold;
+		fallback.iterations = 0;
+		return fallback;
 	}
 
 	int maxPerturbIterations = min(MaxIterations, OrbitLength - 1);
 	if (maxPerturbIterations <= 0)
 	{
-		return MandelbulbDirectDE(pos, power, precisionThreshold);
+		DEResult fallback;
+		fallback.distance = precisionThreshold;
+		fallback.iterations = 0;
+		return fallback;
 	}
 
 	const float epsilonBreakdown = max(BailoutRadius * 16.0, 4.0);
 	if (length(pos - ReferenceCenter) > epsilonBreakdown)
 	{
-		return MandelbulbDirectDE(pos, power, precisionThreshold);
+		DEResult fallback;
+		fallback.distance = precisionThreshold;
+		fallback.iterations = 0;
+		return fallback;
 	}
 
 	float3 zRef = LoadOrbitPoint(0);
@@ -207,7 +179,7 @@ DEResult MandelbulbPerturbationDE(float3 pos, float power, float precisionThresh
 
 		if (iter + 1 >= OrbitLength)
 		{
-			return MandelbulbDirectDE(pos, power, precisionThreshold);
+			break;
 		}
 
 		float3 zRefNext = LoadOrbitPoint(iter + 1);
@@ -215,18 +187,16 @@ DEResult MandelbulbPerturbationDE(float3 pos, float power, float precisionThresh
 		float3 perturbedNext = MandelbulbTransform(zInput, pos, power);
 
 		epsilon = perturbedNext - zRefNext;
-		if (length(epsilon) > epsilonBreakdown)
+
+		float epsilonMagnitude = length(epsilon);
+		if (epsilonMagnitude > epsilonBreakdown)
 		{
-			return MandelbulbDirectDE(pos, power, precisionThreshold);
+			float clampScale = epsilonBreakdown / epsilonMagnitude;
+			epsilon *= clampScale;
 		}
 
 		zRef = zRefNext;
 		zActual = perturbedNext;
-	}
-
-	if (iter >= maxPerturbIterations && MaxIterations > maxPerturbIterations)
-	{
-		return MandelbulbDirectDE(pos, power, precisionThreshold);
 	}
 
 	return MakeDEResult(length(zActual), dr, iter);

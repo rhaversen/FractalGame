@@ -24,6 +24,7 @@ FFractalSceneViewExtension::FFractalSceneViewExtension(const FAutoRegister& Auto
 	: FSceneViewExtensionBase(AutoRegister)
 	, CurrentReferenceCenter(FVector3d::ZeroVector)
 	, CurrentOrbitLength(0)
+	, bOrbitHasDerivatives(false)
 {
 }
 
@@ -59,9 +60,10 @@ void FFractalSceneViewExtension::SetReferenceOrbit(const FReferenceOrbit& InOrbi
 	if (InOrbit.IsValid())
 	{
 		// Convert orbit to float format for GPU upload
-		FMandelbulbOrbitGenerator::ConvertOrbitToFloat(InOrbit, OrbitFloatData);
+		FMandelbulbOrbitGenerator::ConvertOrbitToFloat(InOrbit, OrbitPositionData, OrbitDerivativeData);
 		CurrentReferenceCenter = InOrbit.ReferenceCenter;
 		CurrentOrbitLength = InOrbit.GetLength();
+		bOrbitHasDerivatives = InOrbit.HasDerivatives();
 		
 		UE_LOG(LogFractalViewExtension, Verbose, 
 			TEXT("Orbit updated: %d points, Center=(%.6f, %.6f, %.6f)"),
@@ -72,8 +74,10 @@ void FFractalSceneViewExtension::SetReferenceOrbit(const FReferenceOrbit& InOrbi
 	else
 	{
 		UE_LOG(LogFractalViewExtension, Warning, TEXT("Invalid orbit provided"));
-		OrbitFloatData.Empty();
+		OrbitPositionData.Empty();
+		OrbitDerivativeData.Empty();
 		CurrentOrbitLength = 0;
+		bOrbitHasDerivatives = false;
 	}
 }
 
@@ -167,20 +171,26 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 
 	// Create and upload orbit texture
 	FRDGTextureRef OrbitTexture = nullptr;
-	TArray<FVector4f> LocalOrbitData;
+	TArray<FVector4f> LocalOrbitPositionData;
+	TArray<FVector4f> LocalOrbitDerivativeData;
 	FVector3d LocalReferenceCenter;
 	int32 LocalOrbitLength = 0;
+	bool bLocalHasDerivatives = false;
 	
 	{
 		FScopeLock Lock(&OrbitMutex);
-		LocalOrbitData = OrbitFloatData;
+		LocalOrbitPositionData = OrbitPositionData;
+		LocalOrbitDerivativeData = OrbitDerivativeData;
 		LocalReferenceCenter = CurrentReferenceCenter;
 		LocalOrbitLength = CurrentOrbitLength;
+		bLocalHasDerivatives = bOrbitHasDerivatives;
 	}
+	(void)LocalOrbitDerivativeData; // Placeholder until derivative textures are uploaded
+	(void)bLocalHasDerivatives; // Derivative sampling will be hooked up in a later task
 	
-	if (LocalOrbitLength > 0 && LocalOrbitData.Num() > 0)
+	if (LocalOrbitLength > 0 && LocalOrbitPositionData.Num() > 0)
 	{
-		OrbitTexture = CreateOrbitTexture(GraphBuilder, LocalOrbitData);
+		OrbitTexture = CreateOrbitTexture(GraphBuilder, LocalOrbitPositionData);
 		PassParameters->ReferenceOrbitTexture = OrbitTexture;
 		PassParameters->OrbitSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 		PassParameters->ReferenceCenter = FVector3f(LocalReferenceCenter);

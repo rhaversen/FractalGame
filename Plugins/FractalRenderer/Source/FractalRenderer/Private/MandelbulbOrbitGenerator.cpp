@@ -26,13 +26,15 @@ FReferenceOrbit FMandelbulbOrbitGenerator::GenerateOrbit(
 	Result.BailoutRadius = BailoutRadius;
 	Result.EscapeIteration = -1;
 	Result.bValid = false;
+	Result.bHasDerivatives = false;
 
 	// Reserve space for orbit points
 	Result.Points.Reserve(MaxIterations);
 
 	// Initial point: z_0 = 0
 	FVector3d Z = FVector3d::ZeroVector;
-	Result.Points.Add(FOrbitPoint(Z, 0, false));
+	FVector3d DzDc = FVector3d::ZeroVector;
+	Result.Points.Add(FOrbitPoint(Z, DzDc, 0, false));
 
 	// Iterate Mandelbulb formula: z_{n+1} = g_p(z_n) + C_0
 	// Following the research pseudocode exactly
@@ -95,8 +97,9 @@ FReferenceOrbit FMandelbulbOrbitGenerator::GenerateOrbit(
 		// Add constant C (reference center)
 		Z += ReferenceCenter;
 
-		// Store orbit point
-		Result.Points.Add(FOrbitPoint(Z, Iteration + 1, false));
+		// TODO: Compute derivative update once perturbation Jacobian is implemented
+		// Placeholder keeps derivative zero so downstream code can begin consuming the data now.
+		Result.Points.Add(FOrbitPoint(Z, DzDc, Iteration + 1, false));
 	}
 
 	// Mark as valid if we have at least one point
@@ -116,20 +119,29 @@ FReferenceOrbit FMandelbulbOrbitGenerator::GenerateOrbit(
 
 void FMandelbulbOrbitGenerator::ConvertOrbitToFloat(
 	const FReferenceOrbit& Orbit,
-	TArray<FVector4f>& OutFloatData
+	TArray<FVector4f>& OutPositionData,
+	TArray<FVector4f>& OutDerivativeData
 )
 {
-	OutFloatData.Reset();
-	OutFloatData.Reserve(Orbit.Points.Num());
+	const int32 NumPoints = Orbit.Points.Num();
+	OutPositionData.Reset(NumPoints);
+	OutDerivativeData.Reset(NumPoints);
+	OutPositionData.Reserve(NumPoints);
+	OutDerivativeData.Reserve(NumPoints);
 
 	for (const FOrbitPoint& Point : Orbit.Points)
 	{
-		// Pack as (x, y, z, unused)
-		// Convert from double to float (acceptable precision loss after relative offset)
-		OutFloatData.Add(FVector4f(
+		OutPositionData.Add(FVector4f(
 			static_cast<float>(Point.Position.X),
 			static_cast<float>(Point.Position.Y),
 			static_cast<float>(Point.Position.Z),
+			0.0f
+		));
+
+		OutDerivativeData.Add(FVector4f(
+			static_cast<float>(Point.Derivative.X),
+			static_cast<float>(Point.Derivative.Y),
+			static_cast<float>(Point.Derivative.Z),
 			0.0f
 		));
 	}

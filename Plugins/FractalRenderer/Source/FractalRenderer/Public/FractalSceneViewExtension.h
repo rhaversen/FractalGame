@@ -46,8 +46,10 @@ private:
 	FCriticalSection ParameterMutex;
 
 	// Thread-safe storage for orbit data
-	TArray<FVector4f> OrbitFloatData;
+	TArray<FVector4f> OrbitPositionData;
+	TArray<FVector4f> OrbitDerivativeData;
 	FVector3d CurrentReferenceCenter;
 	int32 CurrentOrbitLength;
+	bool bOrbitHasDerivatives;
 	FCriticalSection OrbitMutex;
 };

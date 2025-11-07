@@ -8,18 +8,21 @@
 struct FOrbitPoint
 {
 	FVector3d Position;      // z_n in double precision
+	FVector3d Derivative;    // dz_n/dc in double precision
 	int32 Iteration;         // Iteration index
 	bool bEscaped;          // Whether this point exceeded bailout
 
 	FOrbitPoint()
 		: Position(FVector3d::ZeroVector)
+		, Derivative(FVector3d::ZeroVector)
 		, Iteration(0)
 		, bEscaped(false)
 	{
 	}
 
-	FOrbitPoint(const FVector3d& InPosition, int32 InIteration, bool InEscaped)
+	FOrbitPoint(const FVector3d& InPosition, const FVector3d& InDerivative, int32 InIteration, bool InEscaped)
 		: Position(InPosition)
+		, Derivative(InDerivative)
 		, Iteration(InIteration)
 		, bEscaped(InEscaped)
 	{
@@ -37,6 +40,7 @@ struct FReferenceOrbit
 	double BailoutRadius;          // Escape threshold
 	int32 EscapeIteration;         // Iteration where orbit escaped (-1 if never)
 	bool bValid;                   // Whether orbit is valid for use
+	bool bHasDerivatives;          // Whether derivative data has been populated
 
 	FReferenceOrbit()
 		: ReferenceCenter(FVector3d::ZeroVector)
@@ -44,6 +48,7 @@ struct FReferenceOrbit
 		, BailoutRadius(2.0)
 		, EscapeIteration(-1)
 		, bValid(false)
+		, bHasDerivatives(false)
 	{
 	}
 
@@ -52,6 +57,9 @@ struct FReferenceOrbit
 
 	/** Check if orbit is valid and usable */
 	bool IsValid() const { return bValid && Points.Num() > 0; }
+
+	/** Helper to query derivative availability */
+	bool HasDerivatives() const { return bHasDerivatives; }
 };
 
 /**
@@ -89,14 +97,16 @@ public:
 
 	/**
 	 * Convert high-precision orbit to float format for GPU upload.
-	 * Packs orbit points as float4 (x, y, z, unused).
+	 * Packs orbit points and derivatives as float4 arrays (x, y, z, unused).
 	 * 
 	 * @param Orbit - Source orbit in double precision
-	 * @param OutFloatData - Destination array of float4 values
+	 * @param OutPositionData - Destination array for position float4 values
+	 * @param OutDerivativeData - Destination array for derivative float4 values
 	 */
 	static void ConvertOrbitToFloat(
 		const FReferenceOrbit& Orbit,
-		TArray<FVector4f>& OutFloatData
+		TArray<FVector4f>& OutPositionData,
+		TArray<FVector4f>& OutDerivativeData
 	);
 
 	/**

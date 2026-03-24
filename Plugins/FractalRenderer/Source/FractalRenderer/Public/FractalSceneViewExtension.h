@@ -38,16 +38,15 @@ private:
 	// Callback for rendering the fractal
 	FScreenPassTexture RenderFractal_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View, const FPostProcessMaterialInputs& Inputs);
 
-	// Create and upload orbit texture to RDG
-	FRDGTextureRef CreateOrbitTexture(FRDGBuilder& GraphBuilder, const TArray<FVector4f>& OrbitData);
+	// Create and upload orbit buffer to RDG
+	FRDGBufferRef CreateOrbitBuffer(FRDGBuilder& GraphBuilder, const TArray<FPackedOrbitSample>& OrbitData);
 
 	// Thread-safe storage for fractal parameters
 	FFractalParameter FractalParameters;
 	FCriticalSection ParameterMutex;
 
 	// Thread-safe storage for orbit data
-	TArray<FVector4f> OrbitPositionData;
-	TArray<FVector4f> OrbitDerivativeData;
+	TArray<FPackedOrbitSample> OrbitBufferData;
 	FVector3d CurrentReferenceCenter;
 	int32 CurrentOrbitLength;
 	bool bOrbitHasDerivatives;

@@ -3,28 +3,134 @@
 #include "CoreMinimal.h"
 
 /**
+ * 3x3 Jacobian storage for Mandelbulb orbit derivatives.
+ * Columns represent the partial derivatives of z with respect to C's x/y/z components.
+ */
+struct FOrbitDerivative
+{
+	FVector3d Columns[3];
+
+	FOrbitDerivative()
+	{
+		Columns[0] = FVector3d::ZeroVector;
+		Columns[1] = FVector3d::ZeroVector;
+		Columns[2] = FVector3d::ZeroVector;
+	}
+
+	static FOrbitDerivative Zero()
+	{
+		return FOrbitDerivative();
+	}
+
+	static FOrbitDerivative Identity()
+	{
+		FOrbitDerivative Result;
+		Result.Columns[0] = FVector3d(1.0, 0.0, 0.0);
+		Result.Columns[1] = FVector3d(0.0, 1.0, 0.0);
+		Result.Columns[2] = FVector3d(0.0, 0.0, 1.0);
+		return Result;
+	}
+
+	FOrbitDerivative operator+(const FOrbitDerivative& Other) const
+	{
+		FOrbitDerivative Result;
+		Result.Columns[0] = Columns[0] + Other.Columns[0];
+		Result.Columns[1] = Columns[1] + Other.Columns[1];
+		Result.Columns[2] = Columns[2] + Other.Columns[2];
+		return Result;
+	}
+
+	FOrbitDerivative operator-(const FOrbitDerivative& Other) const
+	{
+		FOrbitDerivative Result;
+		Result.Columns[0] = Columns[0] - Other.Columns[0];
+		Result.Columns[1] = Columns[1] - Other.Columns[1];
+		Result.Columns[2] = Columns[2] - Other.Columns[2];
+		return Result;
+	}
+
+	FOrbitDerivative operator*(double Scalar) const
+	{
+		FOrbitDerivative Result;
+		Result.Columns[0] = Columns[0] * Scalar;
+		Result.Columns[1] = Columns[1] * Scalar;
+		Result.Columns[2] = Columns[2] * Scalar;
+		return Result;
+	}
+
+	FVector3d TransformVector(const FVector3d& Vector) const
+	{
+		return Columns[0] * Vector.X + Columns[1] * Vector.Y + Columns[2] * Vector.Z;
+	}
+
+	FOrbitDerivative Multiply(const FOrbitDerivative& Other) const
+	{
+		FOrbitDerivative Result;
+		Result.Columns[0] = TransformVector(Other.Columns[0]);
+		Result.Columns[1] = TransformVector(Other.Columns[1]);
+		Result.Columns[2] = TransformVector(Other.Columns[2]);
+		return Result;
+	}
+
+	void SetColumn(int32 Index, const FVector3d& Value)
+	{
+		check(Index >= 0 && Index < 3);
+		Columns[Index] = Value;
+	}
+
+	const FVector3d& GetColumn(int32 Index) const
+	{
+		check(Index >= 0 && Index < 3);
+		return Columns[Index];
+	}
+};
+
+/** Packed GPU-friendly orbit sample (float4-aligned). */
+struct FPackedOrbitSample
+{
+	FVector4f Position;
+	FVector4f TransformJacobian[3];
+
+	FPackedOrbitSample()
+		: Position(FVector4f::Zero())
+	{
+		TransformJacobian[0] = FVector4f::Zero();
+		TransformJacobian[1] = FVector4f::Zero();
+		TransformJacobian[2] = FVector4f::Zero();
+	}
+};
+
+/**
  * High-precision orbit data for a single iteration
  */
 struct FOrbitPoint
 {
-	FVector3d Position;      // z_n in double precision
-	FVector3d Derivative;    // dz_n/dc in double precision
-	int32 Iteration;         // Iteration index
-	bool bEscaped;          // Whether this point exceeded bailout
+	FVector3d Position;          // z_n in double precision
+	FOrbitDerivative Derivative;          // 3x3 Jacobian dz_n/dc
+	FOrbitDerivative TransformJacobian;  // 3x3 Jacobian of Mandelbulb mapping at z_n
+	int32 Iteration;             // Iteration index
+	bool bEscaped;               // Whether this point exceeded bailout
 
 	FOrbitPoint()
 		: Position(FVector3d::ZeroVector)
-		, Derivative(FVector3d::ZeroVector)
+		, Derivative(FOrbitDerivative::Zero())
+		, TransformJacobian(FOrbitDerivative::Zero())
 		, Iteration(0)
 		, bEscaped(false)
 	{
 	}
 
-	FOrbitPoint(const FVector3d& InPosition, const FVector3d& InDerivative, int32 InIteration, bool InEscaped)
+	FOrbitPoint(
+		const FVector3d& InPosition,
+		const FOrbitDerivative& InDerivative,
+		const FOrbitDerivative& InTransformJacobian,
+		int32 InIteration,
+		bool bInEscaped)
 		: Position(InPosition)
 		, Derivative(InDerivative)
+		, TransformJacobian(InTransformJacobian)
 		, Iteration(InIteration)
-		, bEscaped(InEscaped)
+		, bEscaped(bInEscaped)
 	{
 	}
 };
@@ -96,17 +202,14 @@ public:
 	) const;
 
 	/**
-	 * Convert high-precision orbit to float format for GPU upload.
-	 * Packs orbit points and derivatives as float4 arrays (x, y, z, unused).
+	 * Build structured buffer data for GPU upload (single element per iteration).
 	 * 
 	 * @param Orbit - Source orbit in double precision
-	 * @param OutPositionData - Destination array for position float4 values
-	 * @param OutDerivativeData - Destination array for derivative float4 values
+	 * @param OutSamples - Destination array of packed samples
 	 */
-	static void ConvertOrbitToFloat(
+	static void BuildOrbitBuffer(
 		const FReferenceOrbit& Orbit,
-		TArray<FVector4f>& OutPositionData,
-		TArray<FVector4f>& OutDerivativeData
+		TArray<FPackedOrbitSample>& OutSamples
 	);
 
 	/**
@@ -146,4 +249,9 @@ private:
 	 * Transforms (r, theta, phi) to (r^p, p*theta, p*phi) then converts back to Cartesian.
 	 */
 	static FVector3d SphericalPowerTransform(const FVector3d& Z, double Power);
+
+	/**
+	 * Numerically approximate the Jacobian of the Mandelbulb power transform at Z.
+	 */
+	static FOrbitDerivative ComputeJacobianFiniteDifference(const FVector3d& Z, double Power);
 };

@@ -29,12 +29,12 @@ FReferenceOrbit FMandelbulbOrbitGenerator::GenerateOrbit(
 	Result.bHasDerivatives = false;
 
 	// Reserve space for orbit points
-	Result.Points.Reserve(MaxIterations);
+	Result.Points.Reserve(MaxIterations + 1);
 
-	// Initial point: z_0 = 0
-	FVector3d Z = FVector3d::ZeroVector;
-	FVector3d DzDc = FVector3d::ZeroVector;
-	Result.Points.Add(FOrbitPoint(Z, DzDc, 0, false));
+	// Initial point for Mandelbulb DE uses the evaluation point itself (z_0 = C)
+	FVector3d Z = ReferenceCenter;
+	FOrbitDerivative DzDc = FOrbitDerivative::Identity();
+	Result.Points.Add(FOrbitPoint(Z, DzDc, FOrbitDerivative::Zero(), 0, false));
 
 	// Iterate Mandelbulb formula: z_{n+1} = g_p(z_n) + C_0
 	// Following the research pseudocode exactly
@@ -56,54 +56,24 @@ FReferenceOrbit FMandelbulbOrbitGenerator::GenerateOrbit(
 			break;
 		}
 
-		// Convert to spherical coordinates
-		// Handle edge cases where r is very small to avoid division by zero
-		double Theta = 0.0;
-		double Phi = 0.0;
+		// Apply Mandelbulb power transform
+		const FVector3d Transformed = SphericalPowerTransform(Z, Power);
 
-		if (R > 1e-10)
-		{
-			// theta = acos(z/r), clamped to [-1, 1] for numerical stability
-			double CosTheta = FMath::Clamp(ZVal / R, -1.0, 1.0);
-			Theta = FMath::Acos(CosTheta);
+		// Compute Jacobian of the transform with respect to Z
+		const FOrbitDerivative Jacobian = ComputeJacobianFiniteDifference(Z, Power);
+		Result.Points.Last().TransformJacobian = Jacobian;
+		const FOrbitDerivative NextDzDc = Jacobian.Multiply(DzDc) + FOrbitDerivative::Identity();
 
-			// phi = atan2(y, x)
-			Phi = FMath::Atan2(Y, X);
-		}
+		// Advance to next orbit point and accumulate derivative
+		Z = Transformed + ReferenceCenter;
+		DzDc = NextDzDc;
 
-		// Apply power transformation in spherical space
-		// r_new = r^p
-		double RPowered = FMath::Pow(R, Power);
-
-		// theta_new = p * theta
-		double ThetaNew = Power * Theta;
-
-		// phi_new = p * phi
-		double PhiNew = Power * Phi;
-
-		// Convert back to Cartesian coordinates
-		// x = r * sin(theta) * cos(phi)
-		// y = r * sin(theta) * sin(phi)
-		// z = r * cos(theta)
-		double SinTheta = FMath::Sin(ThetaNew);
-		double CosTheta = FMath::Cos(ThetaNew);
-		double SinPhi = FMath::Sin(PhiNew);
-		double CosPhi = FMath::Cos(PhiNew);
-
-		Z.X = RPowered * SinTheta * CosPhi;
-		Z.Y = RPowered * SinTheta * SinPhi;
-		Z.Z = RPowered * CosTheta;
-
-		// Add constant C (reference center)
-		Z += ReferenceCenter;
-
-		// TODO: Compute derivative update once perturbation Jacobian is implemented
-		// Placeholder keeps derivative zero so downstream code can begin consuming the data now.
-		Result.Points.Add(FOrbitPoint(Z, DzDc, Iteration + 1, false));
+		Result.Points.Add(FOrbitPoint(Z, DzDc, FOrbitDerivative::Zero(), Iteration + 1, false));
 	}
 
 	// Mark as valid if we have at least one point
 	Result.bValid = Result.Points.Num() > 0;
+	Result.bHasDerivatives = Result.bValid;
 
 	UE_LOG(LogMandelbulbOrbit, Verbose, 
 		TEXT("Generated orbit: Center=(%.6f, %.6f, %.6f), Power=%.2f, Iterations=%d, Escaped=%s at iter %d"),
@@ -117,33 +87,35 @@ FReferenceOrbit FMandelbulbOrbitGenerator::GenerateOrbit(
 	return Result;
 }
 
-void FMandelbulbOrbitGenerator::ConvertOrbitToFloat(
+void FMandelbulbOrbitGenerator::BuildOrbitBuffer(
 	const FReferenceOrbit& Orbit,
-	TArray<FVector4f>& OutPositionData,
-	TArray<FVector4f>& OutDerivativeData
+	TArray<FPackedOrbitSample>& OutSamples
 )
 {
 	const int32 NumPoints = Orbit.Points.Num();
-	OutPositionData.Reset(NumPoints);
-	OutDerivativeData.Reset(NumPoints);
-	OutPositionData.Reserve(NumPoints);
-	OutDerivativeData.Reserve(NumPoints);
+	OutSamples.Reset(NumPoints);
+	OutSamples.Reserve(NumPoints);
 
 	for (const FOrbitPoint& Point : Orbit.Points)
 	{
-		OutPositionData.Add(FVector4f(
+		FPackedOrbitSample Sample;
+		Sample.Position = FVector4f(
 			static_cast<float>(Point.Position.X),
 			static_cast<float>(Point.Position.Y),
 			static_cast<float>(Point.Position.Z),
-			0.0f
-		));
+			0.0f);
 
-		OutDerivativeData.Add(FVector4f(
-			static_cast<float>(Point.Derivative.X),
-			static_cast<float>(Point.Derivative.Y),
-			static_cast<float>(Point.Derivative.Z),
-			0.0f
-		));
+		for (int32 ColumnIndex = 0; ColumnIndex < 3; ++ColumnIndex)
+		{
+			const FVector3d& Column = Point.TransformJacobian.GetColumn(ColumnIndex);
+			Sample.TransformJacobian[ColumnIndex] = FVector4f(
+				static_cast<float>(Column.X),
+				static_cast<float>(Column.Y),
+				static_cast<float>(Column.Z),
+				0.0f);
+		}
+
+		OutSamples.Add(Sample);
 	}
 }
 
@@ -216,4 +188,26 @@ FVector3d FMandelbulbOrbitGenerator::SphericalPowerTransform(const FVector3d& Z,
 
 	// Convert back to Cartesian
 	return SphericalToCartesian(RPowered, ThetaNew, PhiNew);
+}
+
+FOrbitDerivative FMandelbulbOrbitGenerator::ComputeJacobianFiniteDifference(const FVector3d& Z, double Power)
+{
+	const double Step = 1e-7;
+	FOrbitDerivative Jacobian;
+
+	for (int32 Axis = 0; Axis < 3; ++Axis)
+	{
+		FVector3d Forward = Z;
+		FVector3d Backward = Z;
+		Forward[Axis] += Step;
+		Backward[Axis] -= Step;
+
+		const FVector3d ForwardValue = SphericalPowerTransform(Forward, Power);
+		const FVector3d BackwardValue = SphericalPowerTransform(Backward, Power);
+
+		const FVector3d Column = (ForwardValue - BackwardValue) * (0.5 / Step);
+		Jacobian.SetColumn(Axis, Column);
+	}
+
+	return Jacobian;
 }

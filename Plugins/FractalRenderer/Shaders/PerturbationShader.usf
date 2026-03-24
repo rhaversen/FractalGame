@@ -22,8 +22,13 @@ float BailoutRadius;
 int MinIterations;
 float ConvergenceFactor;
 float FractalPower;
-Texture2D<float4> ReferenceOrbitTexture;
-SamplerState OrbitSampler;
+struct FPackedOrbitSample
+{
+	float4 Position;
+	float4 TransformJacobian[3];
+};
+
+StructuredBuffer<FPackedOrbitSample> ReferenceOrbitBuffer;
 float3 ReferenceCenter;
 int OrbitLength;
 
@@ -32,18 +37,33 @@ int OrbitLength;
 #define HIT_STATUS_MISS_DISTANCE 2
 #define HIT_STATUS_MISS_STEPS 3
 
+#ifndef PERTURBATION_DEBUG_MODE
+#define PERTURBATION_DEBUG_MODE 0
+#endif
+
+#define PERTURBATION_BREAKDOWN_NONE 0
+#define PERTURBATION_BREAKDOWN_NO_ORBIT 1
+#define PERTURBATION_BREAKDOWN_SHORT_ORBIT 2
+#define PERTURBATION_BREAKDOWN_DELTA_TOO_LARGE 3
+#define PERTURBATION_BREAKDOWN_EPSILON_CLAMP 4
+#define PERTURBATION_BREAKDOWN_ORBIT_END 5
+
 struct MarchResult
 {
 	float distance;
 	int steps;
 	int hitStatus;
 	int totalDEIterations;
+	float lastEpsilonMagnitude;
+	int lastBreakdownReason;
 };
 
 struct DEResult
 {
 	float distance;
 	int iterations;
+	float epsilonMagnitude;
+	int breakdownReason;
 };
 
 bool HasValidOrbitData()
@@ -51,11 +71,25 @@ bool HasValidOrbitData()
 	return OrbitLength > 1;
 }
 
-float3 LoadOrbitPoint(int index)
+FPackedOrbitSample LoadOrbitSample(int index)
 {
 	int safeLength = max(OrbitLength, 1);
 	int clampedIndex = min(max(index, 0), safeLength - 1);
-	return ReferenceOrbitTexture.Load(int3(clampedIndex, 0, 0)).xyz;
+	return ReferenceOrbitBuffer[clampedIndex];
+}
+
+float3 LoadOrbitPoint(int index)
+{
+	FPackedOrbitSample sample = LoadOrbitSample(index);
+	return sample.Position.xyz;
+}
+
+float3 ApplyTransformJacobian(FPackedOrbitSample sample, float3 value)
+{
+	float3 column0 = sample.TransformJacobian[0].xyz;
+	float3 column1 = sample.TransformJacobian[1].xyz;
+	float3 column2 = sample.TransformJacobian[2].xyz;
+	return column0 * value.x + column1 * value.y + column2 * value.z;
 }
 
 struct SphericalCoords
@@ -88,7 +122,7 @@ void RotateSpherical(inout float theta, inout float phi, float power)
 	phi *= power;
 }
 
-DEResult MakeDEResult(float radius, float derivative, int iterations)
+DEResult MakeDEResult(float radius, float derivative, int iterations, float epsilonMagnitude, int breakdownReason)
 {
 	float safeRadius = max(radius, 1e-6);
 	float safeDerivative = max(abs(derivative), 1e-10);
@@ -96,6 +130,8 @@ DEResult MakeDEResult(float radius, float derivative, int iterations)
 	DEResult result;
 	result.distance = 0.5 * log(safeRadius) * safeRadius / safeDerivative;
 	result.iterations = iterations;
+	result.epsilonMagnitude = epsilonMagnitude;
+	result.breakdownReason = breakdownReason;
 	return result;
 }
 
@@ -113,11 +149,6 @@ float3 SphericalPowerTransform(float3 z, float power)
 	return SphericalToCartesian(zr, coords.theta, coords.phi);
 }
 
-float3 MandelbulbTransform(float3 z, float3 pos, float power)
-{
-	return SphericalPowerTransform(z, power) + pos;
-}
-
 DEResult MandelbulbPerturbationDE(float3 pos, float power, float precisionThreshold)
 {
 	if (!HasValidOrbitData())
@@ -125,6 +156,8 @@ DEResult MandelbulbPerturbationDE(float3 pos, float power, float precisionThresh
 		DEResult fallback;
 		fallback.distance = precisionThreshold;
 		fallback.iterations = 0;
+		fallback.epsilonMagnitude = 0.0;
+		fallback.breakdownReason = PERTURBATION_BREAKDOWN_NO_ORBIT;
 		return fallback;
 	}
 
@@ -134,24 +167,31 @@ DEResult MandelbulbPerturbationDE(float3 pos, float power, float precisionThresh
 		DEResult fallback;
 		fallback.distance = precisionThreshold;
 		fallback.iterations = 0;
+		fallback.epsilonMagnitude = 0.0;
+		fallback.breakdownReason = PERTURBATION_BREAKDOWN_SHORT_ORBIT;
 		return fallback;
 	}
 
 	const float epsilonBreakdown = max(BailoutRadius * 16.0, 4.0);
-	if (length(pos - ReferenceCenter) > epsilonBreakdown)
+	float3 deltaC = pos - ReferenceCenter;
+	if (length(deltaC) > epsilonBreakdown)
 	{
 		DEResult fallback;
 		fallback.distance = precisionThreshold;
 		fallback.iterations = 0;
+		fallback.epsilonMagnitude = length(deltaC);
+		fallback.breakdownReason = PERTURBATION_BREAKDOWN_DELTA_TOO_LARGE;
 		return fallback;
 	}
 
-	float3 zRef = LoadOrbitPoint(0);
-	float3 zActual = zRef;
+	FPackedOrbitSample currentSample = LoadOrbitSample(0);
+	float3 zRef = currentSample.Position.xyz;
 	float3 epsilon = float3(0.0, 0.0, 0.0);
+	float3 zActual = zRef + epsilon;
 	float dr = 1.0;
 	float prevDE = 1e10;
 	int iter;
+	int breakdownReason = PERTURBATION_BREAKDOWN_NONE;
 
 	[loop]
 	for (iter = 0; iter < maxPerturbIterations; ++iter)
@@ -182,24 +222,32 @@ DEResult MandelbulbPerturbationDE(float3 pos, float power, float precisionThresh
 			break;
 		}
 
+		FPackedOrbitSample derivativeSample = LoadOrbitSample(iter);
 		float3 zRefNext = LoadOrbitPoint(iter + 1);
-		float3 zInput = zRef + epsilon;
-		float3 perturbedNext = MandelbulbTransform(zInput, pos, power);
+		float3 epsilonNext = ApplyTransformJacobian(derivativeSample, epsilon) + deltaC;
 
-		epsilon = perturbedNext - zRefNext;
-
-		float epsilonMagnitude = length(epsilon);
+		float epsilonMagnitude = length(epsilonNext);
 		if (epsilonMagnitude > epsilonBreakdown)
 		{
-			float clampScale = epsilonBreakdown / epsilonMagnitude;
-			epsilon *= clampScale;
+			float clampScale = epsilonBreakdown / max(epsilonMagnitude, 1e-6);
+			epsilonNext *= clampScale;
+			if (breakdownReason == PERTURBATION_BREAKDOWN_NONE)
+			{
+				breakdownReason = PERTURBATION_BREAKDOWN_EPSILON_CLAMP;
+			}
 		}
 
+		epsilon = epsilonNext;
 		zRef = zRefNext;
-		zActual = perturbedNext;
+		zActual = zRef + epsilon;
 	}
 
-	return MakeDEResult(length(zActual), dr, iter);
+	if (iter + 1 >= OrbitLength && breakdownReason == PERTURBATION_BREAKDOWN_NONE)
+	{
+		breakdownReason = PERTURBATION_BREAKDOWN_ORBIT_END;
+	}
+
+	return MakeDEResult(length(zActual), dr, iter, length(epsilon), breakdownReason);
 }
 
 MarchResult MarchFractal(float3 rayOriginWorld, float3 rayDirWorld, float3 centerOffset, float scaleMultiplier, float maxWorldDistance, float power)
@@ -207,6 +255,8 @@ MarchResult MarchFractal(float3 rayOriginWorld, float3 rayDirWorld, float3 cente
 	float totalDist = 0.0;
 	int steps = 0;
 	int totalDEIterations = 0;
+	float lastEpsilonMagnitude = 0.0;
+	int lastBreakdownReason = PERTURBATION_BREAKDOWN_NONE;
 
 	while (totalDist < maxWorldDistance && steps < MaxRaySteps)
 	{
@@ -218,6 +268,8 @@ MarchResult MarchFractal(float3 rayOriginWorld, float3 rayDirWorld, float3 cente
 		float pixelSizeFractal = pixelSizeWorld * scaleMultiplier;
 		DEResult deResult = MandelbulbPerturbationDE(pos, power, pixelSizeFractal);
 		totalDEIterations += deResult.iterations;
+		lastEpsilonMagnitude = deResult.epsilonMagnitude;
+		lastBreakdownReason = deResult.breakdownReason;
 
 		float threshold = pixelSizeFractal;
 		if (deResult.distance <= threshold)
@@ -227,6 +279,8 @@ MarchResult MarchFractal(float3 rayOriginWorld, float3 rayDirWorld, float3 cente
 			hitResult.steps = steps;
 			hitResult.hitStatus = HIT_STATUS_HIT;
 			hitResult.totalDEIterations = totalDEIterations;
+			hitResult.lastEpsilonMagnitude = lastEpsilonMagnitude;
+			hitResult.lastBreakdownReason = lastBreakdownReason;
 			return hitResult;
 		}
 
@@ -240,11 +294,29 @@ MarchResult MarchFractal(float3 rayOriginWorld, float3 rayDirWorld, float3 cente
 	missResult.steps = steps;
 	missResult.hitStatus = (totalDist >= maxWorldDistance) ? HIT_STATUS_MISS_DISTANCE : HIT_STATUS_MISS_STEPS;
 	missResult.totalDEIterations = totalDEIterations;
+	missResult.lastEpsilonMagnitude = lastEpsilonMagnitude;
+	missResult.lastBreakdownReason = lastBreakdownReason;
 	return missResult;
 }
 
 float3 ShadeFractal(const MarchResult result)
 {
+#if PERTURBATION_DEBUG_MODE == 1
+	float logEpsilon = log2(max(result.lastEpsilonMagnitude, 1e-6));
+	float normalized = saturate((logEpsilon + 20.0f) / 20.0f);
+	return float3(normalized, normalized, normalized);
+#elif PERTURBATION_DEBUG_MODE == 2
+	const float3 breakdownColors[6] = {
+		float3(0.0, 0.0, 0.0),               // None
+		float3(1.0, 0.0, 0.0),               // No orbit
+		float3(1.0, 0.5, 0.0),               // Short orbit
+		float3(1.0, 1.0, 0.0),               // Delta too large
+		float3(0.0, 1.0, 0.0),               // Epsilon clamp
+		float3(0.0, 0.5, 1.0)                // Orbit end
+	};
+	int breakdownIndex = clamp(result.lastBreakdownReason, 0, 5);
+	return breakdownColors[breakdownIndex];
+#endif
 	float stepFactor = result.steps > 0 ? saturate(result.steps / max(float(MaxRaySteps), 1.0)) : 0.0;
 	float t = sqrt(stepFactor);
 

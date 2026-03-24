@@ -13,13 +13,6 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogFractalViewExtension, Log, All);
 
-namespace
-{
-BEGIN_SHADER_PARAMETER_STRUCT(FUploadOrbitDataParameters, )
-	RDG_TEXTURE_ACCESS(OrbitTexture, ERHIAccess::CopyDest)
-END_SHADER_PARAMETER_STRUCT()
-}
-
 FFractalSceneViewExtension::FFractalSceneViewExtension(const FAutoRegister& AutoRegister)
 	: FSceneViewExtensionBase(AutoRegister)
 	, CurrentReferenceCenter(FVector3d::ZeroVector)
@@ -60,7 +53,7 @@ void FFractalSceneViewExtension::SetReferenceOrbit(const FReferenceOrbit& InOrbi
 	if (InOrbit.IsValid())
 	{
 		// Convert orbit to float format for GPU upload
-		FMandelbulbOrbitGenerator::ConvertOrbitToFloat(InOrbit, OrbitPositionData, OrbitDerivativeData);
+		FMandelbulbOrbitGenerator::BuildOrbitBuffer(InOrbit, OrbitBufferData);
 		CurrentReferenceCenter = InOrbit.ReferenceCenter;
 		CurrentOrbitLength = InOrbit.GetLength();
 		bOrbitHasDerivatives = InOrbit.HasDerivatives();
@@ -74,8 +67,7 @@ void FFractalSceneViewExtension::SetReferenceOrbit(const FReferenceOrbit& InOrbi
 	else
 	{
 		UE_LOG(LogFractalViewExtension, Warning, TEXT("Invalid orbit provided"));
-		OrbitPositionData.Empty();
-		OrbitDerivativeData.Empty();
+		OrbitBufferData.Empty();
 		CurrentOrbitLength = 0;
 		bOrbitHasDerivatives = false;
 	}
@@ -169,48 +161,39 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 	PassParameters->ViewSize = FVector2f(SceneColor.ViewRect.Width(), SceneColor.ViewRect.Height());
 	PassParameters->InvViewSize = InvViewSize;
 
-	// Create and upload orbit texture
-	FRDGTextureRef OrbitTexture = nullptr;
-	TArray<FVector4f> LocalOrbitPositionData;
-	TArray<FVector4f> LocalOrbitDerivativeData;
+	// Create and upload orbit buffer
+	FRDGBufferRef OrbitBuffer = nullptr;
+	FRDGBufferSRVRef OrbitBufferSRV = nullptr;
+	TArray<FPackedOrbitSample> LocalOrbitBufferData;
 	FVector3d LocalReferenceCenter;
 	int32 LocalOrbitLength = 0;
 	bool bLocalHasDerivatives = false;
 	
 	{
 		FScopeLock Lock(&OrbitMutex);
-		LocalOrbitPositionData = OrbitPositionData;
-		LocalOrbitDerivativeData = OrbitDerivativeData;
+		LocalOrbitBufferData = OrbitBufferData;
 		LocalReferenceCenter = CurrentReferenceCenter;
 		LocalOrbitLength = CurrentOrbitLength;
 		bLocalHasDerivatives = bOrbitHasDerivatives;
 	}
-	(void)LocalOrbitDerivativeData; // Placeholder until derivative textures are uploaded
-	(void)bLocalHasDerivatives; // Derivative sampling will be hooked up in a later task
+	(void)bLocalHasDerivatives;
 	
-	if (LocalOrbitLength > 0 && LocalOrbitPositionData.Num() > 0)
+	if (LocalOrbitLength > 0 && LocalOrbitBufferData.Num() > 0)
 	{
-		OrbitTexture = CreateOrbitTexture(GraphBuilder, LocalOrbitPositionData);
-		PassParameters->ReferenceOrbitTexture = OrbitTexture;
-		PassParameters->OrbitSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+		OrbitBuffer = CreateOrbitBuffer(GraphBuilder, LocalOrbitBufferData);
+		OrbitBufferSRV = GraphBuilder.CreateSRV(OrbitBuffer);
+		PassParameters->ReferenceOrbitBuffer = OrbitBufferSRV;
 		PassParameters->ReferenceCenter = FVector3f(LocalReferenceCenter);
-		PassParameters->OrbitLength = LocalOrbitLength;
+		PassParameters->OrbitLength = bLocalHasDerivatives ? LocalOrbitLength : 0;
 	}
 	else
 	{
-		// No orbit data available, create dummy 1x1 texture
-		FRDGTextureDesc DummyDesc = FRDGTextureDesc::Create2D(
-			FIntPoint(1, 1),
-			PF_A32B32G32R32F,
-			FClearValueBinding::Black,
-			TexCreate_ShaderResource | TexCreate_UAV
-		);
-		OrbitTexture = GraphBuilder.CreateTexture(DummyDesc, TEXT("DummyOrbitTexture"));
-		FRDGTextureUAVRef DummyUAV = GraphBuilder.CreateUAV(OrbitTexture);
-		AddClearUAVPass(GraphBuilder, DummyUAV, FLinearColor::Black);
-		
-		PassParameters->ReferenceOrbitTexture = OrbitTexture;
-		PassParameters->OrbitSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+		// No orbit data available, create dummy buffer with a single zero sample
+		TArray<FPackedOrbitSample> DummySamples;
+		DummySamples.AddDefaulted(1);
+		OrbitBuffer = CreateOrbitBuffer(GraphBuilder, DummySamples);
+		OrbitBufferSRV = GraphBuilder.CreateSRV(OrbitBuffer);
+		PassParameters->ReferenceOrbitBuffer = OrbitBufferSRV;
 		PassParameters->ReferenceCenter = FVector3f::ZeroVector;
 		PassParameters->OrbitLength = 0;
 	}
@@ -238,70 +221,35 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 	return FScreenPassTexture(OutputTexture, SceneColor.ViewRect);
 }
 
-FRDGTextureRef FFractalSceneViewExtension::CreateOrbitTexture(
+FRDGBufferRef FFractalSceneViewExtension::CreateOrbitBuffer(
 	FRDGBuilder& GraphBuilder,
-	const TArray<FVector4f>& OrbitData)
+	const TArray<FPackedOrbitSample>& OrbitData)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(FFractalSceneViewExtension::CreateOrbitTexture);
-	
+	TRACE_CPUPROFILER_EVENT_SCOPE(FFractalSceneViewExtension::CreateOrbitBuffer);
+
 	if (OrbitData.Num() == 0)
 	{
-		UE_LOG(LogFractalViewExtension, Warning, TEXT("CreateOrbitTexture: Empty orbit data"));
+		UE_LOG(LogFractalViewExtension, Warning, TEXT("CreateOrbitBuffer: Empty orbit data"));
 		return nullptr;
 	}
-	
-	const int32 OrbitLength = OrbitData.Num();
-	
-	// Create 1D texture (Width = OrbitLength, Height = 1)
-	// Format: PF_A32B32G32R32F (128-bit per texel, RGBA float)
-	FRDGTextureDesc OrbitDesc = FRDGTextureDesc::Create2D(
-		FIntPoint(OrbitLength, 1),
-		PF_A32B32G32R32F,
-		FClearValueBinding::Black,
-		TexCreate_ShaderResource
-	);
-	
-	FRDGTextureRef OrbitTexture = GraphBuilder.CreateTexture(OrbitDesc, TEXT("ReferenceOrbitTexture"));
-	
-	// Upload orbit data using an RDG copy pass and render-graph managed backing storage
-	FUploadOrbitDataParameters* UploadParams = GraphBuilder.AllocParameters<FUploadOrbitDataParameters>();
-	UploadParams->OrbitTexture = OrbitTexture;
-	
-	const int32 DataSizeBytes = OrbitLength * sizeof(FVector4f);
-	const uint32 RowPitchBytes = static_cast<uint32>(OrbitLength * sizeof(FVector4f));
 
-	FRDGUploadData<FVector4f> UploadData(GraphBuilder, OrbitLength);
-	FMemory::Memcpy(UploadData.GetData(), OrbitData.GetData(), DataSizeBytes);
+	const uint32 NumElements = static_cast<uint32>(OrbitData.Num());
+	const uint64 DataSizeBytes = static_cast<uint64>(NumElements) * sizeof(FPackedOrbitSample);
 
-	const uint8* UploadDataPtr = reinterpret_cast<const uint8*>(UploadData.GetData());
-	
-	GraphBuilder.AddPass(
-		RDG_EVENT_NAME("UploadOrbitData"),
-		UploadParams,
-		ERDGPassFlags::Copy | ERDGPassFlags::NeverCull,
-		[OrbitTexture, UploadDataPtr, OrbitLength, RowPitchBytes](FRHICommandList& RHICmdList)
-		{
-			// Get the RHI texture
-			FRHITexture* TextureRHI = OrbitTexture->GetRHI();
-			
-			// Define the region to update
-			FUpdateTextureRegion2D Region(0, 0, 0, 0, OrbitLength, 1);
-			
-			// Update texture with orbit data
-			RHICmdList.UpdateTexture2D(
-				TextureRHI,
-				0, // Mip level
-				Region,
-				RowPitchBytes,
-				UploadDataPtr
-			);
-		}
-	);
-	
-	UE_LOG(LogFractalViewExtension, VeryVerbose, 
-		TEXT("Created orbit texture: %dx%d, %d points, %.2f KB"),
-		OrbitLength, 1, OrbitLength, DataSizeBytes / 1024.0f
-	);
-	
-	return OrbitTexture;
+	FRDGBufferRef Buffer = CreateStructuredBuffer(
+		GraphBuilder,
+		TEXT("ReferenceOrbitBuffer"),
+		sizeof(FPackedOrbitSample),
+		NumElements,
+		OrbitData.GetData(),
+		DataSizeBytes,
+		ERDGInitialDataFlags::None);
+
+	UE_LOG(LogFractalViewExtension, VeryVerbose,
+		TEXT("Created orbit buffer: %u samples, %.2f KB"),
+		NumElements,
+		DataSizeBytes / 1024.0);
+
+	return Buffer;
 }
+

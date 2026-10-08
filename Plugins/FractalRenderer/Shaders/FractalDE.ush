@@ -1,0 +1,208 @@
+// Perturbed distance estimator, generic over the formula selected in FractalFormula.ush. Pure HLSL.
+//
+// Every sample point is c = C_ref + dc and its orbit z_n = Z_n + d_n, where the reference orbit Z_n was
+// computed on the CPU in double-double precision (FractalMath/FractalReferenceOrbit.h) and dc, d_n are floats.
+// Each formula advances d with an exact, cancellation-free expression for f(Z + d) - f(Z).
+//
+// When the pixel leaves the reference (|z| < |d|: it is closer to the origin than to the reference) or the
+// reference orbit runs out:
+//  - formulas that add c every step rebase (Zhuoran): continue with d := z against orbit point 0 (z = 0,
+//    f(0) = 0, so the next reference point is Z_1 = C_ref again);
+//  - the others (Julia sets, c-free folds) continue with plain float iteration of z. That is exact enough
+//    because the step does not depend on c, and |d| >= |z| means the float error of z (~1e-7 |z|) is small
+//    against the separation that the pixel offsets have grown to.
+// The reference keeps iterating past the pixel bailout (ReferenceEscapeRadius), so a forced switch always
+// happens with |d| >> |z|.
+
+#pragma once
+
+#include "FractalFormula.ush"
+
+// Set to 0 to disable the linear series skip (comparison / debugging).
+#ifndef FP_SERIES_SKIP
+#define FP_SERIES_SKIP 1
+#endif
+
+struct FPDEResult
+{
+	float Distance;   // world units
+	int Iterations;   // n at which |z_n| > Bailout, or MaxIterations
+	bool bEscaped;
+	int Rebases;      // rebases / switches to plain iteration
+	int Skipped;      // iterations replaced by the linear series skip
+};
+
+FPFormulaArgs FP_MakeFormulaArgs(float Power, float Scale)
+{
+	FPFormulaArgs Args;
+	Args.Power = Power;
+	Args.PowerInt = FP_IntegerPower(Power);
+	Args.Scale = Scale;
+	return Args;
+}
+
+// Distance from |z| and the running derivative DRS = dr * Scale (world units).
+float FP_FinalDistance(bool bEscaped, float RW, float DRS, float Scale)
+{
+#if FP_FORMULA_FOLDING
+	return RW / max(DRS, 1.0e-6f * Scale);
+#else
+	return bEscaped ? 0.5f * RW * log(max(RW, 1.0e-6f)) / max(DRS, 1.0e-37f) : 0.0f;
+#endif
+}
+
+// Folding fractals test escape after each step, i.e. not at the starting point.
+bool FP_TestEscapeAt(int N)
+{
+#if FP_FORMULA_FOLDING
+	return N > 1;
+#else
+	return true;
+#endif
+}
+
+// DE at c = C_ref + DC. DC is in fractal units, the returned distance is in world units.
+FPDEResult FP_PerturbedDE(StructuredBuffer<float4> Orbit, int OrbitLength, float3 DC, FPFormulaArgs Args, int MaxIterations, float Bailout)
+{
+	FP_STATE D = FP_FormulaStart(DC); // d_1 (z_1 = Start(c), Z_1 = Start(C_ref))
+	int M = 1;
+	float DRS = Args.Scale;
+	float RW = 0.0f;
+	float Bailout2 = Bailout * Bailout;
+	bool bEscaped = false;
+	int Rebases = 0;
+	int N = 1;
+	int Skipped = 0;
+
+#if FP_SERIES_SKIP
+	// Linear series skip: while the perturbation stays linear d_m = A_m dc. The CPU stores A_m and the largest
+	// |dc| for which iterations 1..m-1 stay linear (non-increasing in m); jump to the deepest valid m.
+	{
+		// Conservative |dc| bound without squaring (|dc|^2 underflows float below ~1e-19).
+		float DCLength = 1.7320508f * max(max(abs(DC.x), abs(DC.y)), abs(DC.z));
+		int Lo = 1;
+		int Hi = OrbitLength - 1;
+		[loop]
+		while (Lo < Hi)
+		{
+			int Mid = (Lo + Hi + 1) >> 1;
+			if (Orbit[FP_ORBIT_STRIDE * Mid + FP_SKIP_ROW].w >= DCLength)
+			{
+				Lo = Mid;
+			}
+			else
+			{
+				Hi = Mid - 1;
+			}
+		}
+		if (Lo > 1)
+		{
+			int Row = FP_ORBIT_STRIDE * Lo + FP_SKIP_ROW;
+			float4 A0 = Orbit[Row];
+			float4 A1 = Orbit[Row + 1];
+			float4 A2 = Orbit[Row + 2];
+#if FP_STATE_DIM == 4
+			float4 A3 = Orbit[Row + 3];
+			D = float4(dot(A0.xyz, DC), dot(A1.xyz, DC), dot(A2.xyz, DC), dot(A3.xyz, DC));
+#else
+			D = float3(dot(A0.xyz, DC), dot(A1.xyz, DC), dot(A2.xyz, DC));
+#endif
+			DRS = A1.w * Args.Scale;
+			M = Lo;
+			N = Lo;
+			Skipped = Lo - 1;
+		}
+	}
+#endif
+
+	bool bDirect = false;     // plain float iteration of Z (formulas without c only)
+	FP_STATE Z = D;
+	[loop]
+	for (; N < MaxIterations; ++N)
+	{
+		FP_STATE W = bDirect ? Z : FP_FormulaLoadState(Orbit, FP_ORBIT_STRIDE * M) + D;
+		float RW2 = dot(W, W);
+		float InvRW = (RW2 > 0.0f) ? rsqrt(RW2) : 0.0f;
+		RW = RW2 * InvRW;
+		if (FP_TestEscapeAt(N) && RW2 > Bailout2)
+		{
+			bEscaped = true;
+			break;
+		}
+		if (!bDirect && (RW2 < dot(D, D) || M >= OrbitLength - 1))
+		{
+			++Rebases;
+#if FP_FORMULA_ADDS_C
+			// Rebase onto orbit point 0: the full point becomes the delta.
+			D = W;
+			M = 0;
+#else
+			Z = W;
+			bDirect = true;
+#endif
+		}
+		if (bDirect)
+		{
+			FP_FormulaDirectStep(Z, RW, InvRW, DC, DRS, Args);
+		}
+		else
+		{
+			FP_FormulaPerturbedStep(Orbit, FP_ORBIT_STRIDE * M, D, W, RW, InvRW, DC, DRS, Args);
+			++M;
+		}
+	}
+
+#if FP_FORMULA_FOLDING
+	if (!bEscaped)
+	{
+		FP_STATE W = bDirect ? Z : FP_FormulaLoadState(Orbit, FP_ORBIT_STRIDE * M) + D;
+		RW = length(W);
+	}
+#endif
+
+	FPDEResult Result;
+	Result.Iterations = N;
+	Result.bEscaped = bEscaped;
+	Result.Rebases = Rebases;
+	Result.Skipped = Skipped;
+	Result.Distance = FP_FinalDistance(bEscaped, RW, DRS, Args.Scale);
+	return Result;
+}
+
+// Plain float DE at an absolute position (no perturbation). Used where absolute float coordinates resolve
+// the pixel footprint (the hybrid switch) and while no reference orbit exists.
+FPDEResult FP_DirectDE(float3 C, FPFormulaArgs Args, int MaxIterations, float Bailout)
+{
+	FP_STATE Z = FP_FormulaStart(C);
+	float DRS = Args.Scale;
+	float RW = 0.0f;
+	float Bailout2 = Bailout * Bailout;
+	bool bEscaped = false;
+	int N = 1;
+	[loop]
+	for (; N < MaxIterations; ++N)
+	{
+		float RW2 = dot(Z, Z);
+		float InvRW = (RW2 > 0.0f) ? rsqrt(RW2) : 0.0f;
+		RW = RW2 * InvRW;
+		if (FP_TestEscapeAt(N) && RW2 > Bailout2)
+		{
+			bEscaped = true;
+			break;
+		}
+		FP_FormulaDirectStep(Z, RW, InvRW, C, DRS, Args);
+	}
+#if FP_FORMULA_FOLDING
+	if (!bEscaped)
+	{
+		RW = length(Z);
+	}
+#endif
+	FPDEResult Result;
+	Result.Iterations = N;
+	Result.bEscaped = bEscaped;
+	Result.Rebases = 0;
+	Result.Skipped = 0;
+	Result.Distance = FP_FinalDistance(bEscaped, RW, DRS, Args.Scale);
+	return Result;
+}

@@ -1,0 +1,39 @@
+// Mandelbulb: z_1 = c, z_{n+1} = g_p(z_n) + c (CPU: FractalMath/Formulas/MandelbulbFormula.h).
+
+#pragma once
+
+#include "FractalPowerMap.ush"
+
+#define FP_STATE float3
+#define FP_STATE_DIM 3
+#define FP_PAYLOAD_FLOAT4 3
+#define FP_FORMULA_ADDS_C 1
+#define FP_FORMULA_FOLDING 0
+
+FP_STATE FP_FormulaStart(float3 Position)
+{
+	return Position;
+}
+
+FP_STATE FP_FormulaLoadState(StructuredBuffer<float4> Orbit, int Base)
+{
+	return Orbit[Base].xyz;
+}
+
+void FP_FormulaPerturbedStep(StructuredBuffer<float4> Orbit, int Base, inout FP_STATE D, FP_STATE W, float RW, float InvRW,
+	float3 DC, inout float DRS, FPFormulaArgs Args)
+{
+	FPPowerRef Ref = FP_LoadPowerRef(Orbit, Base);
+	float RWPowM1;
+	float3 G = FP_PerturbedPowerDelta(Ref, D, W, RW, InvRW, Args.Power, Args.PowerInt, RWPowM1);
+	DRS = Args.Power * RWPowM1 * DRS + Args.Scale;
+	D = G + DC;
+}
+
+void FP_FormulaDirectStep(inout FP_STATE Z, float RW, float InvRW, float3 C, inout float DRS, FPFormulaArgs Args)
+{
+	float RWPowM1;
+	float3 G = FP_MandelbulbPower(Z, RW, InvRW, Args.Power, Args.PowerInt, RWPowM1);
+	DRS = Args.Power * RWPowM1 * DRS + Args.Scale;
+	Z = G + C;
+}

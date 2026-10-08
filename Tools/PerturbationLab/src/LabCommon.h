@@ -2,7 +2,7 @@
 #pragma once
 #include "QuadUtil.h"
 #include "VkCompute.h"
-#include "FractalMath/MandelbulbReference.h"
+#include "FractalMath/FractalFormulas.h"
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -12,8 +12,8 @@
 
 struct FLabParams
 {
-	float Power, Scale, Bailout, ConvergenceEpsilon;
-	int Count, OrbitLength, MaxIterations, MinIterations;
+	float Power, Scale, Bailout, Unused1;
+	int Count, OrbitLength, MaxIterations, Unused2;
 	float RefX, RefY, RefZ, Unused0;
 	float Pad[4];
 };

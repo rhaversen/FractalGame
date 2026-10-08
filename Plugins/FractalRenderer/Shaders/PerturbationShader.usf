@@ -1,6 +1,8 @@
-// Mandelbulb ray marcher with perturbation, injected after tonemapping by FFractalSceneViewExtension.
-// All fractal maths lives in FractalRender.ush / FractalPerturbation.ush (pure HLSL, also exercised by
+// Fractal ray marcher with perturbation, injected after tonemapping by FFractalSceneViewExtension.
+// All fractal maths lives in FractalRender.ush and the files it includes (pure HLSL, also exercised by
 // Tools/PerturbationLab); this file only binds Unreal's shader parameters.
+// Permutations: FP_FRACTAL_TYPE selects the formula (FractalFormula.ush), FP_STATIC_POWER_8 compiles the
+// Mandelbulb with its classic power 8 as a constant.
 
 #include "/Engine/Public/Platform.ush"
 
@@ -26,9 +28,7 @@ float DirectFootprint;
 int OrbitLength;
 int MaxRaySteps;
 int MaxIterations;
-int MinIterations;
 float MaxRayDistance;
-float ConvergenceFactor;
 float2 BackgroundInvExtent;
 Texture2D<float4> BackgroundTexture;
 SamplerState BackgroundSampler;
@@ -54,8 +54,6 @@ void PerturbationShader(uint3 DispatchThreadId : SV_DispatchThreadID)
 	V.Power = FractalPower;
 	V.Bailout = BailoutRadius;
 	V.MaxIterations = MaxIterations;
-	V.MinIterations = MinIterations;
-	V.ConvergenceFactor = ConvergenceFactor;
 	V.MaxRaySteps = MaxRaySteps;
 	V.MaxRayDistance = MaxRayDistance;
 	V.OrbitLength = OrbitLength;

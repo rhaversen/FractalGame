@@ -1,0 +1,44 @@
+// Selects the fractal formula at compile time. FP_FRACTAL_TYPE matches FractalMath::EFractalFormula
+// (a shader permutation in Unreal). Each Formula*.ush provides:
+//   FP_STATE / FP_STATE_DIM     float3 / 3, or float4 / 4 for quaternions
+//   FP_PAYLOAD_FLOAT4           formula data per orbit point, followed by FP_STATE_DIM series-skip rows
+//   FP_FORMULA_ADDS_C           1: z <- f(z) + c (rebases onto orbit point 0), 0: c only sets z_1
+//   FP_FORMULA_FOLDING          1: escape tested after each step, DE = r / dr; 0: tested before, DE = 0.5 r ln r / dr
+//   FP_STATE FP_FormulaStart(float3 Position)                       z_1 (linear in Position)
+//   FP_STATE FP_FormulaLoadState(Orbit, Base)                      float reference Z~_m (Base = FP_ORBIT_STRIDE * m)
+//   void FP_FormulaPerturbedStep(Orbit, Base, inout D, W, RW, InvRW, DC, inout DRS, Args)
+//        d <- f(Z~_m + d) - f(Z~_m) (+ dc), W = Z~_m + d, RW = |W|, DRS = dr * Scale
+//   void FP_FormulaDirectStep(inout Z, RW, InvRW, C, inout DRS, Args)  plain float step at an absolute position
+// and must match the CPU formula in FractalMath/Formulas/ bit for bit in its layout.
+
+#pragma once
+
+#include "FractalMathCommon.ush"
+
+#ifndef FP_FRACTAL_TYPE
+#define FP_FRACTAL_TYPE 0
+#endif
+
+#if FP_FRACTAL_TYPE == 0
+#include "FormulaMandelbulb.ush"
+#elif FP_FRACTAL_TYPE == 1
+#include "FormulaBurningShip.ush"
+#elif FP_FRACTAL_TYPE == 2
+#include "FormulaJuliaSet.ush"
+#elif FP_FRACTAL_TYPE == 3
+#include "FormulaMandelbox.ush"
+#elif FP_FRACTAL_TYPE == 4
+#include "FormulaInvertedMenger.ush"
+#elif FP_FRACTAL_TYPE == 5
+#include "FormulaQuaternion.ush"
+#elif FP_FRACTAL_TYPE == 6
+#include "FormulaSierpinski.ush"
+#elif FP_FRACTAL_TYPE == 7
+#include "FormulaKaleidoscopicIFS.ush"
+#else
+#error Unknown FP_FRACTAL_TYPE
+#endif
+
+// float4s per orbit point and the first series-skip row (FractalMath::FormulaOrbitStride).
+#define FP_ORBIT_STRIDE (FP_PAYLOAD_FLOAT4 + FP_STATE_DIM)
+#define FP_SKIP_ROW FP_PAYLOAD_FLOAT4

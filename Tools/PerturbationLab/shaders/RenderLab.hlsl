@@ -1,4 +1,5 @@
 // Lab entry point for the full per-pixel render (FractalRender.ush), mirroring PerturbationShader.usf.
+// Compiled once per formula (-D FP_FRACTAL_TYPE=n).
 #include "FractalRender.ush"
 
 struct FLabRenderParams
@@ -7,9 +8,9 @@ struct FLabRenderParams
 	float4 RayDirDX;        // xyz, w = Scale
 	float4 RayDirDY;        // xyz, w = Power
 	float4 CameraOffset;    // xyz, w = Bailout
-	float4 ReferenceCenter; // xyz, w = ConvergenceFactor
+	float4 ReferenceCenter; // xyz
 	float4 Misc;            // x = MaxRayDistance, y = DirectFootprint
-	int4 IParams;           // x = MaxIterations, y = MinIterations, z = MaxRaySteps, w = OrbitLength
+	int4 IParams;           // x = MaxIterations, z = MaxRaySteps, w = OrbitLength
 	int4 IParams2;          // x = Width, y = Height
 };
 
@@ -33,8 +34,6 @@ void RenderMain(uint3 Id : SV_DispatchThreadID)
 	V.Power = P.RayDirDY.w;
 	V.Bailout = P.CameraOffset.w;
 	V.MaxIterations = P.IParams.x;
-	V.MinIterations = P.IParams.y;
-	V.ConvergenceFactor = P.ReferenceCenter.w;
 	V.MaxRaySteps = P.IParams.z;
 	V.MaxRayDistance = P.Misc.x;
 	V.OrbitLength = P.IParams.w;

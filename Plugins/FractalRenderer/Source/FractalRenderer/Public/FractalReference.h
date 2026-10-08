@@ -4,7 +4,7 @@
 #include "HAL/CriticalSection.h"
 #include "HAL/ThreadSafeCounter.h"
 #include "Templates/SharedPointer.h"
-#include "FractalMath/MandelbulbReference.h"
+#include "FractalMath/FractalFormulas.h"
 
 /**
  * Maps world space to fractal space: Fractal = Origin + (World - Anchor) * Scale.
@@ -16,7 +16,7 @@ struct FRACTALRENDERER_API FFractalCameraMapping
 {
 	FractalMath::FDDVec3 Origin;
 	FVector3d Anchor = FVector3d::ZeroVector;
-	double Scale = 1.0e-5; // fractal units per world unit (cm)
+	double Scale = 1.0e-3; // fractal units per world unit (cm)
 
 	FractalMath::FDDVec3 WorldToFractal(const FVector3d& World) const;
 
@@ -27,14 +27,24 @@ struct FRACTALRENDERER_API FFractalCameraMapping
 	void SetFractalPositionOf(const FVector3d& WorldPoint, const FractalMath::FDDVec3& FractalPoint);
 };
 
+/**
+ * Iterations per sample for a given pixel footprint (fractal units). Folding fractals expand by ~|s| per
+ * iteration, so a point one footprint away from the surface needs ~log(Bailout / footprint) / log|s|
+ * iterations to escape; deep zooms with small scale factors need more than BaseIterations. Rounded up to
+ * multiples of 50 (so that the reference orbit, whose length depends on it, is only rebuilt occasionally)
+ * and capped at 1000. Power fractals return BaseIterations.
+ */
+FRACTALRENDERER_API int32 ComputeIterationBudget(FractalMath::EFractalFormula Formula, double Power, int32 BaseIterations, double Bailout, double FootprintFractal);
+
 /** An immutable reference point + orbit, shared between the game, render and worker threads. */
 struct FRACTALRENDERER_API FFractalReferenceData
 {
 	FractalMath::FDDVec3 Center;                   // C_ref (fractal space, double-double)
-	TArray<FractalMath::FOrbitPointGPU> Orbit;     // GPU layout, 6 float4 per point
-	double Power = 8.0;
-	int32 MaxIterations = 0;
-	double Bailout = 0.0;
+	TArray<FVector4f> Orbit;                       // GPU layout, OrbitStride float4 per point (FractalReferenceOrbit.h)
+	int32 OrbitStride = 0;
+	int32 OrbitLength = 0;                         // points (Orbit.Num() / OrbitStride)
+	FractalMath::EFractalFormula Formula = FractalMath::EFractalFormula::Mandelbulb;
+	FractalMath::FFormulaParams Params;
 	double YardstickFractal = 0.0;                 // camera-to-reference distance at creation (fractal units)
 	double CameraDistanceEstimate = 0.0;           // DE at the camera at creation (world units)
 	double ScaleAtCreation = 0.0;
@@ -51,16 +61,16 @@ struct FRACTALRENDERER_API FFractalReferenceRequest
 	FVector3d Forward = FVector3d::ForwardVector; // unit view direction (world == fractal axes)
 	double Scale = 1.0;
 	double PixelRadiusPerUnitDistance = 0.001;
-	double Power = 8.0;
-	int32 MaxIterations = 150;
-	double Bailout = 10.0;
+	FractalMath::EFractalFormula Formula = FractalMath::EFractalFormula::Mandelbulb;
+	FractalMath::FFormulaParams Params;
 	int32 MaxRaySteps = 150;
-	double MaxRayDistance = 1.0e6;
+	double MaxRayDistance = 1.0e6; // world units
 };
 
 /**
- * Owns the perturbation reference. The reference point is found by marching the view's centre ray in
- * double-double precision (FractalMath::MarchReferenceRay) and its orbit is computed in double-double.
+ * Owns the perturbation reference. The reference point is found by marching the view's centre ray
+ * (FractalMath::MarchReferenceRay, in double-double once the zoom is deep) and its orbit is computed in
+ * double-double for the requested formula.
  * Regeneration runs on a worker thread so the renderer never waits, except when no usable reference
  * exists (first frame, formula change, or a teleport far beyond the old reference), where it runs inline
  * (~0.2-2 ms). Because the renderer recomputes (camera - C_ref) every frame in double-double, a slightly
@@ -77,9 +87,6 @@ public:
 
 	/** Latest published reference (may be null). */
 	TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> GetCurrent() const;
-
-	/** Drops the current reference so the next Update regenerates synchronously. */
-	void Invalidate();
 
 	/** Builds a reference synchronously (also used by the worker). */
 	static TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> Generate(const FFractalReferenceRequest& Request, uint64 Version);

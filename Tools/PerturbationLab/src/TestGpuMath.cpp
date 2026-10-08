@@ -131,14 +131,12 @@ static void TestStep(FVkContext& Ctx, double Power)
 	FVkBuffer In = Ctx.CreateBuffer((size_t)N * 64), Orb = Ctx.CreateBuffer(16), OA = Ctx.CreateBuffer((size_t)N * 16), OB = Ctx.CreateBuffer((size_t)N * 16);
 	CB.As<FLabParams>()->Count = N;
 	CB.As<FLabParams>()->Power = (float)Power;
-	FOrbitPointGPU* Packed = reinterpret_cast<FOrbitPointGPU*>(In.Mapped);
 	for (int I = 0; I < N; I++)
 	{
 		// reuse the CPU packer: input is the float position, i.e. the GPU reference Z~
 		FDVec3 Z((double)Cases[I].Z[0], (double)Cases[I].Z[1], (double)Cases[I].Z[2]);
-		FOrbitPointGPU P = PackOrbitPoint(Z, Power);
-		float* Dst = reinterpret_cast<float*>(&Packed[0]) + (size_t)I * 16;
-		std::memcpy(Dst, &P, 12 * sizeof(float)); // reference part (3 float4) only
+		float* Dst = In.As<float>() + (size_t)I * 16;
+		PackPowerRef(Z, Power, Dst); // reference block (3 float4)
 		Dst[12] = Cases[I].D[0];
 		Dst[13] = Cases[I].D[1];
 		Dst[14] = Cases[I].D[2];

@@ -1,0 +1,179 @@
+// Elementary functions for the perturbation shaders. Pure HLSL, no engine includes: shared by
+// PerturbationShader.usf in Unreal and compiled with DXC by Tools/PerturbationLab for testing.
+//
+// Hardware sin/cos/atan2/log are NOT accurate for tiny arguments (D3D only guarantees 8e-4 absolute error
+// for sin/cos), but perturbation needs relative accuracy for arguments down to denormals, so the
+// precision-critical functions are implemented here with polynomials.
+
+#pragma once
+
+static const float FP_PI = 3.14159265358979f;
+static const float FP_TWO_PI = 6.28318530717959f;
+static const float FP_HALF_PI = 1.57079632679490f;
+static const float FP_QUARTER_PI = 0.785398163397448f;
+static const float FP_TWO_OVER_PI = 0.636619772367581f;
+
+// ---------------------------------------------------------------------------------------------
+// Accurate elementary functions (no hardware transcendentals on precision-critical paths)
+// ---------------------------------------------------------------------------------------------
+
+// sin/cos with relative accuracy for tiny |x| and ~1e-7 absolute accuracy for |x| up to ~1e4.
+// Cody-Waite reduction by pi/2, minimax polynomials on [-pi/4, pi/4] (Cephes sinf/cosf).
+void FP_SinCos(float X, out float OutSin, out float OutCos)
+{
+	float K = round(X * FP_TWO_OVER_PI);
+	float R = X - K * 1.5703125f;
+	R = R - K * 4.837512969970703125e-4f;
+	R = R - K * 7.54978995489188216e-8f;
+	float R2 = R * R;
+	float SinR = R + R * R2 * (-1.6666654611e-1f + R2 * (8.3321608736e-3f + R2 * -1.9515295891e-4f));
+	float CosR = 1.0f - 0.5f * R2 + R2 * R2 * (4.166664568298827e-2f + R2 * (-1.388731625493765e-3f + R2 * 2.443315711809948e-5f));
+	int Q = ((int)K) & 3;
+	float S = ((Q & 1) != 0) ? CosR : SinR;
+	float C = ((Q & 1) != 0) ? SinR : CosR;
+	OutSin = ((Q & 2) != 0) ? -S : S;
+	OutCos = (((Q + 1) & 2) != 0) ? -C : C;
+}
+
+// atan(T) for T in [0, 1]: T * P(T^2), minimax in relative error (1.5e-8 in exact arithmetic,
+// ~1.5e-7 evaluated in float). A single polynomial avoids the second division of the usual
+// tan(pi/8) range reduction.
+float FP_AtanUnit(float T)
+{
+	float Z = T * T;
+	float P = 2.849885728e-03f;
+	P = P * Z - 1.606861316e-02f;
+	P = P * Z + 4.269149527e-02f;
+	P = P * Z - 7.504292578e-02f;
+	P = P * Z + 1.064093262e-01f;
+	P = P * Z - 1.420364380e-01f;
+	P = P * Z + 1.999261975e-01f;
+	P = P * Z - 3.333307207e-01f;
+	P = P * Z + 1.0f;
+	return T * P;
+}
+
+// atan2 with relative accuracy for small angles (|Y| << X). atan2(0, 0) = 0.
+float FP_Atan2(float Y, float X)
+{
+	float AX = abs(X);
+	float AY = abs(Y);
+	bool bSwap = AY > AX;
+	float Num = bSwap ? AX : AY;
+	float Den = bSwap ? AY : AX;
+	float A = FP_AtanUnit(Den > 0.0f ? Num / Den : 0.0f);
+	A = bSwap ? FP_HALF_PI - A : A;
+	A = (X < 0.0f) ? FP_PI - A : A;
+	return (Y < 0.0f) ? -A : A;
+}
+
+// log(1 + x) with relative accuracy for small |x|.
+float FP_Log1p(float X)
+{
+	if (abs(X) > 0.5f)
+	{
+		return log(1.0f + X);
+	}
+	// 2 atanh(t), t = x / (2 + x), |t| <= 1/3
+	float T = X / (2.0f + X);
+	float T2 = T * T;
+	float P = 0.333333333f + T2 * (0.2f + T2 * (0.142857143f + T2 * (0.111111111f + T2 * (0.0909090909f + T2 * (0.0769230769f + T2 * 0.0666666667f)))));
+	return 2.0f * T + 2.0f * T * T2 * P;
+}
+
+// exp(x) - 1 with relative accuracy for small |x| (Taylor series up to x^11 on |x| <= 1).
+float FP_Expm1(float X)
+{
+	if (abs(X) > 1.0f)
+	{
+		return exp(X) - 1.0f;
+	}
+	return X * (1.0f + X * (0.5f + X * (0.166666667f + X * (0.0416666667f + X * (0.00833333333f + X * (0.00138888889f
+		+ X * (1.98412698e-4f + X * (2.48015873e-5f + X * (2.75573192e-6f + X * (2.75573192e-7f + X * 2.50521084e-8f))))))))));
+}
+
+// Exact power of two s such that |V| * s is in [1, 2) (V finite, >= 0; returns 2^127 for V == 0).
+float FP_Pow2Normalizer(float V)
+{
+	return asfloat(0x7F000000u - (asuint(V) & 0x7F800000u));
+}
+
+// 1 / FP_Pow2Normalizer(V): the power of two with V's exponent (0 for V == 0 or denormal V).
+float FP_Pow2Denormalizer(float V)
+{
+	return asfloat(asuint(V) & 0x7F800000u);
+}
+
+// Integer power used for the trig-free paths, 0 for non-integer powers. Defining FP_STATIC_INTEGER_POWER
+// (e.g. as a shader permutation for the classic power 8) lets the compiler drop the general path and
+// unroll the binary powering loops.
+int FP_IntegerPower(float Power)
+{
+#ifdef FP_STATIC_INTEGER_POWER
+	return FP_STATIC_INTEGER_POWER;
+#else
+	return (Power == floor(Power) && Power >= 2.0f && Power <= 32.0f) ? (int)Power : 0;
+#endif
+}
+
+// (A + iB)^P for integer P >= 1 by binary powering (absolute accuracy, used for full evaluations).
+void FP_ComplexPowInt(float A, float B, int P, out float OutA, out float OutB)
+{
+	float RA = A;
+	float RB = B;
+	[loop]
+	for (int Bit = firstbithigh(P) - 1; Bit >= 0; --Bit)
+	{
+		float NA = RA * RA - RB * RB;
+		RB = 2.0f * RA * RB;
+		RA = NA;
+		if (((P >> Bit) & 1) != 0)
+		{
+			float MA = RA * A - RB * B;
+			RB = RA * B + RB * A;
+			RA = MA;
+		}
+	}
+	OutA = RA;
+	OutB = RB;
+}
+
+// A rotation e^{ia} stored as (V, S) = (1 - cos a, sin a). Raising it to the integer power P multiplies
+// the angle by P using only additions of non-negative terms (for |P a| < pi), so V and S keep relative
+// accuracy for tiny angles -- unlike cos/sin, where cos a - 1 would cancel.
+//   double:  S' = 2 S (1 - V),            V' = V (2 - V) + S^2
+//   add b:   S' = S cos b + cos a S_b,     V' = V + V_b - V V_b + S S_b
+void FP_VersSinPowInt(float V, float S, int P, out float OutV, out float OutS)
+{
+	float RV = V;
+	float RS = S;
+	[loop]
+	for (int Bit = firstbithigh(P) - 1; Bit >= 0; --Bit)
+	{
+		float NS = 2.0f * RS * (1.0f - RV);
+		RV = RV * (2.0f - RV) + RS * RS;
+		RS = NS;
+		if (((P >> Bit) & 1) != 0)
+		{
+			float MS = RS * (1.0f - V) + (1.0f - RV) * S;
+			RV = RV + V - RV * V + RS * S;
+			RS = MS;
+		}
+	}
+	OutV = RV;
+	OutS = RS;
+}
+
+// (V, S) of the angle whose cosine and sine are C and S, i.e. V = 1 - C without cancellation.
+float FP_VersineFromCosSin(float C, float S)
+{
+	return (C >= 0.0f) ? S * S / (1.0f + C) : 1.0f - C;
+}
+
+// Per-sample constants passed to the formula step functions (Shaders/Formula*.ush).
+struct FPFormulaArgs
+{
+	float Power;  // exponent (power maps) or scale factor (folding fractals)
+	int PowerInt; // FP_IntegerPower(Power): > 0 selects the trig-free integer paths
+	float Scale;  // fractal units per world unit; the running derivative is tracked as dr * Scale
+};

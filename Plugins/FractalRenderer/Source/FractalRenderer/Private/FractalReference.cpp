@@ -13,10 +13,7 @@ using FractalMath::FDDVec3;
 using FractalMath::FDVec3;
 using FractalMath::FReferenceMarchResult;
 using FractalMath::FReferenceMarchSettings;
-using FractalMath::GenerateReferenceOrbit;
-using FractalMath::MarchReferenceRay;
 using FractalMath::OffsetDD;
-using FractalMath::ReferenceEscapeRadius;
 using FractalMath::ToDoubleVec;
 
 namespace
@@ -26,6 +23,19 @@ namespace
 		const FDVec3 D = ToDoubleVec(A - B);
 		return FMath::Sqrt(D.X * D.X + D.Y * D.Y + D.Z * D.Z);
 	}
+}
+
+int32 ComputeIterationBudget(FractalMath::EFractalFormula Formula, double Power, int32 BaseIterations, double Bailout, double FootprintFractal)
+{
+	const int32 Base = FMath::Max(BaseIterations, 2);
+	const double Growth = FMath::Abs(Power);
+	if (FractalMath::FormulaFamily(Formula) != FractalMath::EFractalFamily::Folding || !(Growth > 1.01) || !(FootprintFractal > 0.0))
+	{
+		return Base;
+	}
+	const double Needed = FMath::Loge(FMath::Max(Bailout, 1.0) / FootprintFractal) / FMath::Loge(Growth) + 20.0;
+	const int32 Rounded = FMath::CeilToInt32(FMath::Clamp(Needed, 0.0, 1000.0) / 50.0) * 50;
+	return FMath::Clamp(Rounded, Base, 1000);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -75,12 +85,6 @@ TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> FFractalReferenceMa
 	return Current;
 }
 
-void FFractalReferenceManager::Invalidate()
-{
-	FScopeLock Lock(&Mutex);
-	Current.Reset();
-}
-
 void FFractalReferenceManager::Publish(const TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe>& Data)
 {
 	FScopeLock Lock(&Mutex);
@@ -97,7 +101,8 @@ FFractalReferenceManager::ENeed FFractalReferenceManager::EvaluateNeed(const FFr
 	{
 		return ENeed::Sync;
 	}
-	if (Ref->Power != Request.Power || Ref->MaxIterations != Request.MaxIterations || Ref->Bailout != Request.Bailout)
+	if (Ref->Formula != Request.Formula || Ref->Params.Power != Request.Params.Power
+		|| Ref->Params.MaxIterations != Request.Params.MaxIterations || Ref->Params.Bailout != Request.Params.Bailout)
 	{
 		return ENeed::Sync;
 	}
@@ -174,9 +179,7 @@ TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> FFractalReferenceMa
 	const double StartTime = FPlatformTime::Seconds();
 
 	FReferenceMarchSettings Settings;
-	Settings.Power = Request.Power;
-	Settings.MaxIterations = Request.MaxIterations;
-	Settings.Bailout = Request.Bailout;
+	Settings.Params = Request.Params;
 	Settings.MaxSteps = Request.MaxRaySteps;
 	Settings.MaxDistance = Request.MaxRayDistance;
 	Settings.PixelRadiusPerUnitDistance = Request.PixelRadiusPerUnitDistance;
@@ -186,14 +189,13 @@ TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> FFractalReferenceMa
 	// The march only decides *where* along the centre ray the reference goes, so double precision is
 	// enough while the zoom is shallow (and ~10x faster). The orbit itself is always double-double.
 	const FReferenceMarchResult March = Request.Scale > 1.0e-9
-		? MarchReferenceRay(ToDoubleVec(Request.Camera), Dir, Request.Scale, Settings)
-		: MarchReferenceRay(Request.Camera, Dir, Request.Scale, Settings);
+		? FractalMath::MarchReferenceRay(Request.Formula, ToDoubleVec(Request.Camera), Dir, Request.Scale, Settings)
+		: FractalMath::MarchReferenceRay(Request.Formula, Request.Camera, Dir, Request.Scale, Settings);
 
 	TSharedPtr<FFractalReferenceData, ESPMode::ThreadSafe> Data = MakeShared<FFractalReferenceData, ESPMode::ThreadSafe>();
 	Data->Center = OffsetDD(Request.Camera, Dir, March.ReferenceDistance * Request.Scale);
-	Data->Power = Request.Power;
-	Data->MaxIterations = Request.MaxIterations;
-	Data->Bailout = Request.Bailout;
+	Data->Formula = Request.Formula;
+	Data->Params = Request.Params;
 	Data->YardstickFractal = March.ReferenceDistance * Request.Scale;
 	Data->CameraDistanceEstimate = March.CameraDistanceEstimate;
 	Data->ScaleAtCreation = Request.Scale;
@@ -201,14 +203,16 @@ TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> FFractalReferenceMa
 	Data->bInside = March.bReferenceInside;
 	Data->Version = Version;
 
-	const int32 MaxIterations = FMath::Max(Request.MaxIterations, 2);
-	Data->Orbit.SetNumUninitialized(MaxIterations + 1);
 	// The orbit also carries the linear series skip (Jacobian products + validity radii), which lets each
 	// sample start iterating where its perturbation stops being linear.
-	const int32 Length = GenerateReferenceOrbit(Data->Center, Request.Power, MaxIterations,
-		ReferenceEscapeRadius(Request.Bailout, Request.Power), Data->Orbit.GetData(),
-		static_cast<FDDVec3*>(nullptr), Request.Bailout, FractalMath::DefaultSeriesTolerance);
-	Data->Orbit.SetNum(Length);
+	const int32 Stride = FractalMath::FormulaOrbitStride(Request.Formula);
+	Data->OrbitStride = Stride;
+	Data->Orbit.SetNumUninitialized((FMath::Max(Request.Params.MaxIterations, 1) + 1) * Stride);
+	static_assert(sizeof(FVector4f) == 4 * sizeof(float), "orbit points are packed float4s");
+	const int32 Length = FractalMath::GenerateReferenceOrbit(Request.Formula, Data->Center, Request.Params,
+		reinterpret_cast<float*>(Data->Orbit.GetData()), FractalMath::DefaultSeriesTolerance);
+	Data->OrbitLength = Length;
+	Data->Orbit.SetNum(Length * Stride);
 	Data->GenerationMilliseconds = (FPlatformTime::Seconds() - StartTime) * 1000.0;
 
 	UE_LOG(LogFractalReference, Verbose, TEXT("Reference v%llu: %d orbit points, hit=%d inside=%d, t=%.4g world, DE(camera)=%.4g world, %.2f ms"),

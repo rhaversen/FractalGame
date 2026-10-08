@@ -16,7 +16,6 @@ using FractalMath::BuildRayBasis;
 using FractalMath::FDDVec3;
 using FractalMath::FDVec3;
 using FractalMath::FFractalRayBasis;
-using FractalMath::FOrbitPointGPU;
 using FractalMath::InvertMatrix4;
 using FractalMath::ToDoubleVec;
 
@@ -62,12 +61,6 @@ void FFractalSceneViewExtension::SetCameraMapping(const FFractalCameraMapping& I
 	CameraMapping = InMapping;
 }
 
-FFractalRenderStats FFractalSceneViewExtension::GetRenderStats() const
-{
-	FScopeLock Lock(&StateMutex);
-	return RenderStats;
-}
-
 FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
@@ -84,7 +77,7 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 	}
 
 	const FScreenPassTextureSlice SceneColorSlice = Inputs.GetInput(EPostProcessMaterialInput::SceneColor);
-	if (!Params.bEnabled || !SceneColorSlice.IsValid())
+	if (!Params.bEnabled || !SceneColorSlice.IsValid() || Params.FractalType >= EFractalType::Count)
 	{
 		return FScreenPassTexture(SceneColorSlice);
 	}
@@ -134,23 +127,33 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 	const FFractalRayBasis Basis = BuildRayBasis(InvProjection, ViewToWorld, OutputExtent.X, OutputExtent.Y);
 
 	// --- Perturbation reference (centre-ray march + double-double orbit) ---
+	const FractalMath::EFractalFormula Formula = ToFractalFormula(Params.FractalType);
+	// The ray limit is a fractal-space distance; in world units it grows as the zoom deepens.
+	const double MaxRayDistanceWorld = FMath::Min(static_cast<double>(Params.MaxRayDistance) / Mapping.Scale, 1.0e36);
 	FFractalReferenceRequest Request;
 	Request.Camera = CameraFractal;
 	Request.Forward = FVector3d(InvView.M[2][0], InvView.M[2][1], InvView.M[2][2]).GetSafeNormal();
 	Request.Scale = Mapping.Scale;
 	Request.PixelRadiusPerUnitDistance = Basis.PixelRadiusPerUnitDistance;
-	Request.Power = Params.FractalPower;
-	Request.MaxIterations = FMath::Max(Params.MaxIterations, 2);
-	Request.Bailout = Params.BailoutRadius;
+	Request.Formula = Formula;
+	Request.Params.Power = Params.FractalPower;
+	Request.Params.Bailout = Params.BailoutRadius;
 	Request.MaxRaySteps = Params.MaxRaySteps;
-	Request.MaxRayDistance = Params.MaxRayDistance;
+	Request.MaxRayDistance = MaxRayDistanceWorld;
+	{
+		// Footprint of a pixel at the distance of the visible surface (from the current reference, if any).
+		const TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> Previous = ReferenceManager.GetCurrent();
+		const double SurfaceDistance = FMath::Max(Previous.IsValid() ? Previous->YardstickFractal : 0.0, Mapping.Scale);
+		Request.Params.MaxIterations = ComputeIterationBudget(Formula, Params.FractalPower, Params.MaxIterations, Params.BailoutRadius,
+			SurfaceDistance * Basis.PixelRadiusPerUnitDistance);
+	}
 	const TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> Reference = ReferenceManager.Update(Request);
 
 	const FDVec3 CameraFractalD = ToDoubleVec(CameraFractal);
 	FVector3f CameraOffset = FVector3f::ZeroVector;
 	FVector3f ReferenceCenter = ToVector3f(CameraFractalD.X, CameraFractalD.Y, CameraFractalD.Z);
 	int32 OrbitLength = 0;
-	if (Reference.IsValid() && Reference->Orbit.Num() >= 2)
+	if (Reference.IsValid() && Reference->Formula == Formula && Reference->OrbitLength >= 2)
 	{
 		// (camera - C_ref) in double-double, then expressed in world units: this is the only place where the
 		// absolute fractal position enters, and it is exact regardless of how deep the camera is.
@@ -158,38 +161,23 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 		CameraOffset = ToVector3f(Offset.X / Mapping.Scale, Offset.Y / Mapping.Scale, Offset.Z / Mapping.Scale);
 		const FDVec3 RefCenter = ToDoubleVec(Reference->Center);
 		ReferenceCenter = ToVector3f(RefCenter.X, RefCenter.Y, RefCenter.Z);
-		OrbitLength = Reference->Orbit.Num();
-	}
-
-	{
-		FScopeLock Lock(&StateMutex);
-		if (Reference.IsValid())
-		{
-			RenderStats.CameraDistanceEstimate = Reference->CameraDistanceEstimate * Reference->ScaleAtCreation / Mapping.Scale;
-			RenderStats.ReferenceDistance = FVector3d(CameraOffset.X, CameraOffset.Y, CameraOffset.Z).Length();
-			RenderStats.OrbitLength = OrbitLength;
-			RenderStats.bReferenceHit = Reference->bHit;
-			RenderStats.LastGenerationMilliseconds = Reference->GenerationMilliseconds;
-		}
+		OrbitLength = Reference->OrbitLength;
 	}
 
 	// --- GPU resources ---
-	// The orbit is a few KB (6 x float4 per iteration); uploading it every frame is cheaper than tracking
-	// buffer lifetimes across frames.
-	constexpr int32 Float4PerPoint = sizeof(FOrbitPointGPU) / sizeof(FVector4f);
-	static_assert(sizeof(FOrbitPointGPU) == Float4PerPoint * sizeof(FVector4f), "orbit points are whole float4s");
+	// The orbit is a few KB (4-7 float4 per iteration); uploading it every frame is cheaper than tracking
+	// buffer lifetimes across frames and views.
 	FRDGBufferRef OrbitBuffer;
 	if (OrbitLength > 0)
 	{
 		OrbitBuffer = CreateStructuredBuffer(GraphBuilder, TEXT("FractalReferenceOrbit"), static_cast<uint32>(sizeof(FVector4f)),
-			static_cast<uint32>(OrbitLength * Float4PerPoint), Reference->Orbit.GetData(), static_cast<uint64>(OrbitLength) * sizeof(FOrbitPointGPU));
+			static_cast<uint32>(Reference->Orbit.Num()), Reference->Orbit.GetData(), static_cast<uint64>(Reference->Orbit.Num()) * sizeof(FVector4f));
 	}
 	else
 	{
 		// Unused by the shader when OrbitLength == 0, but the SRV must exist.
-		const FOrbitPointGPU Empty = FractalMath::PackOrbitPoint(FDVec3(0.0, 0.0, 0.0), 8.0);
-		OrbitBuffer = CreateStructuredBuffer(GraphBuilder, TEXT("FractalReferenceOrbit"), static_cast<uint32>(sizeof(FVector4f)),
-			static_cast<uint32>(Float4PerPoint), &Empty, static_cast<uint64>(sizeof(Empty)));
+		const FVector4f Empty(0.0f, 0.0f, 0.0f, 0.0f);
+		OrbitBuffer = CreateStructuredBuffer(GraphBuilder, TEXT("FractalReferenceOrbit"), static_cast<uint32>(sizeof(FVector4f)), 1u, &Empty, static_cast<uint64>(sizeof(FVector4f)));
 	}
 
 	FRDGTextureDesc OutputDesc = SceneColor.Texture->Desc;
@@ -213,10 +201,8 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 	PassParameters->DirectFootprint = Params.DirectEvaluationFootprint;
 	PassParameters->OrbitLength = OrbitLength;
 	PassParameters->MaxRaySteps = Params.MaxRaySteps;
-	PassParameters->MaxIterations = Params.MaxIterations;
-	PassParameters->MinIterations = Params.MinIterations;
-	PassParameters->MaxRayDistance = Params.MaxRayDistance;
-	PassParameters->ConvergenceFactor = Params.ConvergenceFactor;
+	PassParameters->MaxIterations = Request.Params.MaxIterations;
+	PassParameters->MaxRayDistance = static_cast<float>(MaxRayDistanceWorld);
 	PassParameters->FractalPower = Params.FractalPower;
 	PassParameters->BailoutRadius = Params.BailoutRadius;
 	PassParameters->BackgroundInvExtent = FVector2f(1.0f / TextureExtent.X, 1.0f / TextureExtent.Y);
@@ -226,7 +212,8 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 	PassParameters->OutputTexture = GraphBuilder.CreateUAV(OutputTexture);
 
 	FPerturbationComputeShader::FPermutationDomain Permutation;
-	Permutation.Set<FPerturbationComputeShader::FStaticPower8>(Params.FractalPower == 8.0f);
+	Permutation.Set<FPerturbationComputeShader::FFractalTypeDim>(static_cast<int32>(Params.FractalType));
+	Permutation.Set<FPerturbationComputeShader::FStaticPower8>(Params.FractalType == EFractalType::Mandelbulb && Params.FractalPower == 8.0f);
 	TShaderMapRef<FPerturbationComputeShader> ComputeShader(GetGlobalShaderMap(View.GetFeatureLevel()), Permutation);
 	if (!ComputeShader.IsValid())
 	{

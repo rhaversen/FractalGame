@@ -1,10 +1,12 @@
-// Test kernels for FractalPerturbation.ush. Each entry point is compiled separately by the lab.
-#include "FractalPerturbation.ush"
+// Test kernels. FuncsMain / StepMain test the shared maths (FractalMathCommon.ush, FractalPowerMap.ush);
+// DEMain is compiled once per formula (-D FP_FRACTAL_TYPE=n) and tests the full perturbed DE.
+#include "FractalDE.ush"
+#include "FractalPowerMap.ush"
 
 struct FLabParams
 {
-	float4 Params0;   // x = Power, y = Scale, z = Bailout, w = ConvergenceEpsilon
-	int4 IParams0;    // x = Count, y = OrbitLength, z = MaxIterations, w = MinIterations
+	float4 Params0;   // x = Power, y = Scale, z = Bailout
+	int4 IParams0;    // x = Count, y = OrbitLength, z = MaxIterations
 	float4 Params1;   // xyz = reference center (float, for the naive path)
 	float4 Pad;
 };
@@ -28,13 +30,13 @@ void FuncsMain(uint3 Id : SV_DispatchThreadID)
 	OutB[I] = float4(FP_Log1p(In.w), FP_Expm1(In.w), sin(In.x), atan2(In.y, In.z));
 }
 
-// Single perturbation step test: InA[4*i..4*i+2] = packed reference point, InA[4*i+3].xyz = D
+// Single power-map perturbation step test: InA[4*i..4*i+2] = packed reference block, InA[4*i+3].xyz = D
 [numthreads(64, 1, 1)]
 void StepMain(uint3 Id : SV_DispatchThreadID)
 {
 	int I = (int)Id.x;
 	if (I >= P.IParams0.x) return;
-	FPOrbitPoint Ref = FP_DecodeOrbitPoint(InA[4 * I], InA[4 * I + 1], InA[4 * I + 2]);
+	FPPowerRef Ref = FP_DecodePowerRef(InA[4 * I], InA[4 * I + 1], InA[4 * I + 2]);
 	float3 D = InA[4 * I + 3].xyz;
 	float3 W = Ref.Z + D;
 	float RW = length(W);
@@ -54,8 +56,9 @@ void DEMain(uint3 Id : SV_DispatchThreadID)
 	int I = (int)Id.x;
 	if (I >= P.IParams0.x) return;
 	float3 DC = InA[I].xyz;
-	FPDEResult R = FP_PerturbedDE(ReferenceOrbit, P.IParams0.y, DC, P.Params0.y, P.Params0.x, P.IParams0.z, P.Params0.z, P.IParams0.w, P.Params0.w);
+	FPFormulaArgs Args = FP_MakeFormulaArgs(P.Params0.x, P.Params0.y);
+	FPDEResult R = FP_PerturbedDE(ReferenceOrbit, P.IParams0.y, DC, Args, P.IParams0.z, P.Params0.z);
 	OutA[I] = float4(R.Distance, (float)R.Iterations, R.bEscaped ? 1.0f : 0.0f, (float)R.Rebases);
-	FPDEResult RN = FP_DirectDE(P.Params1.xyz + DC, P.Params0.y, P.Params0.x, P.IParams0.z, P.Params0.z);
-	OutB[I] = float4(RN.Distance, (float)RN.Iterations, RN.bEscaped ? 1.0f : 0.0f, 0.0f);
+	FPDEResult RN = FP_DirectDE(P.Params1.xyz + DC, Args, P.IParams0.z, P.Params0.z);
+	OutB[I] = float4(RN.Distance, (float)RN.Iterations, RN.bEscaped ? 1.0f : 0.0f, (float)R.Skipped);
 }

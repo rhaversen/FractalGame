@@ -1,5 +1,5 @@
 // Micro-benchmarks of a single iteration (pure ALU, no orbit loads, no divergence).
-#include "FractalPerturbation.ush"
+#include "FractalPowerMap.ush"
 struct FBenchParams { float4 Ref0; float4 Ref1; float4 Ref2; float4 D0; float4 Misc; };
 [[vk::binding(0, 0)]] cbuffer BenchCB : register(b0) { FBenchParams P; };
 [[vk::binding(1, 0)]] RWStructuredBuffer<float4> OutA : register(u0);
@@ -12,7 +12,7 @@ struct FBenchParams { float4 Ref0; float4 Ref1; float4 Ref2; float4 D0; float4 M
 [numthreads(64, 1, 1)]
 void BenchPerturbed(uint3 Id : SV_DispatchThreadID)
 {
-	FPOrbitPoint Ref = FP_DecodeOrbitPoint(P.Ref0, P.Ref1, P.Ref2);
+	FPPowerRef Ref = FP_DecodePowerRef(P.Ref0, P.Ref1, P.Ref2);
 	float3 D = P.D0.xyz * (1.0f + 1e-3f * (float)Id.x);
 	float3 DC = D;
 	float Power = P.Misc.x;

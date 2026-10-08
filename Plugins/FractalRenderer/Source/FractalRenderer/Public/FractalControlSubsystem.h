@@ -6,14 +6,37 @@
 #include "FractalReference.h"
 #include "FractalControlSubsystem.generated.h"
 
+/** Distance from a point to the fractal surface (CPU estimate, same formula and precision as the renderer). */
+USTRUCT(BlueprintType)
+struct FRACTALRENDERER_API FFractalDistanceInfo
+{
+	GENERATED_BODY()
+
+	/** Distance estimate in world units (0 inside the set). */
+	UPROPERTY(BlueprintReadOnly, Category = "Fractal")
+	double WorldDistance = 0.0;
+
+	/** The same distance in fractal units. */
+	UPROPERTY(BlueprintReadOnly, Category = "Fractal")
+	double FractalDistance = 0.0;
+
+	/** False when the orbit never escaped (the point is inside a power fractal). */
+	UPROPERTY(BlueprintReadOnly, Category = "Fractal")
+	bool bEscaped = false;
+};
+
 /**
  * Game Instance Subsystem for controlling fractal rendering.
  *
  * World space and fractal space are related by Fractal = Origin + (World - Anchor) * Scale, with Origin in
- * double-double precision. Gameplay keeps moving the pawn in ordinary world units; zooming changes Scale
- * around the camera (so nothing jumps) and therefore also scales how far the pawn travels in the fractal.
- * The renderer perturbs every pixel from a high-precision reference ray, so the camera can go down to a
- * scale of ~1e-27 fractal units per world unit.
+ * double-double precision (FFractalCameraMapping). Two kinds of change are offered:
+ *  - SetUserScale: the original renderer's "scale multiplier". The fractal grows or shrinks around its own
+ *    origin, i.e. the camera's fractal position is scaled about the fractal origin.
+ *  - ZoomAroundCamera: rescales world units around the camera without changing what is seen. Gameplay uses
+ *    it to keep world-space distances comfortable while the player flies ever closer to the surface, which
+ *    is how the renderer reaches scales of ~1e-30 fractal units per world unit.
+ * The renderer perturbs every pixel from a high-precision reference ray, so precision only depends on the
+ * visible scale, not on how deep the camera is.
  */
 UCLASS()
 class FRACTALRENDERER_API UFractalControlSubsystem : public UGameInstanceSubsystem
@@ -21,10 +44,12 @@ class FRACTALRENDERER_API UFractalControlSubsystem : public UGameInstanceSubsyst
 	GENERATED_BODY()
 
 public:
-	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
-	virtual void Deinitialize() override;
+	/** Smallest supported fractal units per world unit (float pixel offsets on the GPU underflow below ~1e-38). */
+	static constexpr double MinFractalScale = 1.0e-30;
 
-	// --- Rendering tunables ---
+	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+
+	// --- Rendering ---
 
 	UFUNCTION(BlueprintCallable, Category = "Fractal")
 	void SetFractalParameters(const FFractalParameter& InParams);
@@ -32,68 +57,85 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Fractal")
 	const FFractalParameter& GetFractalParameters() const { return FractalParameters; }
 
-	UFUNCTION(BlueprintCallable, Category = "Fractal|Controls")
+	UFUNCTION(BlueprintCallable, Category = "Fractal")
 	void SetEnabled(bool bInEnabled);
 
-	UFUNCTION(BlueprintCallable, Category = "Fractal|Controls")
-	void SetMaxRaySteps(int32 InMaxRaySteps);
+	UFUNCTION(BlueprintCallable, Category = "Fractal|Formula")
+	void SetFractalType(EFractalType InType);
 
-	UFUNCTION(BlueprintCallable, Category = "Fractal|Controls")
-	void SetMaxRayDistance(float InMaxRayDistance);
+	UFUNCTION(BlueprintPure, Category = "Fractal|Formula")
+	EFractalType GetFractalType() const { return FractalParameters.FractalType; }
 
-	UFUNCTION(BlueprintCallable, Category = "Fractal|Controls")
-	void SetMaxIterations(int32 InMaxIterations);
+	/** Exponent of the power fractals, scale factor of the folding fractals. */
+	UFUNCTION(BlueprintCallable, Category = "Fractal|Formula")
+	void SetFractalPower(float InPower);
 
-	UFUNCTION(BlueprintCallable, Category = "Fractal|Controls")
-	void SetBailoutRadius(float InBailoutRadius);
+	UFUNCTION(BlueprintPure, Category = "Fractal|Formula")
+	float GetFractalPower() const { return FractalParameters.FractalPower; }
 
-	UFUNCTION(BlueprintCallable, Category = "Fractal|Controls")
-	void SetMinIterations(int32 InMinIterations);
+	/** Interactive power / scale ranges and defaults of a fractal (same values as the original renderer). */
+	static const FractalMath::FFractalPreset& GetPreset(EFractalType Type);
 
-	UFUNCTION(BlueprintCallable, Category = "Fractal|Controls")
-	void SetConvergenceFactor(float InConvergenceFactor);
-
-	UFUNCTION(BlueprintCallable, Category = "Fractal|Controls")
-	void SetFractalPower(float InFractalPower);
+	UFUNCTION(BlueprintPure, Category = "Fractal|Formula")
+	static FString GetFractalDisplayName(EFractalType Type);
 
 	// --- World <-> fractal mapping ---
 
-	/** Fractal units per world unit. Smaller = deeper zoom. Changed around the camera position. */
+	/**
+	 * Fractal units per world unit before any camera zoom (the original "scale multiplier"). Changing it
+	 * scales the camera's fractal position about the fractal origin, so the fractal appears to grow or shrink
+	 * around its centre; the zoom factor is kept.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Fractal|Camera")
-	void SetFractalScale(double InScale);
+	void SetUserScale(double InUserScale);
 
+	UFUNCTION(BlueprintPure, Category = "Fractal|Camera")
+	double GetUserScale() const { return UserScale; }
+
+	/** Current fractal units per world unit (= UserScale * ZoomFactor). */
 	UFUNCTION(BlueprintPure, Category = "Fractal|Camera")
 	double GetFractalScale() const { return CameraMapping.Scale; }
 
-	/** Multiplies the scale by Factor around the camera (Factor < 1 zooms in). */
-	UFUNCTION(BlueprintCallable, Category = "Fractal|Camera")
-	void ZoomAroundCamera(double Factor);
+	/** Scale / UserScale: 1 when not zoomed, 1e-20 at a 1e20x magnification. */
+	UFUNCTION(BlueprintPure, Category = "Fractal|Camera")
+	double GetZoomFactor() const { return CameraMapping.Scale / UserScale; }
 
-	/** Moves the fractal so that the camera sits at FractalPosition (double precision). */
+	/**
+	 * Multiplies the scale by Factor around the camera (Factor < 1 zooms in). The view does not change: the
+	 * camera keeps its fractal position, only world distances (and with them movement speeds) are rescaled.
+	 * The scale is kept within [MinFractalScale, UserScale]. Returns the factor actually applied.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Fractal|Camera")
-	void SetCameraFractalPosition(FVector FractalPosition);
+	double ZoomAroundCamera(double Factor);
+
+	/** Unzoomed mapping with the fractal origin at FractalOriginWorld (Scale = UserScale). */
+	UFUNCTION(BlueprintCallable, Category = "Fractal|Camera")
+	void ResetView(FVector FractalOriginWorld);
+
+	// --- Queries ---
+
+	/** High-precision distance estimate from a world position to the fractal surface. */
+	UFUNCTION(BlueprintCallable, Category = "Fractal|Camera")
+	FFractalDistanceInfo GetDistanceAtWorld(FVector WorldPosition) const;
 
 	/** Camera position in fractal space, rounded to double. */
 	UFUNCTION(BlueprintPure, Category = "Fractal|Camera")
 	FVector GetCameraFractalPosition() const;
 
-	/** Distance from the camera to the fractal surface in world units (from the latest reference march). */
-	UFUNCTION(BlueprintPure, Category = "Fractal|Camera")
-	double GetCameraDistanceEstimate() const;
+	/** Camera position in fractal space at full (double-double) precision. */
+	FractalMath::FDDVec3 GetCameraFractalPositionDD() const;
 
-	/** Restores the default mapping (world origin at fractal origin, scale 1e-5). */
-	UFUNCTION(BlueprintCallable, Category = "Fractal|Camera")
-	void ResetCameraMapping();
+	/** Fixed-point text of a double-double value with the given number of decimals (0..30). */
+	static FString FormatCoordinate(const FractalMath::FDD& Value, int32 Decimals);
 
-	/** Full-precision access for C++. */
 	const FFractalCameraMapping& GetCameraMapping() const { return CameraMapping; }
-	void SetCameraMapping(const FFractalCameraMapping& InMapping);
 
 private:
 	UPROPERTY()
 	FFractalParameter FractalParameters;
 
 	FFractalCameraMapping CameraMapping;
+	double UserScale = 1.0e-3;
 
 	/** Current camera location in world space (falls back to the mapping anchor). */
 	FVector3d GetCameraWorldLocation() const;

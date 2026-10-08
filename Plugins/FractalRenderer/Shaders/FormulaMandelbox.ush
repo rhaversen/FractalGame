@@ -1,0 +1,46 @@
+// Mandelbox: z_1 = c, z_{n+1} = s * SphereFold(BoxFold(z_n)) + c, dr' = |s| k dr + 1
+// (CPU: FractalMath/Formulas/MandelboxFormula.h).
+
+#pragma once
+
+#include "FractalFolds.ush"
+
+#define FP_STATE float3
+#define FP_STATE_DIM 3
+#define FP_PAYLOAD_FLOAT4 3
+#define FP_FORMULA_ADDS_C 1
+#define FP_FORMULA_FOLDING 1
+
+FP_STATE FP_FormulaStart(float3 Position)
+{
+	return Position;
+}
+
+FP_STATE FP_FormulaLoadState(StructuredBuffer<float4> Orbit, int Base)
+{
+	return Orbit[Base].xyz;
+}
+
+void FP_FormulaPerturbedStep(StructuredBuffer<float4> Orbit, int Base, inout FP_STATE D, FP_STATE W, float RW, float InvRW,
+	float3 DC, inout float DRS, FPFormulaArgs Args)
+{
+	float4 P0 = Orbit[Base];     // Z~, 1/4 - |B|^2
+	float4 P1 = Orbit[Base + 1]; // 1 - Z, 1 - |B|^2
+	float4 P2 = Orbit[Base + 2]; // 1 + Z, |B|^2
+	float3 B;
+	float3 Delta;
+	Delta.x = FP_PerturbedBoxFold(P0.x, P1.x, P2.x, D.x, B.x);
+	Delta.y = FP_PerturbedBoxFold(P0.y, P1.y, P2.y, D.y, B.y);
+	Delta.z = FP_PerturbedBoxFold(P0.z, P1.z, P2.z, D.z, B.z);
+	float K = FP_PerturbedSphereFold(B, Delta, float3(P0.w, P1.w, P2.w));
+	D = Args.Power * Delta + DC;
+	DRS = DRS * K * abs(Args.Power) + Args.Scale;
+}
+
+void FP_FormulaDirectStep(inout FP_STATE Z, float RW, float InvRW, float3 C, inout float DRS, FPFormulaArgs Args)
+{
+	float3 B = clamp(Z, -1.0f, 1.0f) * 2.0f - Z;
+	float K = FP_SphereFoldFactor(dot(B, B));
+	Z = B * (K * Args.Power) + C;
+	DRS = DRS * K * abs(Args.Power) + Args.Scale;
+}

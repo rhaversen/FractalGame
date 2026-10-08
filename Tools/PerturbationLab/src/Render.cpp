@@ -1,10 +1,12 @@
-// Renders Mandelbulb views at increasing zoom with
+// Renders views of each formula at increasing zoom (scenes in src/scenes/*.inc) with
 //   (a) the GPU perturbation shader (FractalRender.ush via DXC/Vulkan),
 //   (b) the same shader forced to plain float at absolute coordinates (what the old renderer did),
 //   (c) a CPU double-double ground truth running the identical march,
 // using the production CPU path (MarchReferenceRay + GenerateReferenceOrbit + BuildRayBasis) for (a).
-// Writes PPM images to out/images/ and prints accuracy and timing statistics.
+// Writes PPM images to out/images/<formula>/ and prints accuracy and timing statistics.
+// Usage: render_lab [width height truth(0/1) formula|all scene]
 #include "LabCommon.h"
+#include "FormulaScenes.h"
 #include "FractalMath/FractalCamera.h"
 #include <thread>
 #include <atomic>
@@ -21,13 +23,9 @@ using QV = TFractalVec3<quad>;
 
 struct FRenderSettings
 {
-	double Power = 8.0;
-	int MaxIterations = 150;
-	double Bailout = 10.0;
+	FFormulaParams Params;        // MaxIterations 150, Bailout 10, Power from the formula's lab data
 	int MaxRaySteps = 200;
 	double MaxRayDistance = 60.0; // world units
-	double ConvergenceFactor = 0.0;
-	int MinIterations = 0;
 };
 
 struct FLabRenderParams
@@ -55,7 +53,7 @@ static void ShadeCPU(int Steps, int TotalIter, int Status, const FRenderSettings
 	Lerp(B, C3, Sat((T - 0.4) / 0.6), C);
 	if (Steps > 0)
 	{
-		double IF = Sat(TotalIter / std::max((double)RS.MaxIterations * std::max(Steps, 1), 1.0));
+		double IF = Sat(TotalIter / std::max((double)RS.Params.MaxIterations * std::max(Steps, 1), 1.0));
 		double G1[3] = {0.3, 0.5, 0.6}, G2[3] = {0.3, 0.9, 0.7}, D[3];
 		if (IF > 0.1) { double G = (IF - 0.1) / 0.9; Lerp(C, G1, G * G, D); for (int I = 0; I < 3; I++) C[I] = D[I]; }
 		if (IF > 0.9) { double G = (IF - 0.9) / 0.1; Lerp(C, G2, std::pow(G, 5.0), D); for (int I = 0; I < 3; I++) C[I] = D[I]; }
@@ -77,32 +75,22 @@ static void WritePPM(const std::string& Path, const std::vector<FPixel>& Img, in
 	std::fclose(F);
 }
 
-struct FScene
-{
-	const char* Name;
-	double Start[3];
-	double Dir[3];
-	double Zoom;        // fractal units per world unit
-	double CamDistance; // world units from the surface point
-	double YawOffset;   // degrees the camera looks away from the surface point
-	double PitchOffset;
-	double Roll;
-};
 
+template <typename F>
 static bool QMarchToSurface(const QV& Start, const double Dir[3], quad Tol, QV& Out, const FRenderSettings& RS)
 {
 	auto At = [&](quad T) { return QV(Start.X + (quad)Dir[0] * T, Start.Y + (quad)Dir[1] * T, Start.Z + (quad)Dir[2] * T); };
 	quad T = 0;
 	for (int Step = 0; Step < 20000; Step++)
 	{
-		FDistanceEstimate D = DistanceEstimate(At(T), RS.Power, RS.MaxIterations, RS.Bailout);
+		FDistanceEstimate D = DistanceEstimate<F, quad>(At(T), RS.Params);
 		if (!D.bEscaped)
 		{
 			quad Hi = T, Lo = T - 1e-3Q;
 			for (int K = 0; K < 300 && Hi - Lo > Tol; K++)
 			{
 				quad Mid = 0.5Q * (Lo + Hi);
-				if (DistanceEstimate(At(Mid), RS.Power, RS.MaxIterations, RS.Bailout).bEscaped) Lo = Mid; else Hi = Mid;
+				if (DistanceEstimate<F, quad>(At(Mid), RS.Params).bEscaped) Lo = Mid; else Hi = Mid;
 			}
 			Out = At(Lo);
 			return true;
@@ -113,55 +101,29 @@ static bool QMarchToSurface(const QV& Start, const double Dir[3], quad Tol, QV& 
 	return false;
 }
 
-int main(int Argc, char** Argv)
+template <typename F>
+static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H, bool bTruth, double DirectFootprint, const char* SceneFilter)
 {
-	const int W = (Argc > 1) ? std::atoi(Argv[1]) : 192;
-	const int H = (Argc > 2) ? std::atoi(Argv[2]) : 120;
-	const bool bTruth = (Argc > 3) ? std::atoi(Argv[3]) != 0 : true;
-	// Hybrid switch: plain float DE once a sample's pixel footprint exceeds this many fractal units.
-	const double DirectFootprint = getenv("LAB_DIRECT_FOOTPRINT") ? std::atof(getenv("LAB_DIRECT_FOOTPRINT")) : 1e-4;
 	FRenderSettings RS;
-	if (getenv("LAB_CONVERGENCE"))
-	{
-		// GPU uses the convergence early-out; the CPU ground truth always iterates to escape.
-		RS.ConvergenceFactor = std::atof(getenv("LAB_CONVERGENCE"));
-		RS.MinIterations = 5;
-	}
-	mkdir(LAB_OUT_DIR "/images", 0755);
-
-	FVkContext Ctx;
-	FVkKernel KPert(Ctx, LabSpv("RenderMain"), "RenderMain", {true, false, false, false});
-	FVkKernel KNaive(Ctx, LabSpv("RenderNaive"), "RenderMain", {true, false, false, false});
-	std::printf("device: %s, %dx%d, ground truth %s, hybrid direct footprint %.1e\n", Ctx.DeviceName.c_str(), W, H, bTruth ? "on" : "off", DirectFootprint);
-
-	std::vector<FScene> Scenes = {
-		{"z1e-1", {2.0, 0.3, 0.2}, {-1, -0.12, -0.07}, 1e-1, 6.0, 8, 4, 10},
-		{"z1e-4", {2.0, 0.3, 0.2}, {-1, -0.12, -0.07}, 1e-4, 3.0, 12, -6, 25},
-		{"z1e-6", {0.6, 0.8, 1.6}, {-0.3, -0.45, -0.85}, 1e-6, 3.0, 10, 8, -15},
-		{"z1e-9", {-1.3, 1.2, -1.1}, {0.6, -0.55, 0.5}, 1e-9, 3.0, -12, 6, 40},
-		{"z1e-12", {2.0, 0.3, 0.2}, {-1, -0.12, -0.07}, 1e-12, 3.0, 15, -5, 0},
-		{"z1e-15", {0.3, -1.6, -1.5}, {-0.15, 0.7, 0.7}, 1e-15, 3.0, -8, 10, 70},
-		{"z1e-18", {0.6, 0.8, 1.6}, {-0.3, -0.45, -0.85}, 1e-18, 3.0, 6, -9, -30},
-		{"z1e-21", {-1.3, 1.2, -1.1}, {0.6, -0.55, 0.5}, 1e-21, 3.0, 9, 7, 5},
-		{"z1e-24", {2.0, 0.3, 0.2}, {-1, -0.12, -0.07}, 1e-24, 3.0, -10, -8, 15},
-		{"z1e-27", {0.3, -1.6, -1.5}, {-0.15, 0.7, 0.7}, 1e-27, 3.0, 12, 4, -45},
-	};
-	if (Argc > 4)
-	{
-		std::vector<FScene> Pick;
-		for (auto& S : Scenes) if (std::string(S.Name) == Argv[4]) Pick.push_back(S);
-		Scenes = Pick;
-	}
+	RS.Params.Power = getenv("LAB_POWER") ? std::atof(getenv("LAB_POWER")) : Lab.Power;
+	const int Index = static_cast<int>(F::Type);
+	FVkKernel KPert(Ctx, LabSpv("RenderMain_T" + std::to_string(Index)), "RenderMain", {true, false, false, false});
+	FVkKernel KNaive(Ctx, LabSpv("RenderNaive_T" + std::to_string(Index)), "RenderMain", {true, false, false, false});
+	const std::string ImageDir = std::string(LAB_OUT_DIR) + "/images/" + GetFractalName(F::Type);
+	mkdir(ImageDir.c_str(), 0755);
+	std::printf("\n##### %s (power/scale %g) #####\n", GetFractalName(F::Type), RS.Params.Power);
+	std::vector<FRenderScene> Scenes;
+	for (const FRenderScene& Sc : Lab.Scenes) if (!SceneFilter || std::string(Sc.Name) == SceneFilter) Scenes.push_back(Sc);
 
 	std::printf("%-7s | %8s %8s %6s | %9s %9s %9s | %8s %8s | %8s %8s %7s\n", "scene", "ref t", "inside", "orbit", "pert ms", "naive ms", "cpu ms", "status==", "depth ok", "n.status", "n.depth", "rebuild");
-	for (const FScene& Sc : Scenes)
+	for (const FRenderScene& Sc : Scenes)
 	{
 		// --- locate the surface and place the camera (fractal space, high precision) ---
 		double D[3] = {Sc.Dir[0], Sc.Dir[1], Sc.Dir[2]};
 		double L = std::sqrt(D[0] * D[0] + D[1] * D[1] + D[2] * D[2]);
 		for (double& V : D) V /= L;
 		QV Surface;
-		if (!QMarchToSurface(QV((quad)Sc.Start[0], (quad)Sc.Start[1], (quad)Sc.Start[2]), D, (quad)(Sc.Zoom * 1e-4), Surface, RS))
+		if (!QMarchToSurface<F>(QV((quad)Sc.Start[0], (quad)Sc.Start[1], (quad)Sc.Start[2]), D, (quad)(Sc.Zoom * 1e-4), Surface, RS))
 		{
 			std::printf("%s: surface not found\n", Sc.Name);
 			continue;
@@ -183,22 +145,23 @@ int main(int Argc, char** Argv)
 		// --- production CPU path: reference ray march + reference orbit ---
 		auto TRef0 = std::chrono::steady_clock::now();
 		FReferenceMarchSettings MS;
-		MS.Power = RS.Power; MS.MaxIterations = RS.MaxIterations; MS.Bailout = RS.Bailout;
+		MS.Params = RS.Params;
 		MS.MaxSteps = RS.MaxRaySteps; MS.MaxDistance = RS.MaxRayDistance; MS.PixelRadiusPerUnitDistance = Basis.PixelRadiusPerUnitDistance;
 		double Fwd[3] = {Rot[0][0], Rot[0][1], Rot[0][2]};
-		FReferenceMarchResult RM = MarchReferenceRay(Cam, Fwd, S, MS);
+		// (the plugin marches in double while Scale > 1e-9; dd is always exact)
+		FReferenceMarchResult RM = MarchReferenceRay<F, FDD>(Cam, Fwd, S, MS);
 		FDDVec3 CRef = OffsetDD(Cam, Fwd, RM.ReferenceDistance * S);
-		std::vector<FOrbitPointGPU> Orbit(RS.MaxIterations + 1);
+		std::vector<float> Orbit((size_t)(RS.Params.MaxIterations + 1) * FormulaOrbitStride<F>() * 4);
 		const double SeriesTol = getenv("LAB_SERIES_TOL") ? std::atof(getenv("LAB_SERIES_TOL")) : DefaultSeriesTolerance;
-		int OrbitLen = GenerateReferenceOrbit(CRef, RS.Power, RS.MaxIterations, ReferenceEscapeRadius(RS.Bailout, RS.Power), Orbit.data(), (FDDVec3*)nullptr, RS.Bailout, SeriesTol);
+		int OrbitLen = GenerateReferenceOrbit<F, FDD>(CRef, RS.Params, Orbit.data(), nullptr, SeriesTol);
 		double RefMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - TRef0).count();
 		FDDVec3 Off = Cam - CRef;
 
 		// --- GPU renders ---
 		FVkBuffer CB = Ctx.CreateBuffer(sizeof(FLabRenderParams), true);
-		FVkBuffer Orb = Ctx.CreateBuffer(Orbit.size() * sizeof(FOrbitPointGPU));
+		FVkBuffer Orb = Ctx.CreateBuffer(Orbit.size() * sizeof(float));
 		FVkBuffer OC = Ctx.CreateBuffer((size_t)W * H * 16), OD = Ctx.CreateBuffer((size_t)W * H * 16);
-		std::memcpy(Orb.Mapped, Orbit.data(), Orbit.size() * sizeof(FOrbitPointGPU));
+		std::memcpy(Orb.Mapped, Orbit.data(), Orbit.size() * sizeof(float));
 		FLabRenderParams* P = CB.As<FLabRenderParams>();
 		for (int I = 0; I < 3; I++)
 		{
@@ -212,12 +175,12 @@ int main(int Argc, char** Argv)
 		P->ReferenceCenter[0] = CRef.X.ToFloat(); P->ReferenceCenter[1] = CRef.Y.ToFloat(); P->ReferenceCenter[2] = CRef.Z.ToFloat();
 		P->RayDir00[3] = (float)Basis.PixelRadiusPerUnitDistance;
 		P->RayDirDX[3] = (float)S;
-		P->RayDirDY[3] = (float)RS.Power;
-		P->CameraOffset[3] = (float)RS.Bailout;
-		P->ReferenceCenter[3] = (float)RS.ConvergenceFactor;
+		P->RayDirDY[3] = (float)RS.Params.Power;
+		P->CameraOffset[3] = (float)RS.Params.Bailout;
+		P->ReferenceCenter[3] = 0.0f;
 		P->Misc[0] = (float)RS.MaxRayDistance;
 		P->Misc[1] = (float)DirectFootprint;
-		P->IParams[0] = RS.MaxIterations; P->IParams[1] = RS.MinIterations; P->IParams[2] = RS.MaxRaySteps; P->IParams[3] = OrbitLen;
+		P->IParams[0] = RS.Params.MaxIterations; P->IParams[1] = 0; P->IParams[2] = RS.MaxRaySteps; P->IParams[3] = OrbitLen;
 		P->IParams2[0] = W; P->IParams2[1] = H;
 
 		auto Grab = [&](std::vector<FPixel>& Img) {
@@ -260,7 +223,7 @@ int main(int Argc, char** Argv)
 					{
 						if (T >= RS.MaxRayDistance) { Status = 2; break; }
 						Steps++;
-						FDistanceEstimate DE = DistanceEstimate(OffsetDD(Cam, Dir, T * S), RS.Power, RS.MaxIterations, RS.Bailout);
+						FDistanceEstimate DE = DistanceEstimate<F, FDD>(OffsetDD(Cam, Dir, T * S), RS.Params);
 						Total += DE.Iterations;
 						double PixelRadius = T * Basis.PixelRadiusPerUnitDistance;
 						double DEW = DE.Distance / S;
@@ -292,7 +255,7 @@ int main(int Argc, char** Argv)
 		};
 		int SP = 0, DP = 0, SN = 0, DN = 0;
 		if (bTruth) { Compare(ImgP, SP, DP); Compare(ImgN, SN, DN); }
-		std::string Base = std::string(LAB_OUT_DIR) + "/images/" + Sc.Name;
+		std::string Base = ImageDir + "/" + Sc.Name;
 		WritePPM(Base + "_perturbation.ppm", ImgP, W, H);
 		WritePPM(Base + "_naive.ppm", ImgN, W, H);
 		if (bTruth) WritePPM(Base + "_truth.ppm", ImgT, W, H);
@@ -302,6 +265,36 @@ int main(int Argc, char** Argv)
 			1e6 * PertMs / std::max(SumIter(ImgP) - SumSkipped(ImgP), 1.0), 1e6 * NaiveMs / SumIter(ImgN), SumIter(ImgP) / N);
 		if (getenv("LAB_STEPS")) std::printf("          StepsPerPx %.1f  ItersPerDE %.1f  executed per DE %.1f (series skip saved %.0f%%)\n", SumSteps(ImgP) / N, SumIter(ImgP) / SumSteps(ImgP),
 			(SumIter(ImgP) - SumSkipped(ImgP)) / SumSteps(ImgP), 100.0 * SumSkipped(ImgP) / std::max(SumIter(ImgP), 1.0));
+	}
+}
+
+int main(int Argc, char** Argv)
+{
+	const int W = (Argc > 1) ? std::atoi(Argv[1]) : 192;
+	const int H = (Argc > 2) ? std::atoi(Argv[2]) : 120;
+	const bool bTruth = (Argc > 3) ? std::atoi(Argv[3]) != 0 : true;
+	const char* SceneFilter = (Argc > 5) ? Argv[5] : nullptr;
+	// Hybrid switch: plain float DE once a sample's pixel footprint exceeds this many fractal units.
+	const double DirectFootprint = getenv("LAB_DIRECT_FOOTPRINT") ? std::atof(getenv("LAB_DIRECT_FOOTPRINT")) : 1e-4;
+	mkdir(LAB_OUT_DIR "/images", 0755);
+	FVkContext Ctx;
+	std::printf("device: %s, %dx%d, ground truth %s, hybrid direct footprint %.1e\n", Ctx.DeviceName.c_str(), W, H, bTruth ? "on" : "off", DirectFootprint);
+	std::vector<EFractalFormula> Formulas;
+	if (Argc > 4 && std::string(Argv[4]) != "all")
+	{
+		EFractalFormula F;
+		if (!ParseFormula(Argv[4], F)) { std::printf("unknown formula %s\n", Argv[4]); return 2; }
+		Formulas.push_back(F);
+	}
+	else
+	{
+		for (int I = 0; I < FractalFormulaCount; I++) Formulas.push_back(static_cast<EFractalFormula>(I));
+	}
+	for (EFractalFormula F : Formulas)
+	{
+		const FFormulaLab Lab = GetFormulaLab(F);
+		if (Lab.Scenes.empty()) continue;
+		VisitFormula(F, [&](auto Formula) { RenderFormula<decltype(Formula)>(Ctx, Lab, W, H, bTruth, DirectFootprint, SceneFilter); });
 	}
 	return 0;
 }

@@ -15,8 +15,7 @@ int main()
 	const int Threads = 64 * 2048, Iters = 256;
 	FVkBuffer CB = Ctx.CreateBuffer(80, true), Out = Ctx.CreateBuffer((size_t)Threads * 16);
 	float* P = CB.As<float>();
-	FOrbitPointGPU Ref = PackOrbitPoint(FDVec3(0.31, -0.52, 0.41), 8.0);
-	std::memcpy(P, &Ref, sizeof(Ref));
+	PackPowerRef(FDVec3(0.31, -0.52, 0.41), 8.0, P);
 	P[12] = 1e-9f; P[13] = -2e-9f; P[14] = 3e-9f; P[15] = 0;
 	P[16] = 8.0f; P[17] = 0.5f; // power, chain damping
 	std::printf("device %s, %d threads x %d iterations\n", Ctx.DeviceName.c_str(), Threads, Iters);

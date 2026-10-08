@@ -5,7 +5,10 @@
 #include "GameFramework/PlayerController.h"
 #include "Camera/PlayerCameraManager.h"
 
-DEFINE_LOG_CATEGORY_STATIC(LogFractalControl, Log, All);
+// Targeted using-declarations (not a using-directive: Unreal's unity builds share one translation unit).
+using FractalMath::FDD;
+using FractalMath::FDDVec3;
+using FractalMath::FDVec3;
 
 namespace
 {
@@ -22,14 +25,13 @@ namespace
 void UFractalControlSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
-	UE_LOG(LogFractalControl, Log, TEXT("FractalControlSubsystem: Initialized"));
+	const FractalMath::FFractalPreset& Preset = GetPreset(FractalParameters.FractalType);
+	FractalParameters.FractalPower = Preset.DefaultPower;
+	UserScale = Preset.DefaultScale;
+	CameraMapping = FFractalCameraMapping();
+	CameraMapping.Scale = UserScale;
 	PushParameters();
 	PushCameraMapping();
-}
-
-void UFractalControlSubsystem::Deinitialize()
-{
-	Super::Deinitialize();
 }
 
 void UFractalControlSubsystem::SetFractalParameters(const FFractalParameter& InParams)
@@ -44,101 +46,164 @@ void UFractalControlSubsystem::SetEnabled(bool bInEnabled)
 	PushParameters();
 }
 
-void UFractalControlSubsystem::SetMaxRaySteps(int32 InMaxRaySteps)
+void UFractalControlSubsystem::SetFractalType(EFractalType InType)
 {
-	FractalParameters.MaxRaySteps = InMaxRaySteps;
-	PushParameters();
-}
-
-void UFractalControlSubsystem::SetMaxRayDistance(float InMaxRayDistance)
-{
-	FractalParameters.MaxRayDistance = InMaxRayDistance;
-	PushParameters();
-}
-
-void UFractalControlSubsystem::SetMaxIterations(int32 InMaxIterations)
-{
-	FractalParameters.MaxIterations = InMaxIterations;
-	PushParameters();
-}
-
-void UFractalControlSubsystem::SetBailoutRadius(float InBailoutRadius)
-{
-	FractalParameters.BailoutRadius = InBailoutRadius;
-	PushParameters();
-}
-
-void UFractalControlSubsystem::SetMinIterations(int32 InMinIterations)
-{
-	FractalParameters.MinIterations = InMinIterations;
-	PushParameters();
-}
-
-void UFractalControlSubsystem::SetConvergenceFactor(float InConvergenceFactor)
-{
-	FractalParameters.ConvergenceFactor = InConvergenceFactor;
-	PushParameters();
-}
-
-void UFractalControlSubsystem::SetFractalPower(float InFractalPower)
-{
-	// The reference manager notices the new power and rebuilds the reference orbit before the next frame.
-	FractalParameters.FractalPower = InFractalPower;
-	PushParameters();
-}
-
-void UFractalControlSubsystem::SetFractalScale(double InScale)
-{
-	if (InScale > 0.0 && CameraMapping.Scale > 0.0)
+	if (InType == EFractalType::Count)
 	{
-		ZoomAroundCamera(InScale / CameraMapping.Scale);
+		return;
 	}
+	// The reference manager notices the new formula and rebuilds the reference before the next frame.
+	FractalParameters.FractalType = InType;
+	PushParameters();
 }
 
-void UFractalControlSubsystem::ZoomAroundCamera(double Factor)
+void UFractalControlSubsystem::SetFractalPower(float InPower)
+{
+	FractalParameters.FractalPower = InPower;
+	PushParameters();
+}
+
+const FractalMath::FFractalPreset& UFractalControlSubsystem::GetPreset(EFractalType Type)
+{
+	return FractalMath::GetFractalPreset(ToFractalFormula(Type));
+}
+
+FString UFractalControlSubsystem::GetFractalDisplayName(EFractalType Type)
+{
+	return FString(UTF8_TO_TCHAR(FractalMath::GetFractalName(ToFractalFormula(Type))));
+}
+
+void UFractalControlSubsystem::SetUserScale(double InUserScale)
+{
+	if (!(InUserScale > 0.0) || !FMath::IsFinite(InUserScale) || InUserScale == UserScale)
+	{
+		return;
+	}
+	// Scale the camera's fractal position about the fractal origin (the camera stays where it is in the world).
+	const double Factor = InUserScale / UserScale;
+	const FVector3d Camera = GetCameraWorldLocation();
+	const FDDVec3 CameraFractal = CameraMapping.WorldToFractal(Camera);
+	CameraMapping.Origin = FDDVec3(CameraFractal.X * Factor, CameraFractal.Y * Factor, CameraFractal.Z * Factor);
+	CameraMapping.Anchor = Camera;
+	CameraMapping.Scale = FMath::Max(CameraMapping.Scale * Factor, MinFractalScale);
+	UserScale = InUserScale;
+	PushCameraMapping();
+}
+
+double UFractalControlSubsystem::ZoomAroundCamera(double Factor)
 {
 	if (!(Factor > 0.0) || !FMath::IsFinite(Factor))
 	{
-		return;
+		return 1.0;
 	}
-	// Float deltas on the GPU underflow below ~1e-38; keep a margin for pixel offsets and derivatives.
-	const double NewScale = CameraMapping.Scale * Factor;
-	if (NewScale < 1.0e-30 || NewScale > 1.0e3)
+	const double NewScale = FMath::Clamp(CameraMapping.Scale * Factor, MinFractalScale, UserScale);
+	const double Applied = NewScale / CameraMapping.Scale;
+	if (Applied == 1.0)
 	{
-		return;
+		return 1.0;
 	}
-	CameraMapping.ZoomAround(GetCameraWorldLocation(), Factor);
+	CameraMapping.ZoomAround(GetCameraWorldLocation(), Applied);
+	PushCameraMapping();
+	return Applied;
+}
+
+void UFractalControlSubsystem::ResetView(FVector FractalOriginWorld)
+{
+	CameraMapping = FFractalCameraMapping();
+	CameraMapping.Anchor = FractalOriginWorld;
+	CameraMapping.Scale = UserScale;
 	PushCameraMapping();
 }
 
-void UFractalControlSubsystem::SetCameraFractalPosition(FVector FractalPosition)
+FFractalDistanceInfo UFractalControlSubsystem::GetDistanceAtWorld(FVector WorldPosition) const
 {
-	CameraMapping.SetFractalPositionOf(GetCameraWorldLocation(), FractalMath::FDDVec3(FractalPosition.X, FractalPosition.Y, FractalPosition.Z));
-	PushCameraMapping();
+	const FractalMath::EFractalFormula Formula = ToFractalFormula(FractalParameters.FractalType);
+	FractalMath::FFormulaParams Params;
+	Params.Power = FractalParameters.FractalPower;
+	Params.Bailout = FractalParameters.BailoutRadius;
+	// Enough iterations to resolve distances down to about one world unit.
+	Params.MaxIterations = ComputeIterationBudget(Formula, Params.Power, FractalParameters.MaxIterations, Params.Bailout, CameraMapping.Scale);
+
+	const FDDVec3 Position = CameraMapping.WorldToFractal(WorldPosition);
+	// Double resolves world-unit distances while a world unit is >= 1e-9 fractal units; deeper needs double-double.
+	const FractalMath::FDistanceEstimate DE = CameraMapping.Scale > 1.0e-9
+		? FractalMath::DistanceEstimate(Formula, FractalMath::ToDoubleVec(Position), Params)
+		: FractalMath::DistanceEstimate(Formula, Position, Params);
+
+	FFractalDistanceInfo Info;
+	Info.FractalDistance = DE.Distance;
+	Info.WorldDistance = DE.Distance / CameraMapping.Scale;
+	Info.bEscaped = DE.bEscaped;
+	return Info;
 }
 
 FVector UFractalControlSubsystem::GetCameraFractalPosition() const
 {
-	const FractalMath::FDVec3 P = FractalMath::ToDoubleVec(CameraMapping.WorldToFractal(GetCameraWorldLocation()));
+	const FDVec3 P = FractalMath::ToDoubleVec(GetCameraFractalPositionDD());
 	return FVector(P.X, P.Y, P.Z);
 }
 
-double UFractalControlSubsystem::GetCameraDistanceEstimate() const
+FDDVec3 UFractalControlSubsystem::GetCameraFractalPositionDD() const
 {
-	TSharedPtr<FFractalSceneViewExtension, ESPMode::ThreadSafe> Extension = GetFractalViewExtension();
-	return Extension.IsValid() ? Extension->GetRenderStats().CameraDistanceEstimate : 0.0;
+	return CameraMapping.WorldToFractal(GetCameraWorldLocation());
 }
 
-void UFractalControlSubsystem::ResetCameraMapping()
+FString UFractalControlSubsystem::FormatCoordinate(const FDD& Value, int32 Decimals)
 {
-	CameraMapping = FFractalCameraMapping();
-	PushCameraMapping();
-}
+	Decimals = FMath::Clamp(Decimals, 0, 30);
+	const bool bNegative = Value.Hi < 0.0;
+	FDD A = bNegative ? -Value : Value;
 
-void UFractalControlSubsystem::SetCameraMapping(const FFractalCameraMapping& InMapping)
-{
-	CameraMapping = InMapping;
-	PushCameraMapping();
+	// Integer part, then the fraction digit by digit (exact in double-double: each step only multiplies by 10).
+	double IntPart = FMath::FloorToDouble(A.Hi);
+	FDD Fraction = A - FDD(IntPart);
+	if (Fraction.Hi < 0.0)
+	{
+		IntPart -= 1.0;
+		Fraction = Fraction + FDD(1.0);
+	}
+	TArray<int32> Digits;
+	Digits.Reserve(Decimals + 1);
+	for (int32 I = 0; I <= Decimals; ++I)
+	{
+		Fraction = Fraction * 10.0;
+		int32 Digit = FMath::Clamp(static_cast<int32>(FMath::FloorToDouble(Fraction.Hi)), 0, 9);
+		Fraction = Fraction - FDD(static_cast<double>(Digit));
+		if (Fraction.Hi < 0.0 && Digit > 0)
+		{
+			--Digit;
+			Fraction = Fraction + FDD(1.0);
+		}
+		Digits.Add(Digit);
+	}
+
+	// Round half up on the extra digit.
+	bool bCarry = Digits.Last() >= 5;
+	Digits.Pop();
+	for (int32 I = Digits.Num() - 1; I >= 0 && bCarry; --I)
+	{
+		Digits[I] += 1;
+		bCarry = Digits[I] == 10;
+		if (bCarry)
+		{
+			Digits[I] = 0;
+		}
+	}
+	if (bCarry)
+	{
+		IntPart += 1.0;
+	}
+
+	FString Result = FString::Printf(TEXT("%s%.0f"), bNegative ? TEXT("-") : TEXT(""), IntPart);
+	if (Decimals > 0)
+	{
+		Result += TEXT(".");
+		for (const int32 Digit : Digits)
+		{
+			Result.AppendChar(static_cast<TCHAR>(TEXT('0') + Digit));
+		}
+	}
+	return Result;
 }
 
 FVector3d UFractalControlSubsystem::GetCameraWorldLocation() const

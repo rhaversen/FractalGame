@@ -7,8 +7,8 @@
 
 using quad = __float128;
 
-// Scalar overloads so the FractalMath templates (MandelbulbPower, DistanceEstimate, ...) also run in quad.
-// They must be declared before MandelbulbReference.h is included (no ADL for builtin types).
+// Scalar overloads so the FractalMath templates (formulas, DistanceEstimate, ...) also run in quad.
+// They must be declared before FractalScalar.h is included (no ADL for builtin types).
 namespace FractalMath
 {
 inline double RToDouble(quad A) { return (double)A; }
@@ -17,6 +17,7 @@ inline quad RAtan2(quad Y, quad X) { return atan2q(Y, X); }
 inline void RSinCos(quad A, quad& S, quad& C) { S = sinq(A); C = cosq(A); }
 inline quad RPow(quad A, double P) { return A > 0 ? powq(A, (quad)P) : (quad)0; }
 inline quad RLog(quad A) { return logq(A); }
+inline quad RAbs(quad A) { return A < 0 ? -A : A; }
 }
 
 inline quad ToQuad(const FractalMath::FDD& A) { return (quad)A.Hi + (quad)A.Lo; }

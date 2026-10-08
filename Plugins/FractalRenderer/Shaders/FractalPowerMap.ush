@@ -1,0 +1,243 @@
+// Mandelbulb power map g_p and its exact perturbation, shared by the power-map formulas
+// (Mandelbulb, Burning Ship, Julia Set). Pure HLSL.
+//
+// With W = Z + d the update g_p(Z + d) - g_p(Z) is evaluated WITHOUT forming g_p(Z + d) and g_p(Z)
+// separately (that would cancel all digits once |d| << |Z|). Instead the spherical coordinates of W are
+// expressed relative to Z:
+//     dr     = (2 Z.d + d.d) / (|Z+d| + |Z|)
+//     drho   = (2 (X dx + Y dy) + dx^2 + dy^2) / (rho_w + rho)
+//     dphi   = atan2(X dy - Y dx, X wx + Y wy)                     (exact angle between (X,Y) and (wx,wy))
+//     dtheta = atan2(Z drho - rho dz, rho rho_w + Z wz)            (exact angle in the meridian plane)
+//     (r/R)^p - 1 = expm1(p log1p(dr / R))
+// and the output difference uses sum-to-product identities, e.g.
+//     sin(T + dT) - sin(T) = 2 cos(T + dT/2) sin(dT/2).
+// All of these are exact identities, so the result is correct for any d (small or large); each term
+// only carries float *relative* error.
+
+#pragma once
+
+#include "FractalMathCommon.ush"
+
+// Reference block of FractalMath::PackPowerRef (3 float4).
+struct FPPowerRef
+{
+	float3 Z;     // float-rounded reference Z~_m
+	float R;      // |Z~_m|
+	float Rho;    // sqrt(X^2 + Y^2)
+	float RPow;   // |Z~_m|^p
+	float Phi;    // atan2(Y, X), 0 on the polar axis
+	float InvR;   // 1 / |Z~_m| (0 for Z~_m = 0)
+	float SinPT;  // sin(p theta)
+	float CosPT;  // cos(p theta)
+	float SinPP;  // sin(p phi)
+	float CosPP;  // cos(p phi)
+};
+
+FPPowerRef FP_DecodePowerRef(float4 A, float4 B, float4 C)
+{
+	FPPowerRef P;
+	P.Z = A.xyz;
+	P.R = A.w;
+	P.Rho = B.x;
+	P.RPow = B.y;
+	P.Phi = B.z;
+	P.InvR = B.w;
+	P.SinPT = C.x;
+	P.CosPT = C.y;
+	P.SinPP = C.z;
+	P.CosPP = C.w;
+	return P;
+}
+
+// Power reference block starting at float4 index Base.
+FPPowerRef FP_LoadPowerRef(StructuredBuffer<float4> Orbit, int Base)
+{
+	return FP_DecodePowerRef(Orbit[Base], Orbit[Base + 1], Orbit[Base + 2]);
+}
+
+
+// g_p(W) evaluated directly, |W| = RW and 1/|W| = InvRW given. Returns |W|^(p-1) in OutRWPowM1.
+// Integer powers use (z + i rho)^p and (x + i y)^p (no transcendental functions), others use trig.
+float3 FP_MandelbulbPower(float3 W, float RW, float InvRW, float Power, int PowerInt, out float OutRWPowM1)
+{
+	if (PowerInt > 0)
+	{
+		float MaxXY = max(abs(W.x), abs(W.y));
+		float XYScale = FP_Pow2Normalizer(MaxXY);
+		float SWX = W.x * XYScale;
+		float SWY = W.y * XYScale;
+		float SRho2 = SWX * SWX + SWY * SWY;
+		float InvSRho = (SRho2 > 0.0f) ? rsqrt(SRho2) : 0.0f;
+		float RhoW = SRho2 * InvSRho * FP_Pow2Denormalizer(MaxXY);
+		float CT, ST, CP, SP;
+		FP_ComplexPowInt(W.z * InvRW, RhoW * InvRW, PowerInt, CT, ST);
+		FP_ComplexPowInt((SRho2 > 0.0f) ? SWX * InvSRho : 1.0f, SWY * InvSRho, PowerInt, CP, SP);
+		float RWPowM1 = 1.0f;
+		float Dummy = 0.0f;
+		if (PowerInt > 1)
+		{
+			FP_ComplexPowInt(RW, 0.0f, PowerInt - 1, RWPowM1, Dummy);
+		}
+		OutRWPowM1 = RWPowM1;
+		float RWPow = RWPowM1 * RW;
+		return RWPow * float3(ST * CP, ST * SP, CT);
+	}
+
+	float Rho = sqrt(W.x * W.x + W.y * W.y);
+	float Theta = FP_Atan2(Rho, W.z);
+	float Phi = FP_Atan2(W.y, W.x);
+	float RWPow = (RW > 0.0f) ? exp2(Power * log2(RW)) : 0.0f;
+	OutRWPowM1 = RWPow * InvRW;
+	float ST, CT, SP, CP;
+	FP_SinCos(Power * Theta, ST, CT);
+	FP_SinCos(Power * Phi, SP, CP);
+	return RWPow * float3(ST * CP, ST * SP, CT);
+}
+
+// g_p(Z~ + D) - g_p(Z~) for the reference point Ref, with W = Z~ + D, RW = |W|, InvRW = 1/|W|.
+// PowerInt is FP_IntegerPower(Power). Returns |W|^(p-1) in OutRWPowM1 (for the running derivative).
+float3 FP_PerturbedPowerDelta(FPPowerRef Ref, float3 D, float3 W, float RW, float InvRW, float Power, int PowerInt, out float OutRWPowM1)
+{
+	// The reference is negligible next to the full point (after a rebase Ref = 0): evaluate directly.
+	// Here |g(W)| dominates |g(Z~)|, so the plain difference has no cancellation.
+	if (Ref.R <= 0.5f * RW)
+	{
+		float3 GW = FP_MandelbulbPower(W, RW, InvRW, Power, PowerInt, OutRWPowM1);
+		float3 GRef = Ref.RPow * float3(Ref.SinPT * Ref.CosPP, Ref.SinPT * Ref.SinPP, Ref.CosPT);
+		return GW - GRef;
+	}
+
+	float ZZ = Ref.Z.z;
+
+	// Radial factor u = (r/R)^p - 1 with s = dr/R, dr computed without cancellation (s >= -1/2 here).
+	float S = (2.0f * dot(Ref.Z, D) + dot(D, D)) / (RW + Ref.R) * Ref.InvR;
+	float U;
+	float OnePlusU;
+	if (PowerInt > 0)
+	{
+		// (1+s)^p - 1 by binary powering on A = (1+s)^k - 1, B = (1+s)^k:
+		//   k -> 2k:   A' = A (A + 2),     B' = B^2
+		//   k -> k+1:  A' = A (1+s) + s,   B' = B (1+s)
+		// All terms share the sign of s (s >= -1/2), so there is no cancellation and no log/exp.
+		float Base = 1.0f + S;
+		float A = S;
+		float B = Base;
+		[loop]
+		for (int Bit = firstbithigh(PowerInt) - 1; Bit >= 0; --Bit)
+		{
+			A = A * (A + 2.0f);
+			B = B * B;
+			if (((PowerInt >> Bit) & 1) != 0)
+			{
+				A = A * Base + S;
+				B = B * Base;
+			}
+		}
+		U = A;
+		OnePlusU = B;
+	}
+	else
+	{
+		U = FP_Expm1(Power * FP_Log1p(S));
+		OnePlusU = 1.0f + U;
+	}
+
+	// xy-plane quantities are rescaled by an exact power of two so that products of small components
+	// (orbits passing close to the polar axis at deep zoom) never underflow.
+	float MaxXY = max(max(abs(Ref.Z.x), abs(Ref.Z.y)), max(abs(W.x), abs(W.y)));
+	float XYScale = FP_Pow2Normalizer(MaxXY);
+	float InvXYScale = FP_Pow2Denormalizer(MaxXY);
+	float SX = Ref.Z.x * XYScale;
+	float SY = Ref.Z.y * XYScale;
+	float SDX = D.x * XYScale;
+	float SDY = D.y * XYScale;
+	float SWX = W.x * XYScale;
+	float SWY = W.y * XYScale;
+	float SRho = Ref.Rho * XYScale;
+	float SRhoW = sqrt(SWX * SWX + SWY * SWY);
+	float RhoW = SRhoW * InvXYScale;
+
+	// Azimuth difference: exact angle between (X, Y) and (wx, wy). On the axis phi_ref := 0, i.e. (1, 0).
+	bool bOnAxis = Ref.Rho <= 0.0f;
+	float UX = bOnAxis ? 1.0f : SX;
+	float UY = bOnAxis ? 0.0f : SY;
+	float CrossP = UX * SDY - UY * SDX;
+	float DotP = UX * SWX + UY * SWY;
+
+	// rho_w - rho = (rho_w^2 - rho^2) / (rho_w + rho) evaluated without cancellation.
+	float SDRho = ((2.0f * SX + SDX) * SDX + (2.0f * SY + SDY) * SDY) / max(SRhoW + SRho, 1.0e-30f);
+	float DRho = SDRho * InvXYScale;
+	// Polar difference: angle between (Z, rho) and (wz, rho_w) in the meridian half-plane.
+	float CrossT = ZZ * DRho - Ref.Rho * D.z;
+	float DotT = Ref.Rho * RhoW + ZZ * W.z;
+
+	if (PowerInt > 0)
+	{
+		// Trig-free: (1 - cos, sin) of dtheta and dphi from normalised cross/dot products (the meridian
+		// vectors have lengths |Z~| and |W|), multiplied by p with FP_VersSinPowInt, then
+		//   sin(T + dT) - sin T = cos T sin dT - sin T vers dT,  cos(T + dT) - cos T = -sin T sin dT - cos T vers dT
+		float NormT = Ref.InvR * InvRW;
+		float SinDT = CrossT * NormT;
+		float CosDT = DotT * NormT;
+		float VT, ST;
+		FP_VersSinPowInt(FP_VersineFromCosSin(CosDT, SinDT), SinDT, PowerInt, VT, ST);
+
+		float SRhoU2 = UX * UX + UY * UY;
+		float NormP = (SRhoW > 0.0f) ? rsqrt(SRhoU2) / SRhoW : 0.0f;
+		float SinDP = CrossP * NormP;
+		float CosDP = (SRhoW > 0.0f) ? DotP * NormP : 1.0f;
+		float VP, SP;
+		FP_VersSinPowInt(FP_VersineFromCosSin(CosDP, SinDP), SinDP, PowerInt, VP, SP);
+
+		float DSinT = Ref.CosPT * ST - Ref.SinPT * VT;
+		float DCosT = -Ref.SinPT * ST - Ref.CosPT * VT;
+		float DSinP = Ref.CosPP * SP - Ref.SinPP * VP;
+		float DCosP = -Ref.SinPP * SP - Ref.CosPP * VP;
+		float SinTW = Ref.SinPT + DSinT;
+		float CosTW = Ref.CosPT + DCosT;
+		float SinPW = Ref.SinPP + DSinP;
+		float CosPW = Ref.CosPP + DCosP;
+		float3 FWI = float3(SinTW * CosPW, SinTW * SinPW, CosTW);
+		float3 DFI = float3(DSinT * CosPW + Ref.SinPT * DCosP, DSinT * SinPW + Ref.SinPT * DSinP, DCosT);
+		OutRWPowM1 = Ref.RPow * OnePlusU * InvRW;
+		return Ref.RPow * (U * FWI + DFI);
+	}
+
+	float DPhi = FP_Atan2(CrossP, DotP);
+	// Non-integer powers: keep phi_ref + dphi inside (-pi, pi] like atan2 does, which reproduces the
+	// formula's seam on the -x half-plane. For integer powers the result is invariant under dphi += 2pi,
+	// and wrapping would turn a small dphi into ~2pi and destroy the relative accuracy of sin(p dphi / 2).
+	if (PowerInt == 0)
+	{
+		float PhiW = Ref.Phi + DPhi;
+		DPhi += (PhiW > FP_PI) ? -FP_TWO_PI : ((PhiW <= -FP_PI) ? FP_TWO_PI : 0.0f);
+	}
+
+	float DTheta = FP_Atan2(CrossT, DotT);
+
+	// Half-angle rotations (sum-to-product).
+	float SA, CA, SB, CB;
+	FP_SinCos(0.5f * Power * DTheta, SA, CA);
+	FP_SinCos(0.5f * Power * DPhi, SB, CB);
+	float SinTMid = Ref.SinPT * CA + Ref.CosPT * SA; // sin(p theta + p dtheta / 2)
+	float CosTMid = Ref.CosPT * CA - Ref.SinPT * SA;
+	float SinPMid = Ref.SinPP * CB + Ref.CosPP * SB; // sin(p phi + p dphi / 2)
+	float CosPMid = Ref.CosPP * CB - Ref.SinPP * SB;
+
+	float DSinT = 2.0f * CosTMid * SA;   // sin(T') - sin(T)
+	float DCosT = -2.0f * SinTMid * SA;  // cos(T') - cos(T)
+	float DSinP = 2.0f * CosPMid * SB;   // sin(P') - sin(P)
+	float DCosP = -2.0f * SinPMid * SB;  // cos(P') - cos(P)
+
+	float SinTW = Ref.SinPT + DSinT;
+	float CosTW = Ref.CosPT + DCosT;
+	float SinPW = Ref.SinPP + DSinP;
+	float CosPW = Ref.CosPP + DCosP;
+
+	// r^p f(T', P') - R^p f(T, P) = R^p (u f(T', P') + [f(T', P') - f(T, P)])
+	float3 FW = float3(SinTW * CosPW, SinTW * SinPW, CosTW);
+	float3 DF = float3(DSinT * CosPW + Ref.SinPT * DCosP, DSinT * SinPW + Ref.SinPT * DSinP, DCosT);
+	OutRWPowM1 = Ref.RPow * OnePlusU * InvRW;
+	return Ref.RPow * (U * FW + DF);
+}
+

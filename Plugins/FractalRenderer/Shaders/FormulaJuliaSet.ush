@@ -1,0 +1,42 @@
+// Julia set of the Mandelbulb power map: z_1 = position, z_{n+1} = g_p(z_n) + c_J
+// (CPU: FractalMath/Formulas/JuliaSetFormula.h). c only sets the starting point, so the perturbation is
+// d <- g_p(Z + d) - g_p(Z) and a pixel that leaves the reference continues with plain float iteration.
+
+#pragma once
+
+#include "FractalPowerMap.ush"
+
+#define FP_STATE float3
+#define FP_STATE_DIM 3
+#define FP_PAYLOAD_FLOAT4 3
+#define FP_FORMULA_ADDS_C 0
+#define FP_FORMULA_FOLDING 0
+
+static const float3 FP_JULIA_C = float3(-0.8f, 0.156f, 0.0f);
+
+FP_STATE FP_FormulaStart(float3 Position)
+{
+	return Position;
+}
+
+FP_STATE FP_FormulaLoadState(StructuredBuffer<float4> Orbit, int Base)
+{
+	return Orbit[Base].xyz;
+}
+
+void FP_FormulaPerturbedStep(StructuredBuffer<float4> Orbit, int Base, inout FP_STATE D, FP_STATE W, float RW, float InvRW,
+	float3 DC, inout float DRS, FPFormulaArgs Args)
+{
+	FPPowerRef Ref = FP_LoadPowerRef(Orbit, Base);
+	float RWPowM1;
+	D = FP_PerturbedPowerDelta(Ref, D, W, RW, InvRW, Args.Power, Args.PowerInt, RWPowM1);
+	DRS = Args.Power * RWPowM1 * DRS;
+}
+
+void FP_FormulaDirectStep(inout FP_STATE Z, float RW, float InvRW, float3 C, inout float DRS, FPFormulaArgs Args)
+{
+	float RWPowM1;
+	float3 G = FP_MandelbulbPower(Z, RW, InvRW, Args.Power, Args.PowerInt, RWPowM1);
+	DRS = Args.Power * RWPowM1 * DRS;
+	Z = G + FP_JULIA_C;
+}

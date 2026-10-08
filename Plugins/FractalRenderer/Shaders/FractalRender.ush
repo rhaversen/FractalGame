@@ -1,4 +1,4 @@
-// Per-pixel Mandelbulb ray march on top of FractalPerturbation.ush. Pure HLSL, shared by
+// Per-pixel fractal ray march on top of FractalDE.ush. Pure HLSL, shared by
 // PerturbationShader.usf (Unreal) and Tools/PerturbationLab (DXC + Vulkan).
 //
 // Coordinates: the ray is marched in WORLD units (t), the fractal is sampled at
@@ -9,7 +9,7 @@
 
 #pragma once
 
-#include "FractalPerturbation.ush"
+#include "FractalDE.ush"
 
 // Set to 1 to march with plain float DE at absolute positions (comparison / debugging only).
 #ifndef FP_FORCE_NAIVE
@@ -30,11 +30,9 @@ struct FPViewParams
 	float3 CameraOffset;  // (camera - C_ref) / Scale, world units
 	float Scale;          // fractal units per world unit
 	float3 ReferenceCenter; // float(C_ref), only used without a reference orbit
-	float Power;
+	float Power;          // exponent or folding scale
 	float Bailout;
 	int MaxIterations;
-	int MinIterations;
-	float ConvergenceFactor;
 	int MaxRaySteps;
 	float MaxRayDistance; // world units
 	int OrbitLength;
@@ -56,19 +54,18 @@ float3 FP_PixelRayDirection(FPViewParams V, uint2 Pixel)
 	return normalize(V.RayDir00 + (float)Pixel.x * V.RayDirDX + (float)Pixel.y * V.RayDirDY);
 }
 
-FPDEResult FP_DistanceEstimate(StructuredBuffer<float4> Orbit, FPViewParams V, float3 DC, float PixelRadius)
+FPDEResult FP_DistanceEstimate(StructuredBuffer<float4> Orbit, FPViewParams V, FPFormulaArgs Args, float3 DC, float PixelRadius)
 {
 #if FP_FORCE_NAIVE
-	return FP_DirectDE(V.ReferenceCenter + DC, V.Scale, V.Power, V.MaxIterations, V.Bailout);
+	return FP_DirectDE(V.ReferenceCenter + DC, Args, V.MaxIterations, V.Bailout);
 #else
 	// Plain float evaluation when there is no reference orbit yet, or when this sample's pixel footprint is
-	// so large that absolute float coordinates resolve it (the hybrid switch; ~1.7x cheaper per iteration).
+	// so large that absolute float coordinates resolve it (the hybrid switch; cheaper per iteration).
 	if (V.OrbitLength < 2 || (V.DirectFootprint > 0.0f && V.Scale * PixelRadius > V.DirectFootprint))
 	{
-		return FP_DirectDE(V.ReferenceCenter + DC, V.Scale, V.Power, V.MaxIterations, V.Bailout);
+		return FP_DirectDE(V.ReferenceCenter + DC, Args, V.MaxIterations, V.Bailout);
 	}
-	return FP_PerturbedDE(Orbit, V.OrbitLength, DC, V.Scale, V.Power, V.MaxIterations, V.Bailout,
-		V.MinIterations, PixelRadius * V.ConvergenceFactor);
+	return FP_PerturbedDE(Orbit, V.OrbitLength, DC, Args, V.MaxIterations, V.Bailout);
 #endif
 }
 
@@ -81,6 +78,7 @@ FPMarchResult FP_MarchRay(StructuredBuffer<float4> Orbit, FPViewParams V, float3
 	Result.TotalIterations = 0;
 	Result.TotalSkipped = 0;
 
+	FPFormulaArgs Args = FP_MakeFormulaArgs(V.Power, V.Scale);
 	float T = 0.0f;
 	[loop]
 	while (Result.Steps < V.MaxRaySteps)
@@ -93,7 +91,7 @@ FPMarchResult FP_MarchRay(StructuredBuffer<float4> Orbit, FPViewParams V, float3
 		Result.Steps++;
 		float3 DC = V.Scale * (V.CameraOffset + Dir * T);
 		float PixelRadius = T * V.PixelRadiusPerUnitDistance;
-		FPDEResult DE = FP_DistanceEstimate(Orbit, V, DC, PixelRadius);
+		FPDEResult DE = FP_DistanceEstimate(Orbit, V, Args, DC, PixelRadius);
 		Result.TotalIterations += DE.Iterations;
 		Result.TotalSkipped += DE.Skipped;
 		if (DE.Distance <= PixelRadius)

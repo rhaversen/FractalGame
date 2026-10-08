@@ -5,14 +5,23 @@
 #include "ScreenPass.h"
 #include "PostProcess/PostProcessMaterialInputs.h"
 #include "FractalParameter.h"
-#include "MandelbulbOrbitGenerator.h"
+#include "FractalReference.h"
+#include "HAL/CriticalSection.h"
 
-// Forward declarations
-class UFractalControlSubsystem;
+/** Per-frame numbers the HUD / gameplay may want to show (written on the render thread). */
+struct FRACTALRENDERER_API FFractalRenderStats
+{
+	double CameraDistanceEstimate = 0.0; // world units, from the latest reference march
+	double ReferenceDistance = 0.0;      // world units from the camera to C_ref
+	int32 OrbitLength = 0;
+	bool bReferenceHit = false;
+	double LastGenerationMilliseconds = 0.0;
+};
 
 /**
- * Scene View Extension for rendering fractals directly into the post-process pipeline
- * Automatically renders every frame without needing Blueprint calls
+ * Scene View Extension that ray marches the fractal into the post-process chain (after tonemapping).
+ * Every frame it maps the view origin into fractal space in double-double precision, makes sure a
+ * nearby perturbation reference exists (FFractalReferenceManager) and dispatches the compute shader.
  */
 class FRACTALRENDERER_API FFractalSceneViewExtension : public FSceneViewExtensionBase
 {
@@ -24,32 +33,24 @@ public:
 	virtual void SetupViewFamily(FSceneViewFamily& InViewFamily) override {}
 	virtual void SetupView(FSceneViewFamily& InViewFamily, FSceneView& InView) override {}
 	virtual void BeginRenderViewFamily(FSceneViewFamily& InViewFamily) override {}
-	
-	// Post-process pass subscription
 	virtual void SubscribeToPostProcessingPass(EPostProcessingPass PassId, const FSceneView& View, FPostProcessingPassDelegateArray& InOutPassCallbacks, bool bIsPassEnabled) override;
 
-	// Set fractal parameters from game thread
+	/** Game thread: rendering tunables. */
 	void SetFractalParameters(const FFractalParameter& InParams);
 
-	// Set reference orbit data (called by subsystem when orbit regenerates)
-	void SetReferenceOrbit(const FReferenceOrbit& InOrbit);
+	/** Game thread: world <-> fractal mapping (position and scale). */
+	void SetCameraMapping(const FFractalCameraMapping& InMapping);
+
+	/** Any thread. */
+	FFractalRenderStats GetRenderStats() const;
 
 private:
-	// Callback for rendering the fractal
 	FScreenPassTexture RenderFractal_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View, const FPostProcessMaterialInputs& Inputs);
 
-	// Create and upload orbit texture to RDG
-	FRDGTextureRef CreateOrbitTexture(FRDGBuilder& GraphBuilder, const TArray<FVector4f>& OrbitData);
-
-	// Thread-safe storage for fractal parameters
 	FFractalParameter FractalParameters;
-	FCriticalSection ParameterMutex;
+	FFractalCameraMapping CameraMapping;
+	FFractalRenderStats RenderStats;
+	mutable FCriticalSection StateMutex;
 
-	// Thread-safe storage for orbit data
-	TArray<FVector4f> OrbitPositionData;
-	TArray<FVector4f> OrbitDerivativeData;
-	FVector3d CurrentReferenceCenter;
-	int32 CurrentOrbitLength;
-	bool bOrbitHasDerivatives;
-	FCriticalSection OrbitMutex;
+	FFractalReferenceManager ReferenceManager;
 };

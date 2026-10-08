@@ -3,23 +3,19 @@
 #include "CoreMinimal.h"
 #include "FractalParameter.generated.h"
 
+/**
+ * Rendering tunables. The mapping between world space and fractal space (position and scale) is
+ * owned by UFractalControlSubsystem in double-double precision, see FFractalCameraMapping.
+ */
 USTRUCT(BlueprintType)
 struct FRACTALRENDERER_API FFractalParameter
 {
     GENERATED_BODY()
 
 public:
-    /** Location in the complex plane that the camera is focused on. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal|Viewport")
-    FVector2D Center;
-
     /** Master enable so gameplay can toggle rendering without destroying state. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal|Viewport")
     bool bEnabled;
-
-    /** Scale multiplier applied to world rays before marching (behaves like zoom). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal|Viewport")
-    float Zoom;
 
     /** Maximum number of distance-estimation steps performed per ray. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal|Ray March")
@@ -29,7 +25,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal|Ray March")
     float MaxRayDistance;
 
-    /** Upper bound for distance-estimator iterations per sample. */
+    /** Upper bound for distance-estimator iterations per sample (also the reference orbit length). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal|Distance Estimation")
     int32 MaxIterations;
 
@@ -41,7 +37,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal|Distance Estimation")
     int32 MinIterations;
 
-    /** Threshold factor used to end iterations once the DE stabilises. */
+    /** Threshold factor (of the pixel radius) used to end iterations once the DE stabilises. 0 disables it. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal|Distance Estimation")
     float ConvergenceFactor;
 
@@ -49,17 +45,23 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal|Formula")
     float FractalPower;
 
+    /**
+     * Fractal-space pixel footprint above which a march sample uses plain float iteration instead of
+     * perturbation (it is exact enough there and ~1.7x cheaper). 0 = always use perturbation.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal|Precision")
+    float DirectEvaluationFootprint;
+
     FFractalParameter()
-        : Center(FVector2D::ZeroVector)
-        , bEnabled(true)
-        , Zoom(0.00001f)
+        : bEnabled(true)
         , MaxRaySteps(150)
         , MaxRayDistance(1000000.0f)
         , MaxIterations(150)
         , BailoutRadius(10.0f)
         , MinIterations(5)
-        , ConvergenceFactor(0.01f)
+        , ConvergenceFactor(0.0f)
         , FractalPower(8.0f)
+        , DirectEvaluationFootprint(1.0e-4f)
     {
     }
 };

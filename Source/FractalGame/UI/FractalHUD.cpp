@@ -4,6 +4,8 @@
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
 #include "CanvasItem.h"
+#include "Engine/GameInstance.h"
+#include "FractalControlSubsystem.h"
 
 void AFractalHUD::DrawHUD()
 {
@@ -52,5 +54,19 @@ void AFractalHUD::DrawHUD()
 	{
 		DrawLine(Line, CurrentY);
 		CurrentY += LineSpacing;
+	}
+
+	const UGameInstance* GameInstance = GetGameInstance();
+	if (const UFractalControlSubsystem* Fractal = GameInstance ? GameInstance->GetSubsystem<UFractalControlSubsystem>() : nullptr)
+	{
+		const FVector FractalPosition = Fractal->GetCameraFractalPosition();
+		const FString ZoomText = FString::Printf(TEXT("Scale %.3g fractal/cm"), Fractal->GetFractalScale());
+		const FString SurfaceText = FString::Printf(TEXT("Surface %.3g m"), Fractal->GetCameraDistanceEstimate() * 0.01);
+		const FString FractalText = FString::Printf(TEXT("Fractal %.9f %.9f %.9f"), FractalPosition.X, FractalPosition.Y, FractalPosition.Z);
+		for (const FString& Line : {ZoomText, SurfaceText, FractalText})
+		{
+			DrawLine(Line, CurrentY);
+			CurrentY += LineSpacing;
+		}
 	}
 }

@@ -1,3 +1,8 @@
+> **Note (perturbation):** the GPU pseudocode further down evaluates `g_p(z_ref + eps)` and subtracts the
+> reference in float. That difference cancels completely once `|eps| < 1e-7 |z_ref|`, so it gives no
+> precision beyond plain float. The working, verified formulation is in
+> [PERTURBATION_IMPLEMENTATION_NOTES.md](PERTURBATION_IMPLEMENTATION_NOTES.md).
+
 # 3D Mandelbulb Fractal: Definition and Iteration
 
 The  Mandelbulb  is a three-dimensional analogue of the Mandelbrot set, obtained by iterating a real 3D

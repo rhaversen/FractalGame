@@ -1,0 +1,152 @@
+// Per-pixel Mandelbulb ray march on top of FractalPerturbation.ush. Pure HLSL, shared by
+// PerturbationShader.usf (Unreal) and Tools/PerturbationLab (DXC + Vulkan).
+//
+// Coordinates: the ray is marched in WORLD units (t), the fractal is sampled at
+//     c = C_ref + Scale * (CameraOffset + t * Dir)
+// i.e. dc = Scale * (CameraOffset + t * Dir) relative to the reference point. CameraOffset is
+// (camera - C_ref) / Scale, computed on the CPU in double-double, so no absolute fractal coordinate
+// ever reaches the GPU and float precision is only needed relative to the visible scale.
+
+#pragma once
+
+#include "FractalPerturbation.ush"
+
+// Set to 1 to march with plain float DE at absolute positions (comparison / debugging only).
+#ifndef FP_FORCE_NAIVE
+#define FP_FORCE_NAIVE 0
+#endif
+
+#define FP_HIT_NONE 0
+#define FP_HIT_SURFACE 1
+#define FP_MISS_DISTANCE 2
+#define FP_MISS_STEPS 3
+
+struct FPViewParams
+{
+	float3 RayDir00;      // world direction through pixel (0, 0) (unnormalised)
+	float3 RayDirDX;      // per-pixel step to the right
+	float3 RayDirDY;      // per-pixel step down
+	float PixelRadiusPerUnitDistance;
+	float3 CameraOffset;  // (camera - C_ref) / Scale, world units
+	float Scale;          // fractal units per world unit
+	float3 ReferenceCenter; // float(C_ref), only used without a reference orbit
+	float Power;
+	float Bailout;
+	int MaxIterations;
+	int MinIterations;
+	float ConvergenceFactor;
+	int MaxRaySteps;
+	float MaxRayDistance; // world units
+	int OrbitLength;
+	float DirectFootprint; // fractal units; samples whose pixel footprint exceeds this use the cheaper plain
+	                       // float DE (exact enough there). 0 = always perturb.
+};
+
+struct FPMarchResult
+{
+	float Distance;       // world units along the (normalised) ray
+	int Steps;
+	int Status;
+	int TotalIterations;  // sum of escape iterations (drives the shading)
+	int TotalSkipped;     // iterations the series skip did not have to execute
+};
+
+float3 FP_PixelRayDirection(FPViewParams V, uint2 Pixel)
+{
+	return normalize(V.RayDir00 + (float)Pixel.x * V.RayDirDX + (float)Pixel.y * V.RayDirDY);
+}
+
+FPDEResult FP_DistanceEstimate(StructuredBuffer<float4> Orbit, FPViewParams V, float3 DC, float PixelRadius)
+{
+#if FP_FORCE_NAIVE
+	return FP_DirectDE(V.ReferenceCenter + DC, V.Scale, V.Power, V.MaxIterations, V.Bailout);
+#else
+	// Plain float evaluation when there is no reference orbit yet, or when this sample's pixel footprint is
+	// so large that absolute float coordinates resolve it (the hybrid switch; ~1.7x cheaper per iteration).
+	if (V.OrbitLength < 2 || (V.DirectFootprint > 0.0f && V.Scale * PixelRadius > V.DirectFootprint))
+	{
+		return FP_DirectDE(V.ReferenceCenter + DC, V.Scale, V.Power, V.MaxIterations, V.Bailout);
+	}
+	return FP_PerturbedDE(Orbit, V.OrbitLength, DC, V.Scale, V.Power, V.MaxIterations, V.Bailout,
+		V.MinIterations, PixelRadius * V.ConvergenceFactor);
+#endif
+}
+
+FPMarchResult FP_MarchRay(StructuredBuffer<float4> Orbit, FPViewParams V, float3 Dir)
+{
+	FPMarchResult Result;
+	Result.Distance = 0.0f;
+	Result.Steps = 0;
+	Result.Status = FP_MISS_STEPS;
+	Result.TotalIterations = 0;
+	Result.TotalSkipped = 0;
+
+	float T = 0.0f;
+	[loop]
+	while (Result.Steps < V.MaxRaySteps)
+	{
+		if (T >= V.MaxRayDistance)
+		{
+			Result.Status = FP_MISS_DISTANCE;
+			break;
+		}
+		Result.Steps++;
+		float3 DC = V.Scale * (V.CameraOffset + Dir * T);
+		float PixelRadius = T * V.PixelRadiusPerUnitDistance;
+		FPDEResult DE = FP_DistanceEstimate(Orbit, V, DC, PixelRadius);
+		Result.TotalIterations += DE.Iterations;
+		Result.TotalSkipped += DE.Skipped;
+		if (DE.Distance <= PixelRadius)
+		{
+			Result.Status = FP_HIT_SURFACE;
+			break;
+		}
+		T += max(DE.Distance, PixelRadius * 0.5f);
+	}
+	Result.Distance = T;
+	return Result;
+}
+
+// Step-count based colouring (same palette as the previous FractalRenderer shader).
+float3 FP_ShadeMarch(FPMarchResult R, int MaxRaySteps, int MaxIterations)
+{
+	float StepFactor = R.Steps > 0 ? saturate(R.Steps / max((float)MaxRaySteps, 1.0f)) : 0.0f;
+	float T = sqrt(StepFactor);
+
+	float3 AlmostBlack = float3(0.0f, 0.0f, 0.05f);
+	float3 DeepBlue = float3(0.05f, 0.15f, 0.3f);
+	float3 VibrantBlue = float3(0.2f, 0.4f, 0.8f);
+	float3 BrightBlue = float3(0.6f, 0.8f, 1.0f);
+
+	float Range1 = saturate(T / 0.15f);
+	float Range2 = saturate((T - 0.15f) / 0.25f);
+	float Range3 = saturate((T - 0.4f) / 0.6f);
+	float3 Color = lerp(lerp(lerp(AlmostBlack, DeepBlue, Range1), VibrantBlue, Range2), BrightBlue, Range3);
+
+	if (R.Steps > 0)
+	{
+		float IterFactor = saturate(R.TotalIterations / max((float)(MaxIterations * max(R.Steps, 1)), 1.0f));
+		if (IterFactor > 0.1f)
+		{
+			float Green = (IterFactor - 0.1f) / 0.9f;
+			Color = lerp(Color, float3(0.3f, 0.5f, 0.6f), Green * Green);
+		}
+		if (IterFactor > 0.9f)
+		{
+			float Green = (IterFactor - 0.9f) / 0.1f;
+			Color = lerp(Color, float3(0.3f, 0.9f, 0.7f), pow(Green, 5.0f));
+		}
+	}
+	return Color;
+}
+
+float3 FP_CompositeMarch(FPMarchResult R, float3 Background, int MaxRaySteps, int MaxIterations)
+{
+	float3 Color = FP_ShadeMarch(R, MaxRaySteps, MaxIterations);
+	if (R.Status == FP_MISS_DISTANCE)
+	{
+		float StepFactor = R.Steps > 0 ? saturate(R.Steps / max((float)MaxRaySteps, 1.0f)) : 0.0f;
+		return lerp(Background, Color, pow(StepFactor, 0.1f));
+	}
+	return Color;
+}

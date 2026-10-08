@@ -1,255 +1,173 @@
 #include "FractalControlSubsystem.h"
 #include "FractalRenderer.h"
 #include "FractalSceneViewExtension.h"
-#include "MandelbulbOrbitGenerator.h"
-#include "Math/UnrealMathUtility.h"
-#include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
+#include "GameFramework/PlayerController.h"
+#include "Camera/PlayerCameraManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogFractalControl, Log, All);
+
+namespace
+{
+	TSharedPtr<FFractalSceneViewExtension, ESPMode::ThreadSafe> GetFractalViewExtension()
+	{
+		if (FFractalRendererModule* Module = FModuleManager::GetModulePtr<FFractalRendererModule>("FractalRenderer"))
+		{
+			return Module->GetSceneViewExtension();
+		}
+		return TSharedPtr<FFractalSceneViewExtension, ESPMode::ThreadSafe>();
+	}
+}
 
 void UFractalControlSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
-
-	// Create orbit generator
-	OrbitGenerator = MakeUnique<FMandelbulbOrbitGenerator>();
-
-	// Default values are set by the FFractalParameter constructor
 	UE_LOG(LogFractalControl, Log, TEXT("FractalControlSubsystem: Initialized"));
-
-	// Generate initial reference orbit
-	GenerateReferenceOrbit();
-
-	// Set initial parameters
-	UpdateSceneViewExtension();
+	PushParameters();
+	PushCameraMapping();
 }
 
 void UFractalControlSubsystem::Deinitialize()
 {
-	OrbitGenerator.Reset();
 	Super::Deinitialize();
 }
 
 void UFractalControlSubsystem::SetFractalParameters(const FFractalParameter& InParams)
 {
 	FractalParameters = InParams;
-	
-	// Check if orbit needs regeneration
-	if (ShouldRegenerateOrbit(InParams))
-	{
-		GenerateReferenceOrbit();
-	}
-	
-	UpdateSceneViewExtension();
+	PushParameters();
 }
 
 void UFractalControlSubsystem::SetEnabled(bool bInEnabled)
 {
-	if (FractalParameters.bEnabled != bInEnabled)
-	{
-		FractalParameters.bEnabled = bInEnabled;
-		UpdateSceneViewExtension();
-	}
-}
-
-void UFractalControlSubsystem::SetCenter(FVector2D InCenter)
-{
-	if (!FractalParameters.Center.Equals(InCenter))
-	{
-		FractalParameters.Center = InCenter;
-		
-		// Center change may require orbit regeneration
-		if (ShouldRegenerateOrbit(FractalParameters))
-		{
-			GenerateReferenceOrbit();
-		}
-		
-		UpdateSceneViewExtension();
-	}
-}
-
-void UFractalControlSubsystem::SetZoom(float InZoom)
-{
-	if (!FMath::IsNearlyEqual(FractalParameters.Zoom, InZoom))
-	{
-		FractalParameters.Zoom = InZoom;
-		UpdateSceneViewExtension();
-	}
+	FractalParameters.bEnabled = bInEnabled;
+	PushParameters();
 }
 
 void UFractalControlSubsystem::SetMaxRaySteps(int32 InMaxRaySteps)
 {
-	if (FractalParameters.MaxRaySteps != InMaxRaySteps)
-	{
-		FractalParameters.MaxRaySteps = InMaxRaySteps;
-		UpdateSceneViewExtension();
-	}
+	FractalParameters.MaxRaySteps = InMaxRaySteps;
+	PushParameters();
 }
 
 void UFractalControlSubsystem::SetMaxRayDistance(float InMaxRayDistance)
 {
-	if (!FMath::IsNearlyEqual(FractalParameters.MaxRayDistance, InMaxRayDistance))
-	{
-		FractalParameters.MaxRayDistance = InMaxRayDistance;
-		UpdateSceneViewExtension();
-	}
+	FractalParameters.MaxRayDistance = InMaxRayDistance;
+	PushParameters();
 }
 
 void UFractalControlSubsystem::SetMaxIterations(int32 InMaxIterations)
 {
-	if (FractalParameters.MaxIterations != InMaxIterations)
-	{
-		FractalParameters.MaxIterations = InMaxIterations;
-		
-		// Iteration count change requires orbit regeneration
-		GenerateReferenceOrbit();
-		
-		UpdateSceneViewExtension();
-	}
+	FractalParameters.MaxIterations = InMaxIterations;
+	PushParameters();
 }
 
 void UFractalControlSubsystem::SetBailoutRadius(float InBailoutRadius)
 {
-	if (!FMath::IsNearlyEqual(FractalParameters.BailoutRadius, InBailoutRadius))
-	{
-		FractalParameters.BailoutRadius = InBailoutRadius;
-		
-		// Bailout change may affect orbit
-		GenerateReferenceOrbit();
-		
-		UpdateSceneViewExtension();
-	}
+	FractalParameters.BailoutRadius = InBailoutRadius;
+	PushParameters();
 }
 
 void UFractalControlSubsystem::SetMinIterations(int32 InMinIterations)
 {
-	if (FractalParameters.MinIterations != InMinIterations)
-	{
-		FractalParameters.MinIterations = InMinIterations;
-		UpdateSceneViewExtension();
-	}
+	FractalParameters.MinIterations = InMinIterations;
+	PushParameters();
 }
 
 void UFractalControlSubsystem::SetConvergenceFactor(float InConvergenceFactor)
 {
-	if (!FMath::IsNearlyEqual(FractalParameters.ConvergenceFactor, InConvergenceFactor))
-	{
-		FractalParameters.ConvergenceFactor = InConvergenceFactor;
-		UpdateSceneViewExtension();
-	}
+	FractalParameters.ConvergenceFactor = InConvergenceFactor;
+	PushParameters();
 }
 
 void UFractalControlSubsystem::SetFractalPower(float InFractalPower)
 {
-	if (!FMath::IsNearlyEqual(FractalParameters.FractalPower, InFractalPower))
+	// The reference manager notices the new power and rebuilds the reference orbit before the next frame.
+	FractalParameters.FractalPower = InFractalPower;
+	PushParameters();
+}
+
+void UFractalControlSubsystem::SetFractalScale(double InScale)
+{
+	if (InScale > 0.0 && CameraMapping.Scale > 0.0)
 	{
-		FractalParameters.FractalPower = InFractalPower;
-		
-		// Power change requires orbit regeneration
-		GenerateReferenceOrbit();
-		
-		UpdateSceneViewExtension();
+		ZoomAroundCamera(InScale / CameraMapping.Scale);
 	}
 }
 
-void UFractalControlSubsystem::RegenerateOrbit()
+void UFractalControlSubsystem::ZoomAroundCamera(double Factor)
 {
-	GenerateReferenceOrbit();
-	UpdateSceneViewExtension();
-}
-
-bool UFractalControlSubsystem::ShouldRegenerateOrbit(const FFractalParameter& NewParams) const
-{
-	// Regenerate if critical parameters changed
-	const double CenterThreshold = 0.01; // Relative to zoom
-	
-	// Check center movement (relative to current zoom level)
-	FVector2D CenterDelta = NewParams.Center - LastOrbitParams.Center;
-	double CenterDistance = CenterDelta.Length();
-	double RelativeCenterChange = CenterDistance / FMath::Max(NewParams.Zoom, 1e-10);
-	
-	if (RelativeCenterChange > CenterThreshold)
+	if (!(Factor > 0.0) || !FMath::IsFinite(Factor))
 	{
-		return true;
-	}
-	
-	// Check if iterations changed
-	if (NewParams.MaxIterations != LastOrbitParams.MaxIterations)
-	{
-		return true;
-	}
-	
-	// Check if power changed
-	if (!FMath::IsNearlyEqual(NewParams.FractalPower, LastOrbitParams.FractalPower, 0.001f))
-	{
-		return true;
-	}
-	
-	// Check if bailout changed
-	if (!FMath::IsNearlyEqual(NewParams.BailoutRadius, LastOrbitParams.BailoutRadius, 0.001f))
-	{
-		return true;
-	}
-	
-	return false;
-}
-
-void UFractalControlSubsystem::GenerateReferenceOrbit()
-{
-	if (!OrbitGenerator.IsValid())
-	{
-		UE_LOG(LogFractalControl, Warning, TEXT("Orbit generator not initialized"));
 		return;
 	}
-	
-	TRACE_CPUPROFILER_EVENT_SCOPE(UFractalControlSubsystem::GenerateReferenceOrbit);
-	
-	// Reference center in fractal space (Center is 2D, we use Z=0 for 3D Mandelbulb)
-	FVector3d ReferenceCenter(FractalParameters.Center.X, FractalParameters.Center.Y, 0.0);
-	
-	// Generate orbit in double precision
-	CurrentOrbit = OrbitGenerator->GenerateOrbit(
-		ReferenceCenter,
-		static_cast<double>(FractalParameters.FractalPower),
-		FractalParameters.MaxIterations,
-		static_cast<double>(FractalParameters.BailoutRadius)
-	);
-	
-	// Store parameters used for this orbit
-	LastOrbitParams = FractalParameters;
-	
-	UE_LOG(LogFractalControl, Log, 
-		TEXT("Generated reference orbit: Center=(%.6f, %.6f, 0.0), Power=%.2f, Iterations=%d, Valid=%s"),
-		ReferenceCenter.X, ReferenceCenter.Y,
-		FractalParameters.FractalPower,
-		CurrentOrbit.GetLength(),
-		CurrentOrbit.IsValid() ? TEXT("Yes") : TEXT("No")
-	);
-
-	if (GEngine)
+	// Float deltas on the GPU underflow below ~1e-38; keep a margin for pixel offsets and derivatives.
+	const double NewScale = CameraMapping.Scale * Factor;
+	if (NewScale < 1.0e-30 || NewScale > 1.0e3)
 	{
-		FString OrbitMessage = FString::Printf(TEXT("Fractal orbit regenerated (%d points)"), CurrentOrbit.GetLength());
-		GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Cyan, OrbitMessage);
+		return;
 	}
-	
-	// Push orbit to view extension
-	FFractalRendererModule& Module = FModuleManager::GetModuleChecked<FFractalRendererModule>("FractalRenderer");
-	TSharedPtr<FFractalSceneViewExtension, ESPMode::ThreadSafe> Extension = Module.GetSceneViewExtension();
-	
-	if (Extension.IsValid())
+	CameraMapping.ZoomAround(GetCameraWorldLocation(), Factor);
+	PushCameraMapping();
+}
+
+void UFractalControlSubsystem::SetCameraFractalPosition(FVector FractalPosition)
+{
+	CameraMapping.SetFractalPositionOf(GetCameraWorldLocation(), FractalMath::FDDVec3(FractalPosition.X, FractalPosition.Y, FractalPosition.Z));
+	PushCameraMapping();
+}
+
+FVector UFractalControlSubsystem::GetCameraFractalPosition() const
+{
+	const FractalMath::FDVec3 P = FractalMath::ToDoubleVec(CameraMapping.WorldToFractal(GetCameraWorldLocation()));
+	return FVector(P.X, P.Y, P.Z);
+}
+
+double UFractalControlSubsystem::GetCameraDistanceEstimate() const
+{
+	TSharedPtr<FFractalSceneViewExtension, ESPMode::ThreadSafe> Extension = GetFractalViewExtension();
+	return Extension.IsValid() ? Extension->GetRenderStats().CameraDistanceEstimate : 0.0;
+}
+
+void UFractalControlSubsystem::ResetCameraMapping()
+{
+	CameraMapping = FFractalCameraMapping();
+	PushCameraMapping();
+}
+
+void UFractalControlSubsystem::SetCameraMapping(const FFractalCameraMapping& InMapping)
+{
+	CameraMapping = InMapping;
+	PushCameraMapping();
+}
+
+FVector3d UFractalControlSubsystem::GetCameraWorldLocation() const
+{
+	if (const UGameInstance* GameInstance = GetGameInstance())
 	{
-		Extension->SetReferenceOrbit(CurrentOrbit);
+		if (const APlayerController* Controller = GameInstance->GetFirstLocalPlayerController())
+		{
+			if (Controller->PlayerCameraManager)
+			{
+				return Controller->PlayerCameraManager->GetCameraLocation();
+			}
+		}
+	}
+	return CameraMapping.Anchor;
+}
+
+void UFractalControlSubsystem::PushParameters() const
+{
+	if (TSharedPtr<FFractalSceneViewExtension, ESPMode::ThreadSafe> Extension = GetFractalViewExtension())
+	{
+		Extension->SetFractalParameters(FractalParameters);
 	}
 }
 
-void UFractalControlSubsystem::UpdateSceneViewExtension()
+void UFractalControlSubsystem::PushCameraMapping() const
 {
-	// Get the module and its scene view extension
-	FFractalRendererModule& Module = FModuleManager::GetModuleChecked<FFractalRendererModule>("FractalRenderer");
-	TSharedPtr<FFractalSceneViewExtension, ESPMode::ThreadSafe> Extension = Module.GetSceneViewExtension();
-	
-	if (Extension.IsValid())
+	if (TSharedPtr<FFractalSceneViewExtension, ESPMode::ThreadSafe> Extension = GetFractalViewExtension())
 	{
-		Extension->SetFractalParameters(FractalParameters);
+		Extension->SetCameraMapping(CameraMapping);
 	}
 }

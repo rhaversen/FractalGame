@@ -14,6 +14,7 @@ public class FractalGame : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"InputCore",
+			"FractalRenderer",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { "RenderCore", "RHI" });

@@ -3,15 +3,17 @@
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "FractalParameter.h"
-#include "MandelbulbOrbitGenerator.h"
+#include "FractalReference.h"
 #include "FractalControlSubsystem.generated.h"
 
-// Forward declarations
-class FMandelbulbOrbitGenerator;
-
 /**
- * Game Instance Subsystem for controlling fractal rendering parameters
- * Access from Blueprint or C++ to control the Scene View Extension
+ * Game Instance Subsystem for controlling fractal rendering.
+ *
+ * World space and fractal space are related by Fractal = Origin + (World - Anchor) * Scale, with Origin in
+ * double-double precision. Gameplay keeps moving the pawn in ordinary world units; zooming changes Scale
+ * around the camera (so nothing jumps) and therefore also scales how far the pawn travels in the fractal.
+ * The renderer perturbs every pixel from a high-precision reference ray, so the camera can go down to a
+ * scale of ~1e-27 fractal units per world unit.
  */
 UCLASS()
 class FRACTALRENDERER_API UFractalControlSubsystem : public UGameInstanceSubsystem
@@ -22,19 +24,16 @@ public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 
-	// Set all fractal parameters
+	// --- Rendering tunables ---
+
 	UFUNCTION(BlueprintCallable, Category = "Fractal")
 	void SetFractalParameters(const FFractalParameter& InParams);
 
-	// Individual setters so gameplay code can tweak a single property without copying the struct
+	UFUNCTION(BlueprintPure, Category = "Fractal")
+	const FFractalParameter& GetFractalParameters() const { return FractalParameters; }
+
 	UFUNCTION(BlueprintCallable, Category = "Fractal|Controls")
 	void SetEnabled(bool bInEnabled);
-
-	UFUNCTION(BlueprintCallable, Category = "Fractal|Controls")
-	void SetCenter(FVector2D InCenter);
-
-	UFUNCTION(BlueprintCallable, Category = "Fractal|Controls")
-	void SetZoom(float InZoom);
 
 	UFUNCTION(BlueprintCallable, Category = "Fractal|Controls")
 	void SetMaxRaySteps(int32 InMaxRaySteps);
@@ -57,36 +56,48 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Fractal|Controls")
 	void SetFractalPower(float InFractalPower);
 
-	// Get current fractal parameters
-	UFUNCTION(BlueprintPure, Category = "Fractal")
-	const FFractalParameter& GetFractalParameters() const { return FractalParameters; }
+	// --- World <-> fractal mapping ---
 
-	// Regenerate reference orbit (for testing/debugging)
-	UFUNCTION(BlueprintCallable, Category = "Fractal|Orbit")
-	void RegenerateOrbit();
+	/** Fractal units per world unit. Smaller = deeper zoom. Changed around the camera position. */
+	UFUNCTION(BlueprintCallable, Category = "Fractal|Camera")
+	void SetFractalScale(double InScale);
 
-	// Get current reference orbit data (read-only)
-	const FReferenceOrbit& GetReferenceOrbit() const { return CurrentOrbit; }
+	UFUNCTION(BlueprintPure, Category = "Fractal|Camera")
+	double GetFractalScale() const { return CameraMapping.Scale; }
 
-	// Check if orbit needs regeneration based on parameter changes
-	bool ShouldRegenerateOrbit(const FFractalParameter& NewParams) const;
+	/** Multiplies the scale by Factor around the camera (Factor < 1 zooms in). */
+	UFUNCTION(BlueprintCallable, Category = "Fractal|Camera")
+	void ZoomAroundCamera(double Factor);
+
+	/** Moves the fractal so that the camera sits at FractalPosition (double precision). */
+	UFUNCTION(BlueprintCallable, Category = "Fractal|Camera")
+	void SetCameraFractalPosition(FVector FractalPosition);
+
+	/** Camera position in fractal space, rounded to double. */
+	UFUNCTION(BlueprintPure, Category = "Fractal|Camera")
+	FVector GetCameraFractalPosition() const;
+
+	/** Distance from the camera to the fractal surface in world units (from the latest reference march). */
+	UFUNCTION(BlueprintPure, Category = "Fractal|Camera")
+	double GetCameraDistanceEstimate() const;
+
+	/** Restores the default mapping (world origin at fractal origin, scale 1e-5). */
+	UFUNCTION(BlueprintCallable, Category = "Fractal|Camera")
+	void ResetCameraMapping();
+
+	/** Full-precision access for C++. */
+	const FFractalCameraMapping& GetCameraMapping() const { return CameraMapping; }
+	void SetCameraMapping(const FFractalCameraMapping& InMapping);
 
 private:
 	UPROPERTY()
 	FFractalParameter FractalParameters;
 
-	// High-precision orbit generator
-	TUniquePtr<FMandelbulbOrbitGenerator> OrbitGenerator;
+	FFractalCameraMapping CameraMapping;
 
-	// Current reference orbit data
-	FReferenceOrbit CurrentOrbit;
+	/** Current camera location in world space (falls back to the mapping anchor). */
+	FVector3d GetCameraWorldLocation() const;
 
-	// Last parameters used to generate orbit (for change detection)
-	FFractalParameter LastOrbitParams;
-
-	// Update the scene view extension with current parameters
-	void UpdateSceneViewExtension();
-
-	// Generate new reference orbit based on current parameters
-	void GenerateReferenceOrbit();
+	void PushParameters() const;
+	void PushCameraMapping() const;
 };

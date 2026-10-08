@@ -3,6 +3,8 @@
 #include "FractalPawn.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/FloatingPawnMovement.h"
+#include "Engine/GameInstance.h"
+#include "FractalControlSubsystem.h"
 
 AFractalPawn::AFractalPawn()
 {
@@ -39,6 +41,7 @@ void AFractalPawn::SetupPlayerInputComponent(UInputComponent *PlayerInputCompone
     PlayerInputComponent->BindAxis("Turn", this, &AFractalPawn::Turn);
     PlayerInputComponent->BindAxis("LookUp", this, &AFractalPawn::LookUp);
     PlayerInputComponent->BindAxis("Roll", this, &AFractalPawn::Roll);
+    PlayerInputComponent->BindAxis("Zoom", this, &AFractalPawn::Zoom);
 }
 
 void AFractalPawn::MoveForward(float Value)
@@ -111,4 +114,22 @@ void AFractalPawn::Roll(float Value)
     const FQuat NewRotation = Delta * GetActorQuat();
     SetActorRotation(NewRotation);
 
+}
+
+void AFractalPawn::Zoom(float Value)
+{
+    if (FMath::IsNearlyZero(Value))
+    {
+        return;
+    }
+
+    // Zooming rescales world units around the camera (the view itself does not change); the pawn keeps
+    // its world-space speed, so after zooming in it moves proportionally slower through the fractal.
+    if (UGameInstance* GameInstance = GetGameInstance())
+    {
+        if (UFractalControlSubsystem* Fractal = GameInstance->GetSubsystem<UFractalControlSubsystem>())
+        {
+            Fractal->ZoomAroundCamera(FMath::Pow(2.0, -static_cast<double>(Value) * ZoomOctavesPerNotch));
+        }
+    }
 }

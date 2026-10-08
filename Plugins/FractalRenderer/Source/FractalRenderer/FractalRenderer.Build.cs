@@ -32,5 +32,18 @@ public class FractalRenderer : ModuleRules
 		{
 			PrivateDependencyModuleNames.Add("UnrealEd");
 		}
+
+		// Double-double arithmetic (FractalMath/DoubleDouble.h) needs exact IEEE semantics: request precise
+		// floating point where UnrealBuildTool supports it (looked up by reflection so older engines still build).
+		var FPSemanticsField = GetType().GetField("FPSemantics");
+		var FPSemanticsProperty = GetType().GetProperty("FPSemantics");
+		if (FPSemanticsField != null && FPSemanticsField.FieldType.IsEnum)
+		{
+			FPSemanticsField.SetValue(this, System.Enum.Parse(FPSemanticsField.FieldType, "Precise"));
+		}
+		else if (FPSemanticsProperty != null && FPSemanticsProperty.CanWrite && FPSemanticsProperty.PropertyType.IsEnum)
+		{
+			FPSemanticsProperty.SetValue(this, System.Enum.Parse(FPSemanticsProperty.PropertyType, "Precise"));
+		}
 	}
 }

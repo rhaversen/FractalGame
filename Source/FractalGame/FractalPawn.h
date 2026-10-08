@@ -26,6 +26,7 @@ protected:
     void Turn(float Value);
     void LookUp(float Value);
     void Roll(float Value);
+    void Zoom(float Value);
 
 
     // Components
@@ -41,5 +42,9 @@ protected:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
     float LookSensitivity = 1.0f;
+
+    /** Zoom per mouse-wheel notch, in powers of two (0.5 = factor 1.41 per notch). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
+    float ZoomOctavesPerNotch = 0.5f;
 
 };

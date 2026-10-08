@@ -1,12 +1,10 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Engine/TextureRenderTarget2D.h"
-#include "Kismet/BlueprintAsyncActionBase.h"
 #include "GlobalShader.h"
 #include "ShaderParameterStruct.h"
-#include "FractalParameter.h"
-#include "PerturbationShader.generated.h"
+#include "ShaderPermutation.h"
+#include "RenderGraphResources.h"
 
 // Thread counts for compute shader
 #define NUM_THREADS_PerturbationShader_X 8
@@ -14,78 +12,12 @@
 #define NUM_THREADS_PerturbationShader_Z 1
 
 /**
- * Parameters for dispatching the perturbation shader
- */
-struct FRACTALRENDERER_API FPerturbationShaderDispatchParams
-{
-	// Thread group counts
-	int X;
-	int Y;
-	int Z;
-
-	// Fractal parameters
-	FVector2D Center;          // Center point in complex plane
-	float Zoom;
-	int32 MaxRaySteps;
-	float MaxRayDistance;
-	int32 MaxIterations;
-	float BailoutRadius;
-	int32 MinIterations;
-	float ConvergenceFactor;
-	float FractalPower;
-	
-	// Output texture
-	UTextureRenderTarget2D* OutputRenderTarget;
-
-	FPerturbationShaderDispatchParams(int x, int y, int z)
-		: X(x), Y(y), Z(z)
-		, OutputRenderTarget(nullptr)
-	{
-		ApplyFractalParameters(FFractalParameter());
-	}
-
-	void ApplyFractalParameters(const FFractalParameter& InParams)
-	{
-		Center = InParams.Center;
-		Zoom = InParams.Zoom;
-		MaxRaySteps = InParams.MaxRaySteps;
-		MaxRayDistance = InParams.MaxRayDistance;
-		MaxIterations = InParams.MaxIterations;
-		BailoutRadius = InParams.BailoutRadius;
-		MinIterations = InParams.MinIterations;
-		ConvergenceFactor = InParams.ConvergenceFactor;
-		FractalPower = InParams.FractalPower;
-	}
-};
-
-/**
- * Public interface for the perturbation shader
- */
-class FRACTALRENDERER_API FPerturbationShaderInterface
-{
-public:
-	// Executes shader on render thread
-	static void DispatchRenderThread(
-		FRHICommandListImmediate& RHICmdList,
-		FPerturbationShaderDispatchParams Params,
-		TFunction<void()> AsyncCallback
-	);
-
-	// Executes shader from game thread
-	static void DispatchGameThread(
-		FPerturbationShaderDispatchParams Params,
-		TFunction<void()> AsyncCallback
-	);
-
-	// Dispatches shader from any thread
-	static void Dispatch(
-		FPerturbationShaderDispatchParams Params,
-		TFunction<void()> AsyncCallback
-	);
-};
-
-/**
- * Compute shader used for fractal rendering
+ * Compute shader that ray marches the Mandelbulb with perturbation (see Shaders/FractalRender.ush and
+ * Shaders/FractalPerturbation.ush). The CPU supplies:
+ *  - a per-view ray basis (world-space ray direction per pixel, built in double precision),
+ *  - CameraOffset = (camera - C_ref) / FractalScale, computed in double-double,
+ *  - the reference orbit of C_ref with its linear series skip (FractalMath::FOrbitPointGPU, 6 float4 per point).
+ * No absolute fractal coordinates reach the GPU, so precision only depends on the visible scale.
  */
 class FRACTALRENDERER_API FPerturbationComputeShader : public FGlobalShader
 {
@@ -93,33 +25,35 @@ public:
 	DECLARE_GLOBAL_SHADER(FPerturbationComputeShader);
 	SHADER_USE_PARAMETER_STRUCT(FPerturbationComputeShader, FGlobalShader);
 
+	/** Power 8 known at compile time: drops the general-power code and unrolls the powering loops. */
+	class FStaticPower8 : SHADER_PERMUTATION_BOOL("FP_STATIC_POWER_8");
+	using FPermutationDomain = TShaderPermutationDomain<FStaticPower8>;
+
+	// Members are ordered so that every FVector3f shares a 16-byte register with the following scalar.
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER(FVector2f, Center)
 		SHADER_PARAMETER(FIntPoint, OutputSize)
-		SHADER_PARAMETER(float, Zoom)
-		SHADER_PARAMETER(int32, MaxRaySteps)
-		SHADER_PARAMETER(float, MaxRayDistance)
-		SHADER_PARAMETER(int32, MaxIterations)
-		SHADER_PARAMETER(float, BailoutRadius)
-		SHADER_PARAMETER(int32, MinIterations)
-		SHADER_PARAMETER(float, ConvergenceFactor)
+		SHADER_PARAMETER(FIntPoint, OutputOffset)
+		SHADER_PARAMETER(FVector3f, RayDir00)
+		SHADER_PARAMETER(float, PixelRadiusPerUnitDistance)
+		SHADER_PARAMETER(FVector3f, RayDirDX)
+		SHADER_PARAMETER(float, FractalScale)
+		SHADER_PARAMETER(FVector3f, RayDirDY)
 		SHADER_PARAMETER(float, FractalPower)
-		SHADER_PARAMETER(FMatrix44f, ClipToView)
-		SHADER_PARAMETER(FMatrix44f, ViewToWorld)
-		SHADER_PARAMETER(FVector3f, CameraOrigin)
-		SHADER_PARAMETER(FVector2f, ViewSize)
-		SHADER_PARAMETER(FVector2f, InvViewSize)
-		SHADER_PARAMETER(FVector2f, BackgroundExtent)
+		SHADER_PARAMETER(FVector3f, CameraOffset)
+		SHADER_PARAMETER(float, BailoutRadius)
+		SHADER_PARAMETER(FVector3f, ReferenceCenter)
+		SHADER_PARAMETER(float, DirectFootprint)
+		SHADER_PARAMETER(int32, OrbitLength)
+		SHADER_PARAMETER(int32, MaxRaySteps)
+		SHADER_PARAMETER(int32, MaxIterations)
+		SHADER_PARAMETER(int32, MinIterations)
+		SHADER_PARAMETER(float, MaxRayDistance)
+		SHADER_PARAMETER(float, ConvergenceFactor)
 		SHADER_PARAMETER(FVector2f, BackgroundInvExtent)
-		SHADER_PARAMETER(FVector2f, BackgroundViewMin)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<float4>, BackgroundTexture)
 		SHADER_PARAMETER_SAMPLER(SamplerState, BackgroundSampler)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, ReferenceOrbit)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, OutputTexture)
-		// Perturbation orbit data
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<float4>, ReferenceOrbitTexture)
-		SHADER_PARAMETER_SAMPLER(SamplerState, OrbitSampler)
-		SHADER_PARAMETER(FVector3f, ReferenceCenter)
-		SHADER_PARAMETER(int32, OrbitLength)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
@@ -134,32 +68,4 @@ public:
 		OutEnvironment.SetDefine(TEXT("THREADS_Y"), NUM_THREADS_PerturbationShader_Y);
 		OutEnvironment.SetDefine(TEXT("THREADS_Z"), NUM_THREADS_PerturbationShader_Z);
 	}
-};
-
-/**
- * Blueprint-callable async execution node
- */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPerturbationShader_Complete);
-
-UCLASS()
-class FRACTALRENDERER_API UPerturbationShaderLibrary_AsyncExecution : public UBlueprintAsyncActionBase
-{
-	GENERATED_BODY()
-
-public:
-	virtual void Activate() override;
-
-	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", Category = "FractalRenderer", WorldContext = "WorldContextObject"))
-	static UPerturbationShaderLibrary_AsyncExecution* ExecutePerturbationShader(
-		UObject* WorldContextObject,
-		UTextureRenderTarget2D* OutputRenderTarget,
-		FVector2D Center
-	);
-
-	UPROPERTY(BlueprintAssignable)
-	FOnPerturbationShader_Complete Completed;
-
-private:
-	UTextureRenderTarget2D* OutputRenderTarget;
-	FFractalParameter Parameters;
 };

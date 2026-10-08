@@ -2,29 +2,39 @@
 #include "SceneView.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
-#include "RenderTargetPool.h"
-#include "PixelShaderUtils.h"
 #include "ScreenPass.h"
 #include "PostProcess/PostProcessMaterialInputs.h"
 #include "RHIStaticStates.h"
 #include "PerturbationShader.h"
-#include "MandelbulbOrbitGenerator.h"
-#include "RHICommandList.h"
+#include "FractalMath/FractalCamera.h"
+#include "Misc/ScopeLock.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogFractalViewExtension, Log, All);
 
+// Targeted using-declarations (not a using-directive: Unreal's unity builds share one translation unit).
+using FractalMath::BuildRayBasis;
+using FractalMath::FDDVec3;
+using FractalMath::FDVec3;
+using FractalMath::FFractalRayBasis;
+using FractalMath::FOrbitPointGPU;
+using FractalMath::InvertMatrix4;
+using FractalMath::ToDoubleVec;
+
 namespace
 {
-BEGIN_SHADER_PARAMETER_STRUCT(FUploadOrbitDataParameters, )
-	RDG_TEXTURE_ACCESS(OrbitTexture, ERHIAccess::CopyDest)
-END_SHADER_PARAMETER_STRUCT()
+	FVector3f ToVector3f(double X, double Y, double Z)
+	{
+		return FVector3f(static_cast<float>(X), static_cast<float>(Y), static_cast<float>(Z));
+	}
+
+	FVector3f ToVector3f(const double V[3])
+	{
+		return ToVector3f(V[0], V[1], V[2]);
+	}
 }
 
 FFractalSceneViewExtension::FFractalSceneViewExtension(const FAutoRegister& AutoRegister)
 	: FSceneViewExtensionBase(AutoRegister)
-	, CurrentReferenceCenter(FVector3d::ZeroVector)
-	, CurrentOrbitLength(0)
-	, bOrbitHasDerivatives(false)
 {
 }
 
@@ -34,51 +44,28 @@ void FFractalSceneViewExtension::SubscribeToPostProcessingPass(
 	FPostProcessingPassDelegateArray& InOutPassCallbacks,
 	bool bIsPassEnabled)
 {
-	// Insert our fractal rendering after tonemapping
-	if (!bIsPassEnabled)
+	if (bIsPassEnabled && PassId == EPostProcessingPass::Tonemap)
 	{
-		return;
-	}
-
-	if (PassId == EPostProcessingPass::Tonemap)
-	{
-		// The FScreenPassTexture is a temporary texture that is only valid for the duration of the render pass.
 		InOutPassCallbacks.Add(FPostProcessingPassDelegate::CreateRaw(this, &FFractalSceneViewExtension::RenderFractal_RenderThread));
 	}
 }
 
 void FFractalSceneViewExtension::SetFractalParameters(const FFractalParameter& InParams)
 {
-	FScopeLock Lock(&ParameterMutex);
+	FScopeLock Lock(&StateMutex);
 	FractalParameters = InParams;
 }
 
-void FFractalSceneViewExtension::SetReferenceOrbit(const FReferenceOrbit& InOrbit)
+void FFractalSceneViewExtension::SetCameraMapping(const FFractalCameraMapping& InMapping)
 {
-	FScopeLock Lock(&OrbitMutex);
-	
-	if (InOrbit.IsValid())
-	{
-		// Convert orbit to float format for GPU upload
-		FMandelbulbOrbitGenerator::ConvertOrbitToFloat(InOrbit, OrbitPositionData, OrbitDerivativeData);
-		CurrentReferenceCenter = InOrbit.ReferenceCenter;
-		CurrentOrbitLength = InOrbit.GetLength();
-		bOrbitHasDerivatives = InOrbit.HasDerivatives();
-		
-		UE_LOG(LogFractalViewExtension, Verbose, 
-			TEXT("Orbit updated: %d points, Center=(%.6f, %.6f, %.6f)"),
-			CurrentOrbitLength,
-			CurrentReferenceCenter.X, CurrentReferenceCenter.Y, CurrentReferenceCenter.Z
-		);
-	}
-	else
-	{
-		UE_LOG(LogFractalViewExtension, Warning, TEXT("Invalid orbit provided"));
-		OrbitPositionData.Empty();
-		OrbitDerivativeData.Empty();
-		CurrentOrbitLength = 0;
-		bOrbitHasDerivatives = false;
-	}
+	FScopeLock Lock(&StateMutex);
+	CameraMapping = InMapping;
+}
+
+FFractalRenderStats FFractalSceneViewExtension::GetRenderStats() const
+{
+	FScopeLock Lock(&StateMutex);
+	return RenderStats;
 }
 
 FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
@@ -88,131 +75,163 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 {
 	check(IsInRenderingThread());
 
-	FFractalParameter CurrentParams;
+	FFractalParameter Params;
+	FFractalCameraMapping Mapping;
 	{
-		FScopeLock Lock(&ParameterMutex);
-		CurrentParams = FractalParameters;
+		FScopeLock Lock(&StateMutex);
+		Params = FractalParameters;
+		Mapping = CameraMapping;
 	}
 
-	if (!CurrentParams.bEnabled)
-	{
-		return FScreenPassTexture(Inputs.GetInput(EPostProcessMaterialInput::SceneColor));
-	}
-
-	// Get the input scene color slice that the post-process pass provides
 	const FScreenPassTextureSlice SceneColorSlice = Inputs.GetInput(EPostProcessMaterialInput::SceneColor);
-
-	if (!SceneColorSlice.IsValid())
+	if (!Params.bEnabled || !SceneColorSlice.IsValid())
 	{
 		return FScreenPassTexture(SceneColorSlice);
 	}
 
 	const FScreenPassTexture SceneColor = FScreenPassTexture::CopyFromSlice(GraphBuilder, SceneColorSlice);
-
 	if (!SceneColor.IsValid())
 	{
 		return SceneColor;
 	}
 
-	// Get shader from global shader map
-	TShaderMapRef<FPerturbationComputeShader> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
-
-	if (!ComputeShader.IsValid())
-	{
-		UE_LOG(LogTemp, Error, TEXT("FPerturbationComputeShader is not valid!"));
-		return SceneColor;
-	}
-
-	// Determine output dimensions and bail early if the view rect is invalid
-	const FIntPoint OutputExtent = SceneColor.ViewRect.Size();
+	const FIntRect ViewRect = SceneColor.ViewRect;
+	const FIntPoint OutputExtent = ViewRect.Size();
 	if (OutputExtent.X <= 0 || OutputExtent.Y <= 0)
 	{
-		UE_LOG(LogFractalViewExtension, Verbose, TEXT("RenderFractal skipped: invalid output extent %dx%d"), OutputExtent.X, OutputExtent.Y);
 		return SceneColor;
 	}
 
-	// Create output texture matching scene color format
+	// --- Camera: world -> fractal space (double-double) and per-pixel ray basis (double) ---
+	const FViewMatrices& ViewMatrices = View.ViewMatrices;
+	const FVector3d CameraWorld = ViewMatrices.GetViewOrigin();
+	const FDDVec3 CameraFractal = Mapping.WorldToFractal(CameraWorld);
+
+	// Unjittered projection: the fractal is drawn after TAA/TSR, so sub-pixel jitter would only shimmer.
+	double Projection[4][4];
+	double InvProjection[4][4];
+	const FMatrix ProjectionNoAA = ViewMatrices.GetProjectionNoAAMatrix();
+	for (int32 Row = 0; Row < 4; ++Row)
+	{
+		for (int32 Col = 0; Col < 4; ++Col)
+		{
+			Projection[Row][Col] = ProjectionNoAA.M[Row][Col];
+		}
+	}
+	if (!InvertMatrix4(Projection, InvProjection))
+	{
+		return SceneColor;
+	}
+	const FMatrix InvView = ViewMatrices.GetInvViewMatrix();
+	double ViewToWorld[3][3];
+	for (int32 Row = 0; Row < 3; ++Row)
+	{
+		for (int32 Col = 0; Col < 3; ++Col)
+		{
+			ViewToWorld[Row][Col] = InvView.M[Row][Col];
+		}
+	}
+	const FFractalRayBasis Basis = BuildRayBasis(InvProjection, ViewToWorld, OutputExtent.X, OutputExtent.Y);
+
+	// --- Perturbation reference (centre-ray march + double-double orbit) ---
+	FFractalReferenceRequest Request;
+	Request.Camera = CameraFractal;
+	Request.Forward = FVector3d(InvView.M[2][0], InvView.M[2][1], InvView.M[2][2]).GetSafeNormal();
+	Request.Scale = Mapping.Scale;
+	Request.PixelRadiusPerUnitDistance = Basis.PixelRadiusPerUnitDistance;
+	Request.Power = Params.FractalPower;
+	Request.MaxIterations = FMath::Max(Params.MaxIterations, 2);
+	Request.Bailout = Params.BailoutRadius;
+	Request.MaxRaySteps = Params.MaxRaySteps;
+	Request.MaxRayDistance = Params.MaxRayDistance;
+	const TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> Reference = ReferenceManager.Update(Request);
+
+	const FDVec3 CameraFractalD = ToDoubleVec(CameraFractal);
+	FVector3f CameraOffset = FVector3f::ZeroVector;
+	FVector3f ReferenceCenter = ToVector3f(CameraFractalD.X, CameraFractalD.Y, CameraFractalD.Z);
+	int32 OrbitLength = 0;
+	if (Reference.IsValid() && Reference->Orbit.Num() >= 2)
+	{
+		// (camera - C_ref) in double-double, then expressed in world units: this is the only place where the
+		// absolute fractal position enters, and it is exact regardless of how deep the camera is.
+		const FDVec3 Offset = ToDoubleVec(CameraFractal - Reference->Center);
+		CameraOffset = ToVector3f(Offset.X / Mapping.Scale, Offset.Y / Mapping.Scale, Offset.Z / Mapping.Scale);
+		const FDVec3 RefCenter = ToDoubleVec(Reference->Center);
+		ReferenceCenter = ToVector3f(RefCenter.X, RefCenter.Y, RefCenter.Z);
+		OrbitLength = Reference->Orbit.Num();
+	}
+
+	{
+		FScopeLock Lock(&StateMutex);
+		if (Reference.IsValid())
+		{
+			RenderStats.CameraDistanceEstimate = Reference->CameraDistanceEstimate * Reference->ScaleAtCreation / Mapping.Scale;
+			RenderStats.ReferenceDistance = FVector3d(CameraOffset.X, CameraOffset.Y, CameraOffset.Z).Length();
+			RenderStats.OrbitLength = OrbitLength;
+			RenderStats.bReferenceHit = Reference->bHit;
+			RenderStats.LastGenerationMilliseconds = Reference->GenerationMilliseconds;
+		}
+	}
+
+	// --- GPU resources ---
+	// The orbit is a few KB (6 x float4 per iteration); uploading it every frame is cheaper than tracking
+	// buffer lifetimes across frames.
+	constexpr int32 Float4PerPoint = sizeof(FOrbitPointGPU) / sizeof(FVector4f);
+	static_assert(sizeof(FOrbitPointGPU) == Float4PerPoint * sizeof(FVector4f), "orbit points are whole float4s");
+	FRDGBufferRef OrbitBuffer;
+	if (OrbitLength > 0)
+	{
+		OrbitBuffer = CreateStructuredBuffer(GraphBuilder, TEXT("FractalReferenceOrbit"), static_cast<uint32>(sizeof(FVector4f)),
+			static_cast<uint32>(OrbitLength * Float4PerPoint), Reference->Orbit.GetData(), static_cast<uint64>(OrbitLength) * sizeof(FOrbitPointGPU));
+	}
+	else
+	{
+		// Unused by the shader when OrbitLength == 0, but the SRV must exist.
+		const FOrbitPointGPU Empty = FractalMath::PackOrbitPoint(FDVec3(0.0, 0.0, 0.0), 8.0);
+		OrbitBuffer = CreateStructuredBuffer(GraphBuilder, TEXT("FractalReferenceOrbit"), static_cast<uint32>(sizeof(FVector4f)),
+			static_cast<uint32>(Float4PerPoint), &Empty, static_cast<uint64>(sizeof(Empty)));
+	}
+
 	FRDGTextureDesc OutputDesc = SceneColor.Texture->Desc;
 	OutputDesc.Format = PF_FloatRGBA;
 	OutputDesc.ClearValue = FClearValueBinding::Black;
 	OutputDesc.Flags |= TexCreate_UAV;
-	
 	FRDGTextureRef OutputTexture = GraphBuilder.CreateTexture(OutputDesc, TEXT("FractalOutput"));
 
-	// Allocate shader parameters
-	auto* PassParameters = GraphBuilder.AllocParameters<FPerturbationComputeShader::FParameters>();
-	PassParameters->Center = FVector2f(CurrentParams.Center);
+	const FIntPoint TextureExtent = SceneColor.Texture->Desc.Extent;
+
+	FPerturbationComputeShader::FParameters* PassParameters = GraphBuilder.AllocParameters<FPerturbationComputeShader::FParameters>();
 	PassParameters->OutputSize = OutputExtent;
-	PassParameters->Zoom = CurrentParams.Zoom;
-	PassParameters->MaxRaySteps = CurrentParams.MaxRaySteps;
-	PassParameters->MaxRayDistance = CurrentParams.MaxRayDistance;
-	PassParameters->MaxIterations = CurrentParams.MaxIterations;
-	PassParameters->BailoutRadius = CurrentParams.BailoutRadius;
-	PassParameters->MinIterations = CurrentParams.MinIterations;
-	PassParameters->ConvergenceFactor = CurrentParams.ConvergenceFactor;
-	PassParameters->FractalPower = CurrentParams.FractalPower;
-
-	const FRDGTextureDesc& SceneColorDesc = SceneColor.Texture->Desc;
-	const FIntPoint TextureExtent = SceneColorDesc.Extent;
-	const FIntPoint ViewMin = SceneColor.ViewRect.Min;
-	const FVector2f InvViewSize = FVector2f(1.0f / SceneColor.ViewRect.Width(), 1.0f / SceneColor.ViewRect.Height());
-
-	PassParameters->OutputTexture = GraphBuilder.CreateUAV(OutputTexture);
+	PassParameters->OutputOffset = ViewRect.Min;
+	PassParameters->RayDir00 = ToVector3f(Basis.DirPixel00);
+	PassParameters->RayDirDX = ToVector3f(Basis.DirDX);
+	PassParameters->RayDirDY = ToVector3f(Basis.DirDY);
+	PassParameters->PixelRadiusPerUnitDistance = static_cast<float>(Basis.PixelRadiusPerUnitDistance);
+	PassParameters->CameraOffset = CameraOffset;
+	PassParameters->FractalScale = static_cast<float>(Mapping.Scale);
+	PassParameters->ReferenceCenter = ReferenceCenter;
+	PassParameters->DirectFootprint = Params.DirectEvaluationFootprint;
+	PassParameters->OrbitLength = OrbitLength;
+	PassParameters->MaxRaySteps = Params.MaxRaySteps;
+	PassParameters->MaxIterations = Params.MaxIterations;
+	PassParameters->MinIterations = Params.MinIterations;
+	PassParameters->MaxRayDistance = Params.MaxRayDistance;
+	PassParameters->ConvergenceFactor = Params.ConvergenceFactor;
+	PassParameters->FractalPower = Params.FractalPower;
+	PassParameters->BailoutRadius = Params.BailoutRadius;
+	PassParameters->BackgroundInvExtent = FVector2f(1.0f / TextureExtent.X, 1.0f / TextureExtent.Y);
 	PassParameters->BackgroundTexture = SceneColor.Texture;
 	PassParameters->BackgroundSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-	PassParameters->BackgroundExtent = FVector2f(TextureExtent.X, TextureExtent.Y);
-	PassParameters->BackgroundInvExtent = FVector2f(1.0f / TextureExtent.X, 1.0f / TextureExtent.Y);
-	PassParameters->BackgroundViewMin = FVector2f(ViewMin.X, ViewMin.Y);
-	PassParameters->ClipToView = FMatrix44f(View.ViewMatrices.GetInvProjectionMatrix());
-	PassParameters->ViewToWorld = FMatrix44f(View.ViewMatrices.GetInvViewMatrix());
-	PassParameters->CameraOrigin = (FVector3f)View.ViewMatrices.GetViewOrigin();
-	PassParameters->ViewSize = FVector2f(SceneColor.ViewRect.Width(), SceneColor.ViewRect.Height());
-	PassParameters->InvViewSize = InvViewSize;
+	PassParameters->ReferenceOrbit = GraphBuilder.CreateSRV(FRDGBufferSRVDesc(OrbitBuffer));
+	PassParameters->OutputTexture = GraphBuilder.CreateUAV(OutputTexture);
 
-	// Create and upload orbit texture
-	FRDGTextureRef OrbitTexture = nullptr;
-	TArray<FVector4f> LocalOrbitPositionData;
-	TArray<FVector4f> LocalOrbitDerivativeData;
-	FVector3d LocalReferenceCenter;
-	int32 LocalOrbitLength = 0;
-	bool bLocalHasDerivatives = false;
-	
+	FPerturbationComputeShader::FPermutationDomain Permutation;
+	Permutation.Set<FPerturbationComputeShader::FStaticPower8>(Params.FractalPower == 8.0f);
+	TShaderMapRef<FPerturbationComputeShader> ComputeShader(GetGlobalShaderMap(View.GetFeatureLevel()), Permutation);
+	if (!ComputeShader.IsValid())
 	{
-		FScopeLock Lock(&OrbitMutex);
-		LocalOrbitPositionData = OrbitPositionData;
-		LocalOrbitDerivativeData = OrbitDerivativeData;
-		LocalReferenceCenter = CurrentReferenceCenter;
-		LocalOrbitLength = CurrentOrbitLength;
-		bLocalHasDerivatives = bOrbitHasDerivatives;
-	}
-	(void)LocalOrbitDerivativeData; // Placeholder until derivative textures are uploaded
-	(void)bLocalHasDerivatives; // Derivative sampling will be hooked up in a later task
-	
-	if (LocalOrbitLength > 0 && LocalOrbitPositionData.Num() > 0)
-	{
-		OrbitTexture = CreateOrbitTexture(GraphBuilder, LocalOrbitPositionData);
-		PassParameters->ReferenceOrbitTexture = OrbitTexture;
-		PassParameters->OrbitSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-		PassParameters->ReferenceCenter = FVector3f(LocalReferenceCenter);
-		PassParameters->OrbitLength = LocalOrbitLength;
-	}
-	else
-	{
-		// No orbit data available, create dummy 1x1 texture
-		FRDGTextureDesc DummyDesc = FRDGTextureDesc::Create2D(
-			FIntPoint(1, 1),
-			PF_A32B32G32R32F,
-			FClearValueBinding::Black,
-			TexCreate_ShaderResource | TexCreate_UAV
-		);
-		OrbitTexture = GraphBuilder.CreateTexture(DummyDesc, TEXT("DummyOrbitTexture"));
-		FRDGTextureUAVRef DummyUAV = GraphBuilder.CreateUAV(OrbitTexture);
-		AddClearUAVPass(GraphBuilder, DummyUAV, FLinearColor::Black);
-		
-		PassParameters->ReferenceOrbitTexture = OrbitTexture;
-		PassParameters->OrbitSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-		PassParameters->ReferenceCenter = FVector3f::ZeroVector;
-		PassParameters->OrbitLength = 0;
+		UE_LOG(LogFractalViewExtension, Error, TEXT("FPerturbationComputeShader is not valid"));
+		return SceneColor;
 	}
 
 	const FIntVector GroupCount(
@@ -220,88 +239,7 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 		FMath::DivideAndRoundUp(OutputExtent.Y, NUM_THREADS_PerturbationShader_Y),
 		1);
 
-	const bool bImmediateMode = GraphBuilder.IsImmediateMode();
-	if (GroupCount.X <= 0 || GroupCount.Y <= 0)
-	{
-		UE_LOG(LogFractalViewExtension, Warning, TEXT("RenderFractal skipped: invalid dispatch group count (%d, %d, %d)"), GroupCount.X, GroupCount.Y, GroupCount.Z);
-		return SceneColor;
-	}
+	FComputeShaderUtils::AddPass(GraphBuilder, RDG_EVENT_NAME("RenderFractal"), ComputeShader, PassParameters, GroupCount);
 
-	FComputeShaderUtils::AddPass(
-		GraphBuilder,
-		RDG_EVENT_NAME("RenderFractal"),
-		ComputeShader,
-		PassParameters,
-		GroupCount
-	);
-
-	return FScreenPassTexture(OutputTexture, SceneColor.ViewRect);
-}
-
-FRDGTextureRef FFractalSceneViewExtension::CreateOrbitTexture(
-	FRDGBuilder& GraphBuilder,
-	const TArray<FVector4f>& OrbitData)
-{
-	TRACE_CPUPROFILER_EVENT_SCOPE(FFractalSceneViewExtension::CreateOrbitTexture);
-	
-	if (OrbitData.Num() == 0)
-	{
-		UE_LOG(LogFractalViewExtension, Warning, TEXT("CreateOrbitTexture: Empty orbit data"));
-		return nullptr;
-	}
-	
-	const int32 OrbitLength = OrbitData.Num();
-	
-	// Create 1D texture (Width = OrbitLength, Height = 1)
-	// Format: PF_A32B32G32R32F (128-bit per texel, RGBA float)
-	FRDGTextureDesc OrbitDesc = FRDGTextureDesc::Create2D(
-		FIntPoint(OrbitLength, 1),
-		PF_A32B32G32R32F,
-		FClearValueBinding::Black,
-		TexCreate_ShaderResource
-	);
-	
-	FRDGTextureRef OrbitTexture = GraphBuilder.CreateTexture(OrbitDesc, TEXT("ReferenceOrbitTexture"));
-	
-	// Upload orbit data using an RDG copy pass and render-graph managed backing storage
-	FUploadOrbitDataParameters* UploadParams = GraphBuilder.AllocParameters<FUploadOrbitDataParameters>();
-	UploadParams->OrbitTexture = OrbitTexture;
-	
-	const int32 DataSizeBytes = OrbitLength * sizeof(FVector4f);
-	const uint32 RowPitchBytes = static_cast<uint32>(OrbitLength * sizeof(FVector4f));
-
-	FRDGUploadData<FVector4f> UploadData(GraphBuilder, OrbitLength);
-	FMemory::Memcpy(UploadData.GetData(), OrbitData.GetData(), DataSizeBytes);
-
-	const uint8* UploadDataPtr = reinterpret_cast<const uint8*>(UploadData.GetData());
-	
-	GraphBuilder.AddPass(
-		RDG_EVENT_NAME("UploadOrbitData"),
-		UploadParams,
-		ERDGPassFlags::Copy | ERDGPassFlags::NeverCull,
-		[OrbitTexture, UploadDataPtr, OrbitLength, RowPitchBytes](FRHICommandList& RHICmdList)
-		{
-			// Get the RHI texture
-			FRHITexture* TextureRHI = OrbitTexture->GetRHI();
-			
-			// Define the region to update
-			FUpdateTextureRegion2D Region(0, 0, 0, 0, OrbitLength, 1);
-			
-			// Update texture with orbit data
-			RHICmdList.UpdateTexture2D(
-				TextureRHI,
-				0, // Mip level
-				Region,
-				RowPitchBytes,
-				UploadDataPtr
-			);
-		}
-	);
-	
-	UE_LOG(LogFractalViewExtension, VeryVerbose, 
-		TEXT("Created orbit texture: %dx%d, %d points, %.2f KB"),
-		OrbitLength, 1, OrbitLength, DataSizeBytes / 1024.0f
-	);
-	
-	return OrbitTexture;
+	return FScreenPassTexture(OutputTexture, ViewRect);
 }

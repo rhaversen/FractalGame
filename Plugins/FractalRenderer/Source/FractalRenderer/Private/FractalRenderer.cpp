@@ -5,11 +5,19 @@
 #include "ShaderCore.h"
 #include "Misc/CoreDelegates.h"
 #include "Engine/Engine.h"
+#include "FractalMath/DoubleDouble.h"
 
 #define LOCTEXT_NAMESPACE "FFractalRendererModule"
 
 void FFractalRendererModule::StartupModule()
 {
+	// Double-double arithmetic relies on exact IEEE rounding; value-changing optimisations (fast-math,
+	// re-association) silently break it and with it every zoom deeper than ~1e-13.
+	if (!FractalMath::DDSelfTest())
+	{
+		UE_LOG(LogTemp, Error, TEXT("FractalRenderer: double-double self test FAILED - the module was compiled with value-changing floating point optimisations. Deep zoom will be wrong."));
+	}
+
 	// Map the plugin's shader directory
 	FString PluginShaderDir = FPaths::Combine(IPluginManager::Get().FindPlugin(TEXT("FractalRenderer"))->GetBaseDir(), TEXT("Shaders"));
 	AddShaderSourceDirectoryMapping(TEXT("/FractalRendererShaders"), PluginShaderDir);

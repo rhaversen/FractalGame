@@ -14,7 +14,7 @@ Mac builds are not currently provided, but you can build from source following t
 
 Windows
 
-- [Unreal Engine 5.6](https://www.unrealengine.com/en-US/download)
+- [Unreal Engine 5.7](https://www.unrealengine.com/en-US/download)
 - [Visual Studio 2022 (x64)](https://visualstudio.microsoft.com/downloads/)
   - Include the `Game development with C++` workload
 - [.NET SDK](https://dotnet.microsoft.com/download)
@@ -25,7 +25,7 @@ macOS
 
 Untested, but should work with:
 
-- [Unreal Engine 5.6](https://www.unrealengine.com/en-US/download)
+- [Unreal Engine 5.7](https://www.unrealengine.com/en-US/download)
 - [Xcode](https://developer.apple.com/xcode/) (matching your UE toolchain)
 
 ### Installation

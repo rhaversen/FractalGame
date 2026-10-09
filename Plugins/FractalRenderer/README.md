@@ -1,6 +1,6 @@
 # FractalRenderer Plugin
 
-Real-time Mandelbulb ray marcher integrated into Unreal Engine 5.6 through a custom Scene View Extension.
+Real-time Mandelbulb ray marcher integrated into Unreal Engine 5.7 through a custom Scene View Extension.
 
 ## Folder Layout
 

@@ -1,0 +1,167 @@
+// Exact perturbation of the signed-permutation folds (abs, descending sort, tetrahedral fold) of the IFS
+// formulas (CPU: FractalMath/Formulas/FoldTracker.h). Pure HLSL.
+//
+// These folds map a point to a signed permutation of its components. The pixel is folded symbolically: it is
+// kept as P_k = Sign_k X_{Index_k} + Delta_k, X being the reference at the start of the iteration (so Delta is
+// the signed permutation of the offset d, exact), and each branch test of the pixel,
+//   sort  P_a < P_b      <=>  Delta_a - Delta_b < Sign_b X_{Index_b} - Sign_a X_{Index_a}
+//   tetra P_a + P_b < 0  <=>  Delta_a + Delta_b < -(Sign_a X_{Index_a} + Sign_b X_{Index_b})
+// compares float offsets with a pair value +-X_i +- X_j (i != j) that the CPU rounded from double-double.
+// The folded offset against the reference R_k = RSign_k X_{RIndex_k} (whose signed permutation the CPU
+// packs) is P_k - R_k = Delta_k + (pair value, 2 Sign_k X_i or 0). The folds are continuous isometries, so
+// |P - R| <= |d|: every term is O(|d|) and nothing cancels. A test misclassified by float rounding is off by
+// at most a few ulps of |d|, and since both branches agree on the fold plane the error stays that small.
+// The abs fold tests Z~_k + d_k < 0 against the float reference: it can only flip where |Z_k| ~ |d_k|.
+
+#pragma once
+
+#include "FractalMathCommon.ush"
+
+// X0 + X1, X0 + X2, X1 + X2 and X0 - X1, X0 - X2, X1 - X2 of the reference X (FractalMath::Folds::PackPairTable).
+struct FPPairTable
+{
+	float3 Sum;
+	float3 Diff;
+};
+
+// Pixel being folded: slot k holds Sign[k] * X[Index[k]] + Delta[k].
+struct FPFoldTracker
+{
+	float3 Delta;
+	float3 Sign;
+	int3 Index;
+};
+
+FPPairTable FP_LoadPairTable(float4 P1, float4 P2)
+{
+	FPPairTable Pairs;
+	Pairs.Sum = P1.xyz;
+	Pairs.Diff = float3(P1.w, P2.x, P2.y);
+	return Pairs;
+}
+
+FPFoldTracker FP_FoldTrackerBegin(float3 D)
+{
+	FPFoldTracker T;
+	T.Delta = D;
+	T.Sign = float3(1.0f, 1.0f, 1.0f);
+	T.Index = int3(0, 1, 2);
+	return T;
+}
+
+// SA X_A + SB X_B for A != B and signs SA, SB = +-1: S_lo (X_lo + SA SB X_hi) with lo < hi the two indices.
+// The pair (lo, hi) = (0,1), (0,2), (1,2) has table index lo + hi - 1.
+float FP_PairValue(FPPairTable Pairs, float SA, int A, float SB, int B)
+{
+	int K = A + B - 1;
+	float V = (SA == SB) ? Pairs.Sum[K] : Pairs.Diff[K];
+	return ((A < B) ? SA : SB) * V;
+}
+
+// z = abs(z) at the start of the folds (slot k holds X_k + Delta_k, Z = float reference).
+void FP_FoldAbs(inout FPFoldTracker T, float3 Z)
+{
+	[unroll]
+	for (int K = 0; K < 3; ++K)
+	{
+		if (T.Delta[K] < -Z[K])
+		{
+			T.Delta[K] = -T.Delta[K];
+			T.Sign[K] = -T.Sign[K];
+		}
+	}
+}
+
+// (P_A, P_B) = (S P_B, S P_A), S = +-1
+void FP_FoldExchange(inout FPFoldTracker T, int A, int B, float S)
+{
+	float DeltaA = T.Delta[A];
+	float SignA = T.Sign[A];
+	int IndexA = T.Index[A];
+	T.Delta[A] = S * T.Delta[B];
+	T.Sign[A] = S * T.Sign[B];
+	T.Index[A] = T.Index[B];
+	T.Delta[B] = S * DeltaA;
+	T.Sign[B] = S * SignA;
+	T.Index[B] = IndexA;
+}
+
+// if (z_A < z_B) swap(z_A, z_B)
+void FP_FoldSortStep(inout FPFoldTracker T, FPPairTable Pairs, int A, int B)
+{
+	if (T.Delta[A] - T.Delta[B] < FP_PairValue(Pairs, T.Sign[B], T.Index[B], -T.Sign[A], T.Index[A]))
+	{
+		FP_FoldExchange(T, A, B, 1.0f);
+	}
+}
+
+// Descending sort: if x<y swap x,y; if x<z swap x,z; if y<z swap y,z.
+void FP_FoldSort(inout FPFoldTracker T, FPPairTable Pairs)
+{
+	FP_FoldSortStep(T, Pairs, 0, 1);
+	FP_FoldSortStep(T, Pairs, 0, 2);
+	FP_FoldSortStep(T, Pairs, 1, 2);
+}
+
+// if (z_A + z_B < 0) (z_A, z_B) = (-z_B, -z_A)
+void FP_FoldTetrahedralStep(inout FPFoldTracker T, FPPairTable Pairs, int A, int B)
+{
+	if (T.Delta[A] + T.Delta[B] < FP_PairValue(Pairs, -T.Sign[A], T.Index[A], -T.Sign[B], T.Index[B]))
+	{
+		FP_FoldExchange(T, A, B, -1.0f);
+	}
+}
+
+void FP_FoldTetrahedral(inout FPFoldTracker T, FPPairTable Pairs)
+{
+	FP_FoldTetrahedralStep(T, Pairs, 0, 1);
+	FP_FoldTetrahedralStep(T, Pairs, 0, 2);
+	FP_FoldTetrahedralStep(T, Pairs, 1, 2);
+}
+
+// Folded pixel minus folded reference. Code is the reference's signed permutation
+// (FractalMath::Folds::TSignedPermutationFold::Code: bits 3k..3k+1 index, bit 3k+2 negative sign), Z the
+// float reference. Also returns the folded float reference R.
+float3 FP_FoldTrackerOffset(FPFoldTracker T, FPPairTable Pairs, float3 Z, float Code, out float3 R)
+{
+	uint Bits = (uint)Code;
+	float3 Offset;
+	[unroll]
+	for (int K = 0; K < 3; ++K)
+	{
+		uint Slot = Bits >> (3 * K);
+		int RIndex = (int)(Slot & 3u);
+		float RSign = ((Slot & 4u) != 0u) ? -1.0f : 1.0f;
+		R[K] = RSign * Z[RIndex];
+		float Base;
+		if (T.Index[K] != RIndex)
+		{
+			Base = FP_PairValue(Pairs, T.Sign[K], T.Index[K], -RSign, RIndex);
+		}
+		else
+		{
+			// Same component with opposite signs: |2 X_i| <= |P_k - R_k| + |Delta_k|, so X_i is O(|d|).
+			Base = (T.Sign[K] == RSign) ? 0.0f : 2.0f * T.Sign[K] * Z[RIndex];
+		}
+		Offset[K] = Base + T.Delta[K];
+	}
+	return Offset;
+}
+
+// Plain float descending sort.
+float3 FP_SortDescending(float3 Z)
+{
+	if (Z.x < Z.y) Z.xy = Z.yx;
+	if (Z.x < Z.z) Z.xz = Z.zx;
+	if (Z.y < Z.z) Z.yz = Z.zy;
+	return Z;
+}
+
+// Plain float tetrahedral fold.
+float3 FP_TetrahedralFold(float3 Z)
+{
+	if (Z.x + Z.y < 0.0f) Z.xy = -Z.yx;
+	if (Z.x + Z.z < 0.0f) Z.xz = -Z.zx;
+	if (Z.y + Z.z < 0.0f) Z.yz = -Z.zy;
+	return Z;
+}

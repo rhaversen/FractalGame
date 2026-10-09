@@ -13,10 +13,13 @@
 // K = r^(p-1) sin(p theta) / sin(theta). It is continuous except on the negative real axis (s = 0, a < 0), where
 // n is undefined and q^p := (r^p cos(p pi), 0, 0, 0).
 //
-// c_J (see the constants below) was chosen by rendering: its complex shadow c' = Re c_J + i |Im c_J| is the centre
-// of a period-3 component of the degree-5 Multibrot set, so the default power 5 gives a connected set (the 4D set
-// contains the critical orbit's plane) whose 3D slice is a cage of interlocked shells with windows; tilting Im c_J
-// out of the visible slice breaks the rotational symmetry about the real axis.
+// c_J = (0.264, 0.542, 0, 0.542) was chosen by rendering (Tools/PerturbationLab). The 4D set is invariant under
+// rotations of the imaginary space about Im c_J, and its critical orbit 0 -> c_J -> ... stays in the plane of 1 and
+// Im c_J, where it is the orbit of c' = Re c_J + i |Im c_J| = 0.264 + 0.7665 i under z^p + c'. For p = 5, c' lies in a
+// period-3 component of the Multibrot set (centre 0.2639 + 0.7670 i), so the default power gives a connected set
+// whose slice is a cage of interlocked shells with windows; Im c_J is tilted 45 degrees out of the visible slice so
+// that no symmetry axis lies in view. Powers 2 .. 8 give related shell cages (for p = 2, 3, 4, 6 c' is outside the
+// Multibrot set and the shells break up into dust).
 //
 // GPU payload (3 float4, decoded by FP_DecodeQuaternionRef), computed in double from the float-rounded reference Q~
 // so that the GPU sees self-consistent coefficients:
@@ -158,12 +161,13 @@ struct FQuaternionFormula
 
 	/**
 	 * Like ClampToFloatRange, but up to 1e37: with powers up to 25 the last orbit point (|Z|^p + c after
-	 * |Z| <= ReferenceEscapeRadius = 20) and R^p reach ~3e32, which must not be clipped.
+	 * |Z| <= ReferenceEscapeRadius = 20) and R^p reach ~3e32, which must not be clipped. NaN (inf * 0 in the
+	 * never-used coefficients of that last point) becomes 0.
 	 */
 	static float ToFloatWide(double V)
 	{
 		constexpr double Limit = 1.0e37;
-		return static_cast<float>(V > Limit ? Limit : (V < -Limit ? -Limit : V));
+		return V == V ? static_cast<float>(V > Limit ? Limit : (V < -Limit ? -Limit : V)) : 0.0f;
 	}
 
 	template <typename T>

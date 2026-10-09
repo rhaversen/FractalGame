@@ -69,7 +69,12 @@ struct FKaleidoscopicIFSFormula
 		const Folds::TSignedPermutationFold<double> F = Fold(Z);
 		double J[3][3];
 		F.Jacobian(J);
-		const double SphereLimit = Folds::SphereFoldSeries(F.Value, Tolerance, J);
+		// SphereFoldSeries picks the branch and measures the distances to the spheres from |B| of the double-rounded
+		// reference, which is a few ulps off and not monotonic in it: a reference on a sphere (e.g. the fixed points
+		// with |Z| = 1 at s = 2) could get the other branch's Jacobian with a radius ~1e-16. Shrinking the distances
+		// by that uncertainty makes the branch certain whenever the limit is positive.
+		const double Uncertainty = 4.0 * Folds::RoundingMargin * std::sqrt(Dot(F.Value, F.Value));
+		const double SphereLimit = Folds::SphereFoldSeries(F.Value, Tolerance, J) - Uncertainty;
 		for (int I = 0; I < 3; ++I)
 		{
 			for (int K = 0; K < 3; ++K)
@@ -77,7 +82,8 @@ struct FKaleidoscopicIFSFormula
 				OutJ[I][K] = Params.Power * J[I][K];
 			}
 		}
-		return SphereLimit < F.BranchDistance ? SphereLimit : F.BranchDistance;
+		const double Limit = SphereLimit < F.BranchDistance ? SphereLimit : F.BranchDistance;
+		return Limit > 0.0 ? Limit : 0.0;
 	}
 
 	static double ReferenceEscapeRadius(const FFormulaParams& Params) { return 4.0 * Params.Bailout; }

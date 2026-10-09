@@ -22,14 +22,19 @@ namespace FractalMath
 
 namespace Folds
 {
-	/** Code of the identity permutation (slot k holds +X_k). */
-	constexpr int IdentityFoldCode = 0 | (1 << 3) | (2 << 6);
+	/**
+	 * Relative uncertainty of an orbit point rounded to double (2^-52, twice the unit roundoff). The series skip
+	 * sees the double-rounded reference, which can sit a few ulps from the exact one: a branch distance it
+	 * measures must be shrunk by this much (a reference closer to a fold plane than that gives 0).
+	 */
+	constexpr double RoundingMargin = 2.220446049250313e-16;
 
 	/**
 	 * A point being folded by signed permutations. Value[k] == Sign[k] * X[Index[k]] exactly (abs, swaps and
 	 * negations are exact in every precision). BranchDistance is the largest |d| for which X + d takes the same
 	 * branch in every fold applied so far (the folds are isometries, so the folded offset has length |d|):
-	 * |X_i| for an abs test, |v| / sqrt(2) for a pair test of value v.
+	 * |X_i| for an abs test, |v| / sqrt(2) for a pair test of value v, each less the uncertainty of X if it was
+	 * rounded to double. (Rounding is monotonic and odd, so it never flips a test, it can only make it a tie.)
 	 */
 	template <typename T>
 	struct TSignedPermutationFold
@@ -46,7 +51,7 @@ namespace Folds
 		{
 			for (int K = 0; K < 3; ++K)
 			{
-				NoteDistance(std::fabs(RToDouble(Value[K])));
+				NoteDistance(std::fabs(RToDouble(Value[K])) * (1.0 - RoundingMargin));
 				if (Value[K] < T(0.0))
 				{
 					Value[K] = -Value[K];
@@ -58,7 +63,7 @@ namespace Folds
 		/** if (z_a < z_b) swap(z_a, z_b). */
 		void SortStep(int A, int B)
 		{
-			NoteDistance(std::fabs(RToDouble(Value[A] - Value[B])) * InvSqrt2);
+			NotePairDistance(Value[A] - Value[B], A, B);
 			if (Value[A] < Value[B])
 			{
 				Exchange(A, B, 1);
@@ -77,7 +82,7 @@ namespace Folds
 		void TetrahedralStep(int A, int B)
 		{
 			const T Sum = Value[A] + Value[B];
-			NoteDistance(std::fabs(RToDouble(Sum)) * InvSqrt2);
+			NotePairDistance(Sum, A, B);
 			if (Sum < T(0.0))
 			{
 				Exchange(A, B, -1);
@@ -94,7 +99,7 @@ namespace Folds
 
 		/**
 		 * The signed permutation as an integer below 512, exact in float: bits 3k..3k+1 hold Index[k], bit 3k+2
-		 * is set when Sign[k] is negative (decoded by FP_FoldSlot in FractalFoldTracker.ush).
+		 * is set when Sign[k] is negative (decoded by FP_FoldTrackerOffset in FractalFoldTracker.ush).
 		 */
 		int Code() const
 		{
@@ -123,7 +128,15 @@ namespace Folds
 
 		void NoteDistance(double Distance)
 		{
+			Distance = Distance > 0.0 ? Distance : 0.0;
 			BranchDistance = Distance < BranchDistance ? Distance : BranchDistance;
+		}
+
+		/** Pair test of value V = +-Value[A] +- Value[B]. */
+		void NotePairDistance(const T& V, int A, int B)
+		{
+			const double Uncertainty = RoundingMargin * (std::fabs(RToDouble(Value[A])) + std::fabs(RToDouble(Value[B])));
+			NoteDistance((std::fabs(RToDouble(V)) - Uncertainty) * InvSqrt2);
 		}
 
 		/** (z_a, z_b) = (S z_b, S z_a) for S = +-1. */

@@ -1,7 +1,9 @@
 // Sierpinski tetrahedron, scale 2; vertices (1,1,1), (-1,-1,1), (1,-1,-1), (-1,1,-1). The set is the attractor
 // of four copies scaled by 1/s, of dimension log 4 / log s for s >= 2: generic rays meet it only for s <= 2.
 // For larger s only rays through exactly representable points of it do: the vertices (the fixed point (1,1,1)
-// and its fold images), approached along axes and diagonals so that the ray passes through them exactly.
+// and its fold images), approached along an axis so that the ray passes through them exactly. (Near a vertex
+// the DE overestimates the distance by up to ~12%, so whether the 0.9 DE march stops at the vertex or steps
+// past it depends on the start; these starts were checked to converge in quad precision.)
 // The location list therefore follows LAB_POWER (test_perturbed_de's scale override). Generic locations were
 // found with random rays from a sphere of radius 3 towards the origin (hitting at scales 1.5 and 2).
 inline FFormulaLab Sierpinski()
@@ -17,16 +19,16 @@ inline FFormulaLab Sierpinski()
 			{"side", {-0.500, 2.948, 0.242}, {0.336, -0.938, -0.088}, false},
 			{"lower", {0.618, 2.222, -1.919}, {-0.314, -0.662, 0.680}, false},
 			{"back", {-0.913, -2.327, -1.659}, {0.337, 0.790, 0.512}, false},
-			{"vertex axis", {3.0, 1.0, 1.0}, {-1.0, 0.0, 0.0}, false},
+			{"left", {-2.885, 0.796, -0.204}, {0.980, -0.200, 0.001}, false},
 		};
 	}
 	else
 	{
 		L.Locations = {
-			{"vertex axis", {3.0, 1.0, 1.0}, {-1.0, 0.0, 0.0}, false},
-			{"vertex diagonal", {-3.0, 3.0, -3.0}, {1.0, -1.0, 1.0}, false},
-			{"vertex side", {-1.0, -3.0, 1.0}, {0.0, 1.0, 0.0}, false},
-			{"vertex below", {1.0, -1.0, -3.0}, {0.0, 0.0, 1.0}, false},
+			{"vertex +x", {3.0, 1.0, 1.0}, {-1.0, 0.0, 0.0}, false},
+			{"vertex -y", {-1.0, -3.0, 1.0}, {0.0, 1.0, 0.0}, false},
+			{"vertex -z", {1.0, -1.0, -3.0}, {0.0, 0.0, 1.0}, false},
+			{"vertex -x", {-3.0, 1.0, -1.0}, {1.0, 0.0, 0.0}, false},
 		};
 	}
 	L.Scenes = {

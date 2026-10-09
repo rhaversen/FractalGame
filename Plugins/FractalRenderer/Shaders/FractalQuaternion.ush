@@ -213,13 +213,12 @@ float4 FP_PerturbedQuaternionPowerDelta(FPQuaternionRef Ref, float4 D, float4 W,
 	float3 DImag;
 	if (SSW > 0.0f)
 	{
-		// Im(zeta_w^p) n_w - K v = DIm n_w + (Im(zeta^p) n_w - K v), and for s > 0 the bracket is K (s n_w - v) =
-		// K (dv s - v ds) / s_w, formed in the rescaled units and brought back before multiplying by K (only the
-		// final, physically sized term can underflow). A reference exactly on the negative real axis (non-integer p)
-		// has K v = 0 although Im(zeta^p) = r^p sin(p pi): the bracket is r^p sin(p pi) n_w there (0 elsewhere on
-		// the axis, where sin(p theta) = 0).
-		// While s_w >= s / 2 the products dv s and v ds carry errors ~eps s |dv| <= 2 eps s_w |dv|; closer to the
-		// axis (|dv| >= s / 2) the direct form s n_w - v is used instead. Either way the error is <= 2 eps K |dv|.
+		// Im(zeta_w^p) n_w - K v = DIm n_w + (Im(zeta^p) n_w - K v). For s > 0 the bracket is K s (n_w - n) with
+		// s (n_w - n) = (dv s - v ds) / s_w while s_w >= s / 2 (errors ~eps s |dv| <= 2 eps s_w |dv|), else s n_w - v
+		// (|dv| >= s / 2 there): either way the error is <= 2 eps K |dv|. It is formed in the rescaled units and
+		// brought back before multiplying by K, so only the physically sized result can underflow. A reference exactly
+		// on the negative real axis (non-integer p) has K v = 0 although Im(zeta^p) = r^p sin(p pi): there the bracket
+		// is r^p sin(p pi) n_w (elsewhere on the axis sin(p theta) = 0).
 		float InvSSW = 1.0f / SSW;
 		float3 NW = SVW * InvSSW;
 		float3 SNChange = (SSW >= 0.5f * SS) ? (SDV * SS - SV * SDS) * InvSSW : SS * NW - SV;

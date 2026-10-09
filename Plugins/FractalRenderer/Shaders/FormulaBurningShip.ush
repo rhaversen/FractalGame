@@ -28,10 +28,11 @@ FP_STATE FP_FormulaLoadState(StructuredBuffer<float4> Orbit, int Base)
 }
 
 // |Z + D| - |Z| for one component, W = Z + D (float). The branch test is exact: fl(Z + D) has the sign of
-// the real sum Z + D (up to denormal flushing, |Z + D| < 1e-38). Same side: +-D. Opposite sides: -+(2Z + D),
-// where 2Z is exact and |Z| < |D|, so the rounding error is ~eps |D|. Against the double-double reference
-// (|Z~ - Z| <= eps |Z| / 2) the branch can only be wrong when |Z + D| <= eps |Z| / 2, which implies |Z| ~ |D|,
-// and the wrong branch is off by 2 |Z + D| <= eps |D|. The fold is exact to float precision relative to D.
+// the real sum Z + D (up to denormal flushing, |Z + D| < 1e-38). Same side: +-D, exact. Opposite sides:
+// -+(2Z + D); there |Z| < |D|, so its rounding and the use of Z~ for the double-double reference
+// (|Z~ - Z| <= eps |Z| / 2) both cost O(eps |D|). Z~ can also put the pixel on the wrong side only when
+// |Z + D| <= eps |Z| / 2, i.e. |Z| ~ |D|, and the wrong branch is then off by 2 |Z + D| <= eps |D|: the fold is
+// exact to float precision relative to D.
 float FP_BurningShipAbsDelta(float Z, float D, float W)
 {
 	float SZ = (Z < 0.0f) ? -1.0f : 1.0f;

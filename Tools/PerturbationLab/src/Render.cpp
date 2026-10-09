@@ -7,7 +7,7 @@
 // Usage: render_lab [width height truth(0/1) formula|all scene]
 #include "LabCommon.h"
 #include "FormulaScenes.h"
-#include "FractalMath/FractalCamera.h"
+#include "UECameraReplica.h"
 #include <thread>
 #include <atomic>
 #include <chrono>

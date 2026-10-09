@@ -55,12 +55,6 @@ void FFractalCameraMapping::ZoomAround(const FVector3d& WorldPoint, double Facto
 	Scale *= Factor;
 }
 
-void FFractalCameraMapping::SetFractalPositionOf(const FVector3d& WorldPoint, const FDDVec3& FractalPoint)
-{
-	Origin = FractalPoint;
-	Anchor = WorldPoint;
-}
-
 // ---------------------------------------------------------------------------------------------
 // FFractalReferenceManager
 // ---------------------------------------------------------------------------------------------

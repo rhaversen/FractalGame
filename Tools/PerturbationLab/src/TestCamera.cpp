@@ -1,6 +1,6 @@
 // Verifies the camera maths that turns Unreal's view matrices into per-pixel world ray directions.
 #include "LabCommon.h"
-#include "FractalMath/FractalCamera.h"
+#include "UECameraReplica.h"
 #include <random>
 
 using namespace FractalMath;

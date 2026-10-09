@@ -8,6 +8,30 @@ Download the latest Windows build from the [Releases](https://github.com/rhavers
 
 Mac builds are not currently provided, but you can build from source following the instructions below.
 
+### Controls
+
+| Input | Action |
+| --- | --- |
+| W / A / S / D | Move forward / left / back / right |
+| Space / Left Shift | Move up / down |
+| Mouse | Look around |
+| Q / E | Roll |
+| Mouse wheel | Speed limit (percent of the distance to the surface covered per second) |
+| Right / left mouse button (hold) | Increase / decrease the power (exponent or folding scale) |
+| Mouse forward / back thumb button (hold) | Increase / decrease the fractal's scale |
+| Tab | Next fractal |
+| R | Reset position, speed and fractal parameters |
+| H (hold) | Show the controls |
+| Esc | Quit |
+
+Fractals: Mandelbulb, Burning Ship, Julia Set, Mandelbox, Inverted Menger, Quaternion (Julia), Sierpinski Tetrahedron
+and Kaleidoscopic IFS.
+
+To zoom, fly towards the surface: the speed limit follows the distance to the fractal, so you can keep approaching
+it. The renderer uses perturbation from a high-precision reference orbit, so the detail stays sharp down to
+magnifications of about 10^27 instead of breaking up where 32-bit floats run out (around 10^4 to 10^5). See
+`PERTURBATION_IMPLEMENTATION_NOTES.md` for how it works and how it was verified.
+
 ## Development
 
 ### Prerequisites

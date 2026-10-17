@@ -66,5 +66,5 @@ void PerturbationShader(uint3 DispatchThreadId : SV_DispatchThreadID)
 	uint2 PixelPos = DispatchThreadId.xy + (uint2)OutputOffset;
 	float2 BackgroundUV = saturate((float2(PixelPos) + 0.5f) * BackgroundInvExtent);
 	float3 Background = BackgroundTexture.SampleLevel(BackgroundSampler, BackgroundUV, 0.0f).rgb;
-	OutputTexture[PixelPos] = float4(FP_CompositeMarch(March, Background, MaxRaySteps, MaxIterations), 1.0f);
+	OutputTexture[PixelPos] = float4(FP_Shade(ReferenceOrbit, V, March, Dir, Background), 1.0f);
 }

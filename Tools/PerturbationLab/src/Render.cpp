@@ -107,8 +107,8 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 	FRenderSettings RS;
 	RS.Params.Power = getenv("LAB_POWER") ? std::atof(getenv("LAB_POWER")) : Lab.Power;
 	const int Index = static_cast<int>(F::Type);
-	FVkKernel KPert(Ctx, LabSpv("RenderMain_T" + std::to_string(Index)), "RenderMain", {true, false, false, false});
-	FVkKernel KNaive(Ctx, LabSpv("RenderNaive_T" + std::to_string(Index)), "RenderMain", {true, false, false, false});
+	FVkKernel KPert(Ctx, LabSpv("RenderMain_T" + std::to_string(Index)), "RenderMain", {true, false, false, false, false});
+	FVkKernel KNaive(Ctx, LabSpv("RenderNaive_T" + std::to_string(Index)), "RenderMain", {true, false, false, false, false});
 	const std::string ImageDir = std::string(LAB_OUT_DIR) + "/images/" + GetFractalName(F::Type);
 	mkdir(ImageDir.c_str(), 0755);
 	std::printf("\n##### %s (power/scale %g) #####\n", GetFractalName(F::Type), RS.Params.Power);
@@ -180,7 +180,7 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 		// --- GPU renders ---
 		FVkBuffer CB = Ctx.CreateBuffer(sizeof(FLabRenderParams), true);
 		FVkBuffer Orb = Ctx.CreateBuffer(Orbit.size() * sizeof(float));
-		FVkBuffer OC = Ctx.CreateBuffer((size_t)W * H * 16), OD = Ctx.CreateBuffer((size_t)W * H * 16);
+		FVkBuffer OC = Ctx.CreateBuffer((size_t)W * H * 16), OD = Ctx.CreateBuffer((size_t)W * H * 16), OS = Ctx.CreateBuffer((size_t)W * H * 16);
 		std::memcpy(Orb.Mapped, Orbit.data(), Orbit.size() * sizeof(float));
 		FLabRenderParams* P = CB.As<FLabRenderParams>();
 		for (int I = 0; I < 3; I++)
@@ -214,13 +214,15 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 		auto SumIter = [&](const std::vector<FPixel>& Img) { double T = 0; for (const FPixel& X : Img) T += X.TotalIter; return T; };
 		auto SumSteps = [&](const std::vector<FPixel>& Img) { double T = 0; for (const FPixel& X : Img) T += X.Steps; return T; };
 		auto SumSkipped = [&](const std::vector<FPixel>& Img) { double T = 0; for (const FPixel& X : Img) T += X.Skipped; return T; };
-		KPert.Dispatch({&CB, &Orb, &OC, &OD}, (W + 7) / 8, (H + 7) / 8, 1); // warm-up (JIT)
-		double PertMs = KPert.Dispatch({&CB, &Orb, &OC, &OD}, (W + 7) / 8, (H + 7) / 8, 1);
+		KPert.Dispatch({&CB, &Orb, &OC, &OD, &OS}, (W + 7) / 8, (H + 7) / 8, 1); // warm-up (JIT)
+		double PertMs = KPert.Dispatch({&CB, &Orb, &OC, &OD, &OS}, (W + 7) / 8, (H + 7) / 8, 1);
 		Grab(ImgP);
-		KNaive.Dispatch({&CB, &Orb, &OC, &OD}, (W + 7) / 8, (H + 7) / 8, 1);
-		double NaiveMs = KNaive.Dispatch({&CB, &Orb, &OC, &OD}, (W + 7) / 8, (H + 7) / 8, 1);
+		std::vector<FPixel> ImgS((size_t)W * H);
+		for (int I = 0; I < W * H; I++) { const float* C = OS.As<float>() + 4 * I; ImgS[I] = {C[0], C[1], C[2], 0, 0, 0, 0}; }
+		KNaive.Dispatch({&CB, &Orb, &OC, &OD, &OS}, (W + 7) / 8, (H + 7) / 8, 1);
+		double NaiveMs = KNaive.Dispatch({&CB, &Orb, &OC, &OD, &OS}, (W + 7) / 8, (H + 7) / 8, 1);
 		Grab(ImgN);
-		for (FVkBuffer* B : {&CB, &Orb, &OC, &OD}) Ctx.DestroyBuffer(*B);
+		for (FVkBuffer* B : {&CB, &Orb, &OC, &OD, &OS}) Ctx.DestroyBuffer(*B);
 
 		// --- CPU ground truth (double-double positions, identical march logic) ---
 		double CpuMs = 0;
@@ -278,6 +280,7 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 		std::string Base = ImageDir + "/" + Sc.Name;
 		WritePPM(Base + "_perturbation.ppm", ImgP, W, H);
 		WritePPM(Base + "_naive.ppm", ImgN, W, H);
+		WritePPM(Base + "_shaded.ppm", ImgS, W, H);
 		if (bTruth) WritePPM(Base + "_truth.ppm", ImgT, W, H);
 		double N = (double)W * H;
 		std::printf("%-7s | %8.3f %8s %6d | %9.1f %9.1f %9.1f | %7.2f%% %7.2f%% | %7.2f%% %7.2f%% %6.1fms | %6.1f %6.1f ns/it  %6.1f it/px\n", Sc.Name, RM.ReferenceDistance, RM.bReferenceInside ? "yes" : "no", OrbitLen,

@@ -6,7 +6,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 src_root = sys.argv[1] if len(sys.argv) > 1 else "out/images"
 dst_dir = sys.argv[2] if len(sys.argv) > 2 else "out"
-cols = [("naive", "Plain float (old)"), ("perturbation", "GPU perturbation"), ("truth", "CPU double-double truth")]
+cols = [("naive", "Plain float"), ("perturbation", "GPU perturbation"), ("truth", "CPU double-double truth"), ("shaded", "Game shading")]
 try:
     font = ImageFont.truetype("DejaVuSans.ttf", 15)
 except OSError:
@@ -20,7 +20,7 @@ for formula in sorted(os.listdir(src_root)):
     src = os.path.join(src_root, formula)
     if not os.path.isdir(src):
         continue
-    scenes = sorted({re.sub(r"_(perturbation|naive|truth)\.ppm$", "", f) for f in os.listdir(src) if f.endswith(".ppm")},
+    scenes = sorted({re.sub(r"_(perturbation|naive|truth|shaded)\.ppm$", "", f) for f in os.listdir(src) if f.endswith(".ppm") and "_d" not in f},
                     key=zoom_key, reverse=True)
     if not scenes:
         continue

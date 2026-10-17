@@ -446,6 +446,14 @@ the GPU draws (`UFractalControlSubsystem::GetDistanceAtWorld`).
 * **HUD** values keep their v1.1 meaning at any depth: distances are shown divided by the user scale and speeds
   multiplied by the zoom factor; the ZOOM bar extends to the deepest reachable level and the magnification is shown;
   the position is printed in double-double with as many decimals as the zoom needs.
+* **Shading.** Colours used to come from the step and iteration counts (more work = brighter, tinted towards
+  white-teal), and rays that never hit were blended from that bright colour back to the sky with
+  `pow(steps / max, 0.1)` (≈ 1), which painted an opaque bright veil over empty space and over everything near
+  the camera. Now `FP_Shade` lights hits with a headlight and a fixed light using the normal from the distance
+  estimate's gradient (4 extra estimates per hit), darkens by step count (ambient occlusion: it never brightens),
+  colours by the escape iteration of the hit (cosine palette), fades with distance in fractal units, and shows misses
+  as the untouched background plus a faint glow. Raising the iteration count was never the cure: at the hit the
+  count is only 7-30 of 150, the old mapping simply encoded effort as brightness.
 * **VIEW panel.** The HUD prints the formula, power, user scale, exact zoom and scale, the number of coordinate
   decimals (set by the zoom), the facing and up vectors and pitch/yaw/roll: together with POSITION everything
   needed to return to a spot, or to reproduce a rendering problem with `ray_profile`.
@@ -453,7 +461,7 @@ the GPU draws (`UFractalControlSubsystem::GetDistanceAtWorld`).
 
 ### Comparison panels
 
-Plain float | GPU perturbation | CPU double-double truth, zoom 1e-1 (top) to 1e-25, for every fractal
+Plain float | GPU perturbation | CPU double-double truth (all three use the plain step-count palette so they are comparable) | the game's lit shading, zoom 1e-1 (top) to 1e-25, for every fractal
 (`make images` regenerates them in `Tools/PerturbationLab/out`).
 
 | | |

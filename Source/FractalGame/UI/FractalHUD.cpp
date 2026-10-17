@@ -130,6 +130,28 @@ void AFractalHUD::DrawTopRightInfo(float X, float Y, float UIScale)
 		DrawRightAlignedText(Line, FVector2D(X, LineY), FLinearColor(0.7f, 0.5f, 1.0f, 0.95f), UIScale * 0.95f);
 		LineY += 22.0f * UIScale;
 	}
+	CurrentY = LineY + 14.0f * UIScale;
+
+	// Everything needed to find this spot again: the formula and its parameters, the zoom exactly (the coordinate
+	// decimals above follow from it), and which way the camera looks (forward and up fix the roll as well).
+	DrawText(TEXT("VIEW"), FVector2D(X - 320.0f * UIScale, CurrentY), FLinearColor(1.0f, 0.8f, 0.4f, 0.95f), UIScale * 1.3f);
+	CurrentY += LineSpacing * 1.0f;
+	const FLinearColor ValueColor(0.8f, 0.9f, 1.0f, 0.95f);
+	const auto DrawRow = [&](const TCHAR* Label, const FString& Value)
+	{
+		DrawText(Label, FVector2D(X - 320.0f * UIScale, CurrentY), LabelColor, UIScale * 0.95f);
+		DrawRightAlignedText(Value, FVector2D(X, CurrentY), ValueColor, UIScale * 0.95f);
+		CurrentY += 22.0f * UIScale;
+	};
+	DrawRow(TEXT("FRACTAL"), UFractalControlSubsystem::GetFractalDisplayName(CurrentFractalType));
+	DrawRow(TEXT("POWER"), FString::Printf(TEXT("%.6f"), CurrentPower));
+	DrawRow(TEXT("USER SCALE"), FString::Printf(TEXT("%.6e / cm"), UserScale));
+	DrawRow(TEXT("ZOOM"), FString::Printf(TEXT("x%.9e"), Magnification));
+	DrawRow(TEXT("SCALE"), FString::Printf(TEXT("%.9e / cm"), FractalScale));
+	DrawRow(TEXT("DECIMALS"), FString::Printf(TEXT("%d"), Decimals));
+	DrawRow(TEXT("FACING"), FString::Printf(TEXT("%+.9f %+.9f %+.9f"), ViewForward.X, ViewForward.Y, ViewForward.Z));
+	DrawRow(TEXT("UP"), FString::Printf(TEXT("%+.9f %+.9f %+.9f"), ViewUp.X, ViewUp.Y, ViewUp.Z));
+	DrawRow(TEXT("PITCH YAW ROLL"), FString::Printf(TEXT("%+.4f %+.4f %+.4f"), ViewRotation.Pitch, ViewRotation.Yaw, ViewRotation.Roll));
 }
 
 void AFractalHUD::DrawFractalParameters(float X, float Y, float UIScale)

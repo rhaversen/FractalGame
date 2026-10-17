@@ -113,7 +113,26 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 	mkdir(ImageDir.c_str(), 0755);
 	std::printf("\n##### %s (power/scale %g) #####\n", GetFractalName(F::Type), RS.Params.Power);
 	std::vector<FRenderScene> Scenes;
-	for (const FRenderScene& Sc : Lab.Scenes) if (!SceneFilter || std::string(Sc.Name) == SceneFilter) Scenes.push_back(Sc);
+	// LAB_CAMDIST="d1,d2,..." renders every scene once per camera distance (world units from the surface), LAB_MAXRAY
+	// sets the ray limit in world units (the game uses 500 / scale), LAB_MAXSTEPS the step limit.
+	std::vector<double> CamDistances;
+	if (const char* Env = getenv("LAB_CAMDIST"))
+		for (const char* C = Env; *C;) { CamDistances.push_back(std::atof(C)); while (*C && *C != ',') ++C; if (*C == ',') ++C; }
+	if (getenv("LAB_MAXRAY")) RS.MaxRayDistance = std::atof(getenv("LAB_MAXRAY"));
+	if (getenv("LAB_MAXSTEPS")) RS.MaxRaySteps = std::atoi(getenv("LAB_MAXSTEPS"));
+	if (getenv("LAB_ITERATIONS")) RS.Params.MaxIterations = std::atoi(getenv("LAB_ITERATIONS"));
+	for (const FRenderScene& Sc : Lab.Scenes)
+	{
+		if (SceneFilter && std::string(Sc.Name) != SceneFilter) continue;
+		if (CamDistances.empty()) { Scenes.push_back(Sc); continue; }
+		for (double D : CamDistances)
+		{
+			static std::vector<std::string> Names; // stable storage for the scene names
+			char Buf[64]; std::snprintf(Buf, sizeof(Buf), "%s_d%g", Sc.Name, D);
+			Names.reserve(4096); Names.push_back(Buf);
+			FRenderScene C = Sc; C.Name = Names.back().c_str(); C.CamDistance = D; if (getenv("LAB_ZOOM")) C.Zoom = std::atof(getenv("LAB_ZOOM")); Scenes.push_back(C);
+		}
+	}
 
 	std::printf("%-7s | %8s %8s %6s | %9s %9s %9s | %8s %8s | %8s %8s %7s\n", "scene", "ref t", "inside", "orbit", "pert ms", "naive ms", "cpu ms", "status==", "depth ok", "n.status", "n.depth", "rebuild");
 	for (const FRenderScene& Sc : Scenes)
@@ -147,10 +166,11 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 		FReferenceMarchSettings MS;
 		MS.Params = RS.Params;
 		MS.MaxSteps = RS.MaxRaySteps; MS.MaxDistance = RS.MaxRayDistance; MS.PixelRadiusPerUnitDistance = Basis.PixelRadiusPerUnitDistance;
-		double Fwd[3] = {Rot[0][0], Rot[0][1], Rot[0][2]};
 		// (the plugin marches in double while Scale > 1e-9; dd is always exact)
-		FReferenceMarchResult RM = MarchReferenceRay<F, FDD>(Cam, Fwd, S, MS);
-		FDDVec3 CRef = OffsetDD(Cam, Fwd, RM.ReferenceDistance * S);
+		double Fan[ReferenceFanCount][3];
+		BuildReferenceFan(Basis, W, H, Fan);
+		FReferenceMarchResult RM = MarchReferenceFan<F, FDD>(Cam, Fan, ReferenceFanCount, S, MS);
+		FDDVec3 CRef = OffsetDD(Cam, Fan[RM.DirectionIndex], RM.ReferenceDistance * S);
 		std::vector<float> Orbit((size_t)(RS.Params.MaxIterations + 1) * FormulaOrbitStride<F>() * 4);
 		const double SeriesTol = getenv("LAB_SERIES_TOL") ? std::atof(getenv("LAB_SERIES_TOL")) : DefaultSeriesTolerance;
 		int OrbitLen = GenerateReferenceOrbit<F, FDD>(CRef, RS.Params, Orbit.data(), nullptr, SeriesTol);
@@ -263,6 +283,11 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 		std::printf("%-7s | %8.3f %8s %6d | %9.1f %9.1f %9.1f | %7.2f%% %7.2f%% | %7.2f%% %7.2f%% %6.1fms | %6.1f %6.1f ns/it  %6.1f it/px\n", Sc.Name, RM.ReferenceDistance, RM.bReferenceInside ? "yes" : "no", OrbitLen,
 			PertMs, NaiveMs, CpuMs, 100 * SP / N, 100 * DP / N, 100 * SN / N, 100 * DN / N, RefMs,
 			1e6 * PertMs / std::max(SumIter(ImgP) - SumSkipped(ImgP), 1.0), 1e6 * NaiveMs / SumIter(ImgN), SumIter(ImgP) / N);
+		{
+			int C[4] = {0, 0, 0, 0};
+			for (const FPixel& X : ImgT.empty() ? ImgP : ImgT) C[X.Status & 3]++;
+			std::printf("          truth status: hit %.1f%%  ray-distance miss %.1f%%  step-limit miss %.1f%%\n", 100.0 * C[1] / N, 100.0 * C[2] / N, 100.0 * C[3] / N);
+		}
 		if (getenv("LAB_STEPS")) std::printf("          StepsPerPx %.1f  ItersPerDE %.1f  executed per DE %.1f (series skip saved %.0f%%)\n", SumSteps(ImgP) / N, SumIter(ImgP) / SumSteps(ImgP),
 			(SumIter(ImgP) - SumSkipped(ImgP)) / SumSteps(ImgP), 100.0 * SumSkipped(ImgP) / std::max(SumIter(ImgP), 1.0));
 	}

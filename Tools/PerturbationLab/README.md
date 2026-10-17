@@ -34,6 +34,7 @@ make images          # renders out/images/<formula>/*.ppm and out/comparison_<fo
 | `out/test_perturbed_de [formula\|all] [samples]` | full perturbed distance estimator of each formula vs quad at 14 zoom depths (1e-3 … 1e-29), at the surface locations of `src/scenes/<formula>.inc`, reference inside / outside the surface; also plain float and a double-double conditioning probe |
 | `out/test_camera` | Unreal matrix conventions (`mul(v, M)` with `-Zpr`), ray basis vs FOV / orientation / per-pixel unprojection / the previous shader's `GetCameraRay`, float upload error |
 | `out/render_lab [w h truth formula\|all scene]` | complete renders of each formula's scenes (zoom 1e-1 … 1e-25, 1e-27 for the Mandelbulb) through the production CPU path (`MarchReferenceRay`, `GenerateReferenceOrbit`, `BuildRayBasis`), GPU perturbation vs plain float vs a CPU double-double ground truth running the same march |
+| `out/ray_profile <formula> <zoom> [camera distance] [reference lag] [power]` | the hybrid distance estimator along whole rays (not only near the reference) against double-double truth for references that are fresh, stale, off to the side or placed after a missed march; `LAB_FAN=1` places the reference like the plugin, `LAB_MARCH_ANGLE=<deg>` turns the view away from the surface. `make ray-profile-test` runs the regression |
 | `out/bench` | per-iteration ALU cost of the perturbed step, the plain trig-free step and the previous shader's step |
 | `scripts/polar_chaos.py` | shows that the +z pole bottleneck is numerically chaotic (escape iteration changes between 40/60/100 digits) |
 
@@ -42,6 +43,6 @@ Formulas are named by index or name prefix (`mandelbulb`, `burning`, `julia`, `m
 
 Environment knobs: `LAB_POWER` (power / folding scale instead of the formula's default), `LAB_DEPTH` (only this
 log10 zoom depth), `LAB_DIRECT_FOOTPRINT` (hybrid threshold, 0 = always perturb), `LAB_SERIES_TOL` (series skip
-tolerance, 0 = off), `LAB_STEPS=1` (march / iteration statistics), `LAB_VERBOSE=1`, `LAB_DUMP=1` (worst cases).
+tolerance, 0 = off), `LAB_CAMDIST`, `LAB_ZOOM`, `LAB_MAXRAY`, `LAB_MAXSTEPS`, `LAB_ITERATIONS` (render_lab: camera distances, zoom, ray / step limits and iteration count of a game-like approach), `LAB_STEPS=1` (march / iteration statistics), `LAB_VERBOSE=1`, `LAB_DUMP=1` (worst cases).
 
 Timings come from lavapipe, i.e. a CPU; only ratios between kernels are meaningful.

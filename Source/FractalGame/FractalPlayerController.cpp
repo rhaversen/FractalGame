@@ -4,6 +4,7 @@
 #include "FractalControlSubsystem.h"
 #include "UI/FractalHUD.h"
 #include "Camera/PlayerCameraManager.h"
+#include "Math/RotationMatrix.h"
 #include "Components/InputComponent.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
@@ -263,6 +264,15 @@ void AFractalPlayerController::Tick(float DeltaTime)
 		HUD->CurrentVelocity = Move->Velocity * ZoomFactor;
 		HUD->FractalPosition = Fractal->GetCameraFractalPositionDD();
 		HUD->FractalScale = Fractal->GetFractalScale();
+		HUD->UserScale = Fractal->GetUserScale();
+		if (PlayerCameraManager)
+		{
+			const FRotator CameraRotation = PlayerCameraManager->GetCameraRotation();
+			const FRotationMatrix CameraAxes(CameraRotation);
+			HUD->ViewForward = CameraAxes.GetUnitAxis(EAxis::X);
+			HUD->ViewUp = CameraAxes.GetUnitAxis(EAxis::Z);
+			HUD->ViewRotation = CameraRotation;
+		}
 		HUD->bShowDebug = bShowFractalDebug;
 		HUD->bShowHelp = bShowHelp;
 		HUD->CurrentFractalType = CurrentFractalType;

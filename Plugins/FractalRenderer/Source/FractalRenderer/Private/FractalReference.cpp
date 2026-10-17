@@ -18,24 +18,12 @@ using FractalMath::ToDoubleVec;
 
 namespace
 {
-	double DistanceDD(const FDDVec3& A, const FDDVec3& B)
-	{
-		const FDVec3 D = ToDoubleVec(A - B);
-		return FMath::Sqrt(D.X * D.X + D.Y * D.Y + D.Z * D.Z);
-	}
-}
-
-int32 ComputeIterationBudget(FractalMath::EFractalFormula Formula, double Power, int32 BaseIterations, double Bailout, double FootprintFractal)
-{
-	const int32 Base = FMath::Max(BaseIterations, 2);
-	const double Growth = FMath::Abs(Power);
-	if (FractalMath::FormulaFamily(Formula) != FractalMath::EFractalFamily::Folding || !(Growth > 1.01) || !(FootprintFractal > 0.0))
-	{
-		return Base;
-	}
-	const double Needed = FMath::Loge(FMath::Max(Bailout, 1.0) / FootprintFractal) / FMath::Loge(Growth) + 20.0;
-	const int32 Rounded = FMath::CeilToInt32(FMath::Clamp(Needed, 0.0, 1000.0) / 50.0) * 50;
-	return FMath::Clamp(Rounded, Base, 1000);
+	// Regenerate in the background once the reference is this many times farther from the camera than the
+	// surface is; build one inline when it is hopelessly far (the usable ratio is ~1e3, see MarchReferenceFan).
+	constexpr double AsyncDistanceRatio = 50.0;
+	constexpr double SyncDistanceRatio = 5000.0;
+	// Never treat the surface as closer than this many world units (a camera inside the set has distance 0).
+	constexpr double MinCameraDistanceWorld = 1.0e-3;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -89,23 +77,35 @@ void FFractalReferenceManager::Publish(const TSharedPtr<const FFractalReferenceD
 	}
 }
 
+double FFractalReferenceManager::DistanceWorld(const FDDVec3& A, const FDDVec3& B, double Scale)
+{
+	const FDVec3 D = ToDoubleVec(A - B);
+	return FMath::Sqrt(D.X * D.X + D.Y * D.Y + D.Z * D.Z) / Scale;
+}
+
+double FFractalReferenceManager::EstimateDistanceWorld(FractalMath::EFractalFormula Formula, const FDDVec3& Position, double Scale, const FractalMath::FFormulaParams& Params)
+{
+	// Double resolves world-unit distances while a world unit is >= 1e-9 fractal units; deeper needs double-double.
+	const FractalMath::FDistanceEstimate DE = Scale > 1.0e-9
+		? FractalMath::DistanceEstimate(Formula, ToDoubleVec(Position), Params)
+		: FractalMath::DistanceEstimate(Formula, Position, Params);
+	return DE.Distance / Scale;
+}
+
 FFractalReferenceManager::ENeed FFractalReferenceManager::EvaluateNeed(const FFractalReferenceData* Ref, const FFractalReferenceRequest& Request, double Now) const
 {
 	if (!Ref)
 	{
 		return ENeed::Sync;
 	}
-	if (Ref->Formula != Request.Formula || Ref->Params.Power != Request.Params.Power
-		|| Ref->Params.MaxIterations != Request.Params.MaxIterations || Ref->Params.Bailout != Request.Params.Bailout)
+	if (Ref->Formula != Request.Formula || Ref->Params.Power != Request.Params.Power || Ref->Params.Bailout != Request.Params.Bailout)
 	{
 		return ENeed::Sync;
 	}
 
-	// Distances are compared in fractal units against how far the reference was from the camera when it
-	// was made. Precision only degrades once the reference is ~100x farther away than the visible surface.
-	const double Yardstick = FMath::Max3(Ref->YardstickFractal, Ref->CameraDistanceEstimate * Ref->ScaleAtCreation, Request.Scale * 1.0e-3);
-	const double Distance = DistanceDD(Request.Camera, Ref->Center);
-	if (Distance > 256.0 * Yardstick)
+	const double SurfaceDistance = FMath::Max(Request.CameraDistanceWorld, MinCameraDistanceWorld);
+	const double ReferenceRatio = DistanceWorld(Request.Camera, Ref->Center, Request.Scale) / SurfaceDistance;
+	if (ReferenceRatio > SyncDistanceRatio)
 	{
 		return ENeed::Sync;
 	}
@@ -114,10 +114,11 @@ FFractalReferenceManager::ENeed FFractalReferenceManager::EvaluateNeed(const FFr
 	{
 		return ENeed::None;
 	}
-	const double Moved = DistanceDD(Request.Camera, LastRequest.Camera);
+	const double Moved = DistanceWorld(Request.Camera, LastRequest.Camera, Request.Scale);
 	const double Turned = FMath::Acos(FMath::Clamp(FVector3d::DotProduct(Request.Forward, LastRequest.Forward), -1.0, 1.0));
-	const bool bChanged = Moved > 0.01 * Yardstick || Turned > 0.01 || Request.Scale != LastRequest.Scale;
-	if (bChanged || Distance > 4.0 * Yardstick)
+	// The nearest visible surface changes as the camera moves or turns; a stale reference is only a problem
+	// once it is far (relative to the surface distance), but refreshing is cheap and keeps it at the nearest hit.
+	if (ReferenceRatio > AsyncDistanceRatio || Ref->Params.MaxIterations != Request.Params.MaxIterations || Moved > 0.01 * SurfaceDistance || Turned > 0.01 || Request.Scale != LastRequest.Scale)
 	{
 		return ENeed::Async;
 	}
@@ -153,7 +154,7 @@ TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> FFractalReferenceMa
 
 	if (Need == ENeed::Sync)
 	{
-		TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> Data = Generate(Request, Version);
+		TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> Data = Generate(Request, Version, true);
 		Publish(Data);
 		return GetCurrent();
 	}
@@ -161,13 +162,13 @@ TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> FFractalReferenceMa
 	TSharedRef<FThreadSafeCounter, ESPMode::ThreadSafe> Counter = JobsInFlight;
 	UE::Tasks::Launch(UE_SOURCE_LOCATION, [this, Request, Version, Counter]()
 	{
-		Publish(Generate(Request, Version));
+		Publish(Generate(Request, Version, false));
 		Counter->Decrement();
 	});
 	return Snapshot;
 }
 
-TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> FFractalReferenceManager::Generate(const FFractalReferenceRequest& Request, uint64 Version)
+TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> FFractalReferenceManager::Generate(const FFractalReferenceRequest& Request, uint64 Version, bool bQuick)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FFractalReferenceManager::Generate);
 	const double StartTime = FPlatformTime::Seconds();
@@ -178,21 +179,34 @@ TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> FFractalReferenceMa
 	Settings.MaxDistance = Request.MaxRayDistance;
 	Settings.PixelRadiusPerUnitDistance = Request.PixelRadiusPerUnitDistance;
 
-	const double Dir[3] = {Request.Forward.X, Request.Forward.Y, Request.Forward.Z};
+	// Rays across the view place the reference at the nearest visible surface (centre ray first). The march only
+	// decides *where* the reference goes, so double precision is enough while the zoom is shallow (and ~10x
+	// faster). The orbit itself is always double-double.
+	constexpr int MaxDirections = FractalMath::ReferenceFanCount;
+	double Dirs[MaxDirections][3];
+	int DirectionCount = FMath::Min(Request.Directions.Num(), bQuick ? FractalMath::ReferenceFanQuickCount : MaxDirections);
+	for (int32 I = 0; I < DirectionCount; ++I)
+	{
+		Dirs[I][0] = Request.Directions[I].X;
+		Dirs[I][1] = Request.Directions[I].Y;
+		Dirs[I][2] = Request.Directions[I].Z;
+	}
+	if (DirectionCount == 0)
+	{
+		Dirs[0][0] = Request.Forward.X;
+		Dirs[0][1] = Request.Forward.Y;
+		Dirs[0][2] = Request.Forward.Z;
+		DirectionCount = 1;
+	}
 
-	// The march only decides *where* along the centre ray the reference goes, so double precision is
-	// enough while the zoom is shallow (and ~10x faster). The orbit itself is always double-double.
 	const FReferenceMarchResult March = Request.Scale > 1.0e-9
-		? FractalMath::MarchReferenceRay(Request.Formula, ToDoubleVec(Request.Camera), Dir, Request.Scale, Settings)
-		: FractalMath::MarchReferenceRay(Request.Formula, Request.Camera, Dir, Request.Scale, Settings);
+		? FractalMath::MarchReferenceFan(Request.Formula, ToDoubleVec(Request.Camera), Dirs, DirectionCount, Request.Scale, Settings)
+		: FractalMath::MarchReferenceFan(Request.Formula, Request.Camera, Dirs, DirectionCount, Request.Scale, Settings);
 
 	TSharedPtr<FFractalReferenceData, ESPMode::ThreadSafe> Data = MakeShared<FFractalReferenceData, ESPMode::ThreadSafe>();
-	Data->Center = OffsetDD(Request.Camera, Dir, March.ReferenceDistance * Request.Scale);
+	Data->Center = OffsetDD(Request.Camera, Dirs[March.DirectionIndex], March.ReferenceDistance * Request.Scale);
 	Data->Formula = Request.Formula;
 	Data->Params = Request.Params;
-	Data->YardstickFractal = March.ReferenceDistance * Request.Scale;
-	Data->CameraDistanceEstimate = March.CameraDistanceEstimate;
-	Data->ScaleAtCreation = Request.Scale;
 	Data->bHit = March.bHit;
 	Data->bInside = March.bReferenceInside;
 	Data->Version = Version;

@@ -24,15 +24,6 @@ struct FRACTALRENDERER_API FFractalCameraMapping
 	void ZoomAround(const FVector3d& WorldPoint, double Factor);
 };
 
-/**
- * Iterations per sample for a given pixel footprint (fractal units). Folding fractals expand by ~|s| per
- * iteration, so a point one footprint away from the surface needs ~log(Bailout / footprint) / log|s|
- * iterations to escape; deep zooms with small scale factors need more than BaseIterations. Rounded up to
- * multiples of 50 (so that the reference orbit, whose length depends on it, is only rebuilt occasionally)
- * and capped at 1000. Power fractals return BaseIterations.
- */
-FRACTALRENDERER_API int32 ComputeIterationBudget(FractalMath::EFractalFormula Formula, double Power, int32 BaseIterations, double Bailout, double FootprintFractal);
-
 /** An immutable reference point + orbit, shared between the game, render and worker threads. */
 struct FRACTALRENDERER_API FFractalReferenceData
 {
@@ -42,9 +33,6 @@ struct FRACTALRENDERER_API FFractalReferenceData
 	int32 OrbitLength = 0;                         // points (Orbit.Num() / OrbitStride)
 	FractalMath::EFractalFormula Formula = FractalMath::EFractalFormula::Mandelbulb;
 	FractalMath::FFormulaParams Params;
-	double YardstickFractal = 0.0;                 // camera-to-reference distance at creation (fractal units)
-	double CameraDistanceEstimate = 0.0;           // DE at the camera at creation (world units)
-	double ScaleAtCreation = 0.0;
 	bool bHit = false;
 	bool bInside = false;
 	uint64 Version = 0;
@@ -56,6 +44,8 @@ struct FRACTALRENDERER_API FFractalReferenceRequest
 {
 	FractalMath::FDDVec3 Camera;  // camera position in fractal space
 	FVector3d Forward = FVector3d::ForwardVector; // unit view direction (world == fractal axes)
+	TArray<FVector3d> Directions; // rays across the view that place the reference (FractalMath::BuildReferenceFan), centre first
+	double CameraDistanceWorld = 1.0; // distance estimate at the camera, world units
 	double Scale = 1.0;
 	double PixelRadiusPerUnitDistance = 0.001;
 	FractalMath::EFractalFormula Formula = FractalMath::EFractalFormula::Mandelbulb;
@@ -70,8 +60,10 @@ struct FRACTALRENDERER_API FFractalReferenceRequest
  * double-double for the requested formula.
  * Regeneration runs on a worker thread so the renderer never waits, except when no usable reference
  * exists (first frame, formula change, or a teleport far beyond the old reference), where it runs inline
- * (~0.2-2 ms). Because the renderer recomputes (camera - C_ref) every frame in double-double, a slightly
- * stale reference is still exact; it only has to stay close enough for float precision.
+ * with the coarse set of view rays. Because the renderer recomputes (camera - C_ref) every frame in
+ * double-double, a slightly stale reference is still exact; it only has to stay close enough for float
+ * precision: the distance to the reference must stay small compared with the camera's distance to the
+ * surface (see FractalMath::MarchReferenceFan), which is what triggers regeneration.
  */
 class FRACTALRENDERER_API FFractalReferenceManager
 {
@@ -85,12 +77,16 @@ public:
 	/** Latest published reference (may be null). */
 	TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> GetCurrent() const;
 
-	/** Builds a reference synchronously (also used by the worker). */
-	static TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> Generate(const FFractalReferenceRequest& Request, uint64 Version);
+	/** Distance estimate at a fractal-space position, in world units (CPU, the exact formula the GPU draws). */
+	static double EstimateDistanceWorld(FractalMath::EFractalFormula Formula, const FractalMath::FDDVec3& Position, double Scale, const FractalMath::FFormulaParams& Params);
+
+	/** Builds a reference (also used by the worker); bQuick marches only the coarse set of view rays. */
+	static TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> Generate(const FFractalReferenceRequest& Request, uint64 Version, bool bQuick);
 
 private:
 	enum class ENeed : uint8 { None, Async, Sync };
 	ENeed EvaluateNeed(const FFractalReferenceData* Current, const FFractalReferenceRequest& Request, double Now) const;
+	static double DistanceWorld(const FractalMath::FDDVec3& A, const FractalMath::FDDVec3& B, double Scale);
 	void Publish(const TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe>& Data);
 
 	mutable FCriticalSection Mutex;

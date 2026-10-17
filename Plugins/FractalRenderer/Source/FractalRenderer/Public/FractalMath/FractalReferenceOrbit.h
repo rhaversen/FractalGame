@@ -261,6 +261,7 @@ struct FReferenceMarchResult
 	double ReferenceDistance = 0.0; // world units along the ray where C_ref was placed
 	bool bReferenceInside = false;  // C_ref does not escape within MaxIterations
 	double CameraDistanceEstimate = 0.0; // DE at the ray origin, world units
+	int DirectionIndex = 0;         // which ray of MarchReferenceFan produced the result
 	int Steps = 0;
 };
 
@@ -268,7 +269,7 @@ struct FReferenceMarchResult
  * Marches the reference ray Origin + t * Dir (t in world units, fractal = Origin + Dir * t * Scale)
  * in T precision and returns where to put the reference point:
  *  - on a hit, a point just past the surface that does not escape (long orbit), else the hit point;
- *  - on a miss, the point of closest approach (smallest DE / t ratio).
+ *  - on a miss, the origin.
  */
 template <typename F, typename T>
 inline FReferenceMarchResult MarchReferenceRay(const TFractalVec3<T>& Origin, const double Dir[3], double Scale,
@@ -276,8 +277,6 @@ inline FReferenceMarchResult MarchReferenceRay(const TFractalVec3<T>& Origin, co
 {
 	FReferenceMarchResult Result;
 	double Dist = 0.0;
-	double BestRatio = 1.0e300;
-	double BestDist = 0.0;
 	for (int Step = 0; Step < Settings.MaxSteps && Dist < Settings.MaxDistance; ++Step)
 	{
 		const TFractalVec3<T> P = OffsetDD(Origin, Dir, Dist * Scale);
@@ -295,18 +294,12 @@ inline FReferenceMarchResult MarchReferenceRay(const TFractalVec3<T>& Origin, co
 			Result.HitDistance = Dist;
 			break;
 		}
-		const double Ratio = DEWorld / (Dist > 0.0 ? Dist : 1.0e-300);
-		if (Step > 0 && Ratio < BestRatio)
-		{
-			BestRatio = Ratio;
-			BestDist = Dist;
-		}
 		Dist += DEWorld > 0.5 * PixelRadius ? DEWorld : 0.5 * PixelRadius;
 	}
 
 	if (!Result.bHit)
 	{
-		Result.ReferenceDistance = BestDist;
+		Result.ReferenceDistance = 0.0; // see MarchReferenceFan: without a hit the reference goes at the camera
 		return Result;
 	}
 
@@ -325,6 +318,56 @@ inline FReferenceMarchResult MarchReferenceRay(const TFractalVec3<T>& Origin, co
 		}
 	}
 	return Result;
+}
+
+/**
+ * Places the reference for a whole view: marches every ray of Dirs (unit directions across the view) and keeps the
+ * NEAREST hit. A pixel can only follow the reference for as many iterations as it takes to diverge from it, which for
+ * formulas that cannot rebase (c only sets the start) bounds the usable distance between pixel and reference to
+ * ~1e3 times the pixel's own distance from the camera, so the reference has to sit at the nearest visible surface,
+ * not wherever the centre ray happens to end up (typically far away when it passes through a gap). Rays are
+ * limited to the nearest hit found so far, so the cost stays close to that of one ray.
+ * If nothing is hit, or the nearest hit is more than MaxHitFactor times farther than the camera's own distance
+ * estimate (the samples near the camera would then be too far from the reference), the reference goes at the
+ * camera: every pixel at distance t then has |dc| = Scale * t, always inside the limit above, and the camera's
+ * orbit is about as long as that of a point one pixel from the surface.
+ */
+template <typename F, typename T>
+inline FReferenceMarchResult MarchReferenceFan(const TFractalVec3<T>& Origin, const double (*Dirs)[3], int Count, double Scale,
+	const FReferenceMarchSettings& Settings, double MaxHitFactor = 1000.0)
+{
+	FReferenceMarchResult Best;
+	FReferenceMarchSettings Limited = Settings;
+	for (int I = 0; I < Count; ++I)
+	{
+		FReferenceMarchResult R = MarchReferenceRay<F, T>(Origin, Dirs[I], Scale, Limited);
+		R.DirectionIndex = I;
+		if (I == 0)
+		{
+			Best = R;
+		}
+		else if (R.bHit && (!Best.bHit || R.HitDistance < Best.HitDistance))
+		{
+			const double CameraDE = Best.CameraDistanceEstimate;
+			Best = R;
+			Best.CameraDistanceEstimate = CameraDE;
+		}
+		if (Best.bHit)
+		{
+			// later rays only matter if they hit something nearer
+			const double Reach = Best.HitDistance > 0.0 ? Best.HitDistance : Settings.PixelRadiusPerUnitDistance;
+			Limited.MaxDistance = Reach < Settings.MaxDistance ? Reach : Settings.MaxDistance;
+		}
+	}
+	// Camera distance floor: a camera inside the set has no meaningful estimate; use one pixel-scale unit.
+	const double Reference = Best.CameraDistanceEstimate > 1.0e-3 ? Best.CameraDistanceEstimate : 1.0e-3;
+	if (!Best.bHit || Best.HitDistance > MaxHitFactor * Reference)
+	{
+		Best.bHit = false;
+		Best.ReferenceDistance = 0.0;
+		Best.bReferenceInside = false;
+	}
+	return Best;
 }
 
 } // namespace FractalMath

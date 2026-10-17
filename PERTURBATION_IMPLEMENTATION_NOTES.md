@@ -32,11 +32,11 @@ ground truth down to 1e-27.*
 * **No absolute fractal coordinate ever reaches the GPU.** A march sample is
   `c = C_ref + dc` with `dc = Scale * (CameraOffset + t * dir)`, and its orbit is `z_n = Z_n + d_n`.
   Only `dc`, `d_n` (small) and the reference orbit values (rounded to float) are on the GPU.
-* **The reference** is chosen by marching the view's centre ray on the CPU (the "high-precision ray"),
-  in double while the zoom is shallow and double-double below `Scale < 1e-9`. It goes just past the
-  surface if a non-escaping point is found there, otherwise on the hit point (or the closest approach
-  when the centre ray misses). Thanks to rebasing (§4) any nearby point works; this choice just keeps
-  `|dc|` small and the orbit long.
+* **The reference** is chosen by marching 25 rays spread over the view on the CPU (the "high-precision
+  rays"), in double while the zoom is shallow and double-double below `Scale < 1e-9`, and keeping the
+  NEAREST hit (`MarchReferenceFan`). It goes just past the surface if a non-escaping point is found there,
+  otherwise on the hit point. If nothing is hit, or the nearest hit is over 1000× farther than the camera's
+  own distance estimate, it goes at the camera. See "Where the reference must be" below for why.
 * **Latency.** `CameraOffset` is recomputed every frame in double-double, so a reference that is a
   few frames old is still exact. It is regenerated on a worker thread (rate-limited to 20 Hz while
   the camera moves). It is regenerated inline only when none exists, the formula changed, or the
@@ -194,6 +194,20 @@ units for the march.
   has not escaped when the reference ends, then `|d| ≥ |Z| - |z| ≥ |z|`, so the forced rebase
   satisfies the rebasing condition automatically. The lab confirms that a reference *outside* the
   surface (a short, escaping orbit, like the camera position) is as accurate as one inside it (§7.3).
+* **Where the reference must be.** Rebasing needs an orbit point 0 to rebase onto, which only exists for
+  formulas that add `c` every step. Julia Set, Quaternion, Inverted Menger and Sierpinski do not: a pixel
+  follows the reference only until `|d|` becomes comparable to `|Z|` after `M ≈ ln(1/|dc|)/ln s` iterations,
+  then continues in plain float, which leaves a position error of `ε·|dc|` (float error `ε|z|` at iteration
+  `M`, divided by the accumulated derivative `s^M ≈ 1/|dc|`). The pixel footprint is `0.0007·Scale·t` at distance
+  `t`, so a pixel stays accurate while `|dc|/Scale ≲ 1e3·t`: the reference has to be within ~1000× of the pixel's
+  own distance from the camera. A reference chosen by the centre ray alone violates that whenever the player
+  looks through a gap (the centre ray hits something far away, or nothing) while geometry is close at the edge
+  of the view: the distance estimate near the camera then comes out several times too large, rays step through
+  the surface, and the error pattern is a sphere around the stale reference that snaps to a new place when the
+  reference is rebuilt. (This was a reported artefact: shells of different shading that stay put while moving,
+  strongest in the Inverted Menger.) `Tools/PerturbationLab/out/ray_profile` reproduces it (up to 60% of the
+  samples wrong with the centre ray only, 0 with the fan), and `make test` guards it. The reference is rebuilt in
+  the background when it is more than 50× farther from the camera than the surface is, and inline above 5000×.
 * **Reference precision.** Local rounding errors of the reference orbit enter every pixel identically
   and act like an image shift of `ε_ref·|C|`. They must stay well below the pixel spacing. Double
   references are good to a scale of ~1e-13; double-double (`ε ≈ 1e-32`) to ~1e-27/1e-28, which is where
@@ -432,6 +446,9 @@ the GPU draws (`UFractalControlSubsystem::GetDistanceAtWorld`).
 * **HUD** values keep their v1.1 meaning at any depth: distances are shown divided by the user scale and speeds
   multiplied by the zoom factor; the ZOOM bar extends to the deepest reachable level and the magnification is shown;
   the position is printed in double-double with as many decimals as the zoom needs.
+* **VIEW panel.** The HUD prints the formula, power, user scale, exact zoom and scale, the number of coordinate
+  decimals (set by the zoom), the facing and up vectors and pitch/yaw/roll: together with POSITION everything
+  needed to return to a spot, or to reproduce a rendering problem with `ray_profile`.
 * **Start / reset** puts the fractal origin 2350 cm in front of the player start (v1.1's geometry) in any map.
 
 ### Comparison panels

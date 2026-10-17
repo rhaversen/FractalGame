@@ -89,6 +89,58 @@ inline FFractalRayBasis BuildRayBasis(const double InvProjection[4][4], const do
 	return Basis;
 }
 
+/**
+ * Unit directions of the rays that place a perturbation reference (MarchReferenceFan): the view centre first, then the
+ * 3x3 ring around it, then the rest of a 5x5 grid spread over the view. The first ReferenceFanQuickCount rays
+ * are a complete coarse set (centre + ring) for when the reference has to be built synchronously.
+ */
+constexpr int ReferenceFanCount = 25;
+constexpr int ReferenceFanQuickCount = 9;
+
+inline void BuildReferenceFan(const FFractalRayBasis& Basis, int Width, int Height, double OutDirs[ReferenceFanCount][3])
+{
+	static const double Fractions[5] = {0.1, 0.3, 0.5, 0.7, 0.9};
+	bool bUsed[5][5] = {};
+	int Count = 0;
+	auto Add = [&](int Gx, int Gy)
+	{
+		if (bUsed[Gy][Gx])
+		{
+			return;
+		}
+		bUsed[Gy][Gx] = true;
+		const double PX = Fractions[Gx] * Width;
+		const double PY = Fractions[Gy] * Height;
+		double L2 = 0.0;
+		for (int C = 0; C < 3; ++C)
+		{
+			OutDirs[Count][C] = Basis.DirPixel00[C] + PX * Basis.DirDX[C] + PY * Basis.DirDY[C];
+			L2 += OutDirs[Count][C] * OutDirs[Count][C];
+		}
+		const double InvL = 1.0 / std::sqrt(L2);
+		for (int C = 0; C < 3; ++C)
+		{
+			OutDirs[Count][C] *= InvL;
+		}
+		++Count;
+	};
+	Add(2, 2);
+	for (int Gy = 0; Gy < 5; Gy += 2)
+	{
+		for (int Gx = 0; Gx < 5; Gx += 2)
+		{
+			Add(Gx, Gy);
+		}
+	}
+	for (int Gy = 0; Gy < 5; ++Gy)
+	{
+		for (int Gx = 0; Gx < 5; ++Gx)
+		{
+			Add(Gx, Gy);
+		}
+	}
+}
+
 /** General 4x4 inverse (cofactor expansion), as FMatrix::Inverse(). Returns false if singular. */
 inline bool InvertMatrix4(const double M[4][4], double Out[4][4])
 {

@@ -29,6 +29,10 @@ public:
 	FVector CurrentVelocity = FVector::ZeroVector;  // cm/s
 	FractalMath::FDDVec3 FractalPosition;           // camera position in fractal space
 	double FractalScale = 1.0e-3;                   // fractal units per world unit (cm)
+	double UserScale = 1.0e-3;                      // fractal units per cm before any camera zoom
+	FVector ViewForward = FVector::ForwardVector;   // camera axes in fractal space (world axes == fractal axes)
+	FVector ViewUp = FVector::UpVector;
+	FRotator ViewRotation = FRotator::ZeroRotator;  // degrees
 	bool bShowDebug = true;
 	bool bShowHelp = false;
 

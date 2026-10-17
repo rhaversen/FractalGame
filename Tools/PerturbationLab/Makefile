@@ -11,17 +11,20 @@ DXCFLAGS := -T cs_6_0 -spirv -fspv-target-env=vulkan1.1 -Zpr -HV 2021 -O3 -I $(P
 TYPES := 0 1 2 3 4 5 6 7
 KERNELS := FuncsMain StepMain
 SPV := $(addprefix $(OUT)/,$(addsuffix .spv,$(KERNELS))) $(OUT)/MatrixMain.spv \
-	$(foreach T,$(TYPES),$(OUT)/DEMain_T$(T).spv $(OUT)/RenderMain_T$(T).spv $(OUT)/RenderNaive_T$(T).spv)
+	$(foreach T,$(TYPES),$(OUT)/ProfileMain_T$(T).spv $(OUT)/DEMain_T$(T).spv $(OUT)/RenderMain_T$(T).spv $(OUT)/RenderNaive_T$(T).spv)
 BENCH_SPV := $(OUT)/BenchPerturbed.spv $(OUT)/BenchPerturbed8.spv $(OUT)/BenchDirect.spv $(OUT)/BenchDirect8.spv $(OUT)/BenchOldHW.spv
 HEADERS := $(wildcard src/*.h) $(wildcard src/scenes/*.inc) $(wildcard $(PLUGIN)/Source/FractalRenderer/Public/FractalMath/Formulas/*.h) $(wildcard $(PLUGIN)/Source/FractalRenderer/Public/FractalMath/*.h)
 SHADERS := $(wildcard shaders/*.hlsl) $(wildcard $(PLUGIN)/Shaders/*.ush)
 
-all: $(OUT)/test_dd $(OUT)/test_gpu_math $(OUT)/test_perturbed_de $(OUT)/test_camera $(OUT)/render_lab $(OUT)/bench $(SPV) $(BENCH_SPV)
+all: $(OUT)/test_dd $(OUT)/test_gpu_math $(OUT)/test_perturbed_de $(OUT)/test_camera $(OUT)/ray_profile $(OUT)/render_lab $(OUT)/bench $(SPV) $(BENCH_SPV)
 
 $(OUT):
 	mkdir -p $(OUT)
 
 # One SPIR-V per formula (FP_FRACTAL_TYPE = EFractalFormula index)
+$(OUT)/ProfileMain_T%.spv: $(SHADERS) | $(OUT)
+	LD_LIBRARY_PATH=$(DXC_LIB) $(DXC) $(DXCFLAGS) -D FP_FRACTAL_TYPE=$* -E ProfileMain shaders/ProfileLab.hlsl -Fo $@
+
 $(OUT)/DEMain_T%.spv: $(SHADERS) | $(OUT)
 	LD_LIBRARY_PATH=$(DXC_LIB) $(DXC) $(DXCFLAGS) -D FP_FRACTAL_TYPE=$* -E DEMain shaders/LabKernels.hlsl -Fo $@
 
@@ -57,6 +60,9 @@ $(OUT)/test_perturbed_de: src/TestPerturbedDE.cpp src/VkCompute.cpp $(HEADERS) |
 $(OUT)/test_camera: src/TestCamera.cpp src/VkCompute.cpp $(HEADERS) | $(OUT)
 	$(CXX) $(CXXFLAGS) src/TestCamera.cpp src/VkCompute.cpp -o $@ $(LIBS)
 
+$(OUT)/ray_profile: src/RayProfile.cpp src/VkCompute.cpp $(HEADERS) | $(OUT)
+	$(CXX) $(CXXFLAGS) src/RayProfile.cpp src/VkCompute.cpp -o $@ $(LIBS)
+
 $(OUT)/render_lab: src/Render.cpp src/VkCompute.cpp $(HEADERS) | $(OUT)
 	$(CXX) $(CXXFLAGS) src/Render.cpp src/VkCompute.cpp -o $@ $(LIBS)
 
@@ -72,7 +78,15 @@ ue-shader-check: | $(OUT)
 	done; done
 	@echo "PerturbationShader.usf compiles (DXIL + SPIR-V, HLSL 2018/2021, all permutations)"
 
-test: all ue-shader-check
+# The reference is placed from rays across the view; with the view turned away from the surface the centre ray alone
+# would put it hopelessly far from the nearby geometry (Burning Ship keeps ~1.5% float-chaos samples).
+ray-profile-test: all
+	@for F in mandelbulb julia mandelbox inverted quaternion sierpinski kaleido burning; do for Z in 1e-9 1e-18; do for A in 90 180; do \
+		TOL=0.005; [ $$F = burning ] && TOL=0.02; \
+		LAB_FAN=1 LAB_MAX_BAD_FRACTION=$$TOL LAB_MARCH_ANGLE=$$A $(OUT)/ray_profile $$F $$Z 4 0 > $(OUT)/ray_profile.log || { tail -3 $(OUT)/ray_profile.log; echo "RAY PROFILE FAILED: $$F zoom $$Z view $$A"; exit 1; }; done; done; done
+	@echo "ray profile: all formulas OK with the reference placed from the view"
+
+test: all ue-shader-check ray-profile-test
 	$(OUT)/test_dd
 	$(OUT)/test_gpu_math
 	python3 scripts/verify_step_mpmath.py $(OUT)/step_tiny_cases.csv
@@ -86,4 +100,4 @@ images: all
 clean:
 	rm -rf $(OUT)
 
-.PHONY: all test clean ue-shader-check images
+.PHONY: all test clean ue-shader-check images ray-profile-test

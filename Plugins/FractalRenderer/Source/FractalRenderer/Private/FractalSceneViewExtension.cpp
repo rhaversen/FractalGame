@@ -142,11 +142,25 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 	Request.MaxRaySteps = Params.MaxRaySteps;
 	Request.MaxRayDistance = MaxRayDistanceWorld;
 	{
-		// Footprint of a pixel at the distance of the visible surface (from the current reference, if any).
-		const TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> Previous = ReferenceManager.GetCurrent();
-		const double SurfaceDistance = FMath::Max(Previous.IsValid() ? Previous->YardstickFractal : 0.0, Mapping.Scale);
-		Request.Params.MaxIterations = ComputeIterationBudget(Formula, Params.FractalPower, Params.MaxIterations, Params.BailoutRadius,
-			SurfaceDistance * Basis.PixelRadiusPerUnitDistance);
+		// Distance to the surface (CPU estimate of the formula being drawn): decides when the reference is stale and,
+		// for folding fractals, how many iterations a pixel footprint at that distance needs.
+		FractalMath::FFormulaParams EstimateParams;
+		EstimateParams.Power = Params.FractalPower;
+		EstimateParams.Bailout = Params.BailoutRadius;
+		EstimateParams.MaxIterations = FMath::Max(Params.MaxIterations, 2);
+		Request.CameraDistanceWorld = FFractalReferenceManager::EstimateDistanceWorld(Formula, CameraFractal, Mapping.Scale, EstimateParams);
+		const double SurfaceDistanceFractal = FMath::Max(Request.CameraDistanceWorld * Mapping.Scale, Mapping.Scale);
+		Request.Params.MaxIterations = FractalMath::ComputeIterationBudget(Formula, Params.FractalPower, Params.MaxIterations, Params.BailoutRadius,
+			SurfaceDistanceFractal * Basis.PixelRadiusPerUnitDistance);
+	}
+	{
+		double Fan[FractalMath::ReferenceFanCount][3];
+		FractalMath::BuildReferenceFan(Basis, OutputExtent.X, OutputExtent.Y, Fan);
+		Request.Directions.SetNumUninitialized(FractalMath::ReferenceFanCount);
+		for (int32 I = 0; I < FractalMath::ReferenceFanCount; ++I)
+		{
+			Request.Directions[I] = FVector3d(Fan[I][0], Fan[I][1], Fan[I][2]);
+		}
 	}
 	const TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> Reference = ReferenceManager.Update(Request);
 

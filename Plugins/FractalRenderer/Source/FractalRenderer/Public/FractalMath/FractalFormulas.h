@@ -69,4 +69,33 @@ inline FReferenceMarchResult MarchReferenceRay(EFractalFormula Formula, const TF
 	return VisitFormula(Formula, [&](auto F) { return MarchReferenceRay<decltype(F), T>(Origin, Dir, Scale, Settings); });
 }
 
+template <typename T>
+inline FReferenceMarchResult MarchReferenceFan(EFractalFormula Formula, const TFractalVec3<T>& Origin, const double (*Dirs)[3], int Count, double Scale,
+	const FReferenceMarchSettings& Settings)
+{
+	return VisitFormula(Formula, [&](auto F) { return MarchReferenceFan<decltype(F), T>(Origin, Dirs, Count, Scale, Settings); });
+}
+
+/**
+ * Iterations per sample for a given pixel footprint (fractal units). Folding fractals expand by ~|s| per
+ * iteration, so a point one footprint away from the surface needs ~log(Bailout / footprint) / log|s|
+ * iterations to escape; deep zooms with small scale factors need more than BaseIterations. Rounded up to
+ * multiples of 50 (so that the reference orbit, whose length depends on it, is only rebuilt occasionally)
+ * and capped at 1000. Power fractals return BaseIterations.
+ */
+inline int ComputeIterationBudget(EFractalFormula Formula, double Power, int BaseIterations, double Bailout, double FootprintFractal)
+{
+	const int Base = BaseIterations > 2 ? BaseIterations : 2;
+	const double Growth = std::fabs(Power);
+	if (FormulaFamily(Formula) != EFractalFamily::Folding || !(Growth > 1.01) || !(FootprintFractal > 0.0))
+	{
+		return Base;
+	}
+	const double Needed = std::log((Bailout > 1.0 ? Bailout : 1.0) / FootprintFractal) / std::log(Growth) + 20.0;
+	const double Capped = Needed < 0.0 ? 0.0 : (Needed > 1000.0 ? 1000.0 : Needed);
+	int Rounded = static_cast<int>(std::ceil(Capped / 50.0)) * 50;
+	Rounded = Rounded < Base ? Base : Rounded;
+	return Rounded > 1000 ? 1000 : Rounded;
+}
+
 } // namespace FractalMath

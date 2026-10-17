@@ -203,9 +203,25 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 
 	const FIntPoint TextureExtent = SceneColor.Texture->Desc.Extent;
 
+	// Adaptive resolution: the fractal is marched at a fraction of the view size (cost follows the pixel count) and
+	// upscaled bilinearly into the view rect. At full resolution it is marched straight into the output.
+	const float ResolutionScale = FMath::Clamp(Params.ResolutionScale, 0.1f, 1.0f);
+	const bool bReducedResolution = ResolutionScale < 0.999f;
+	const FIntPoint MarchExtent = bReducedResolution
+		? FIntPoint(FMath::Max(1, FMath::CeilToInt(OutputExtent.X * ResolutionScale)), FMath::Max(1, FMath::CeilToInt(OutputExtent.Y * ResolutionScale)))
+		: OutputExtent;
+	FRDGTextureRef MarchTexture = OutputTexture;
+	if (bReducedResolution)
+	{
+		FRDGTextureDesc MarchDesc = FRDGTextureDesc::Create2D(MarchExtent, PF_FloatRGBA, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV);
+		MarchTexture = GraphBuilder.CreateTexture(MarchDesc, TEXT("FractalMarchOutput"));
+	}
+
 	FPerturbationComputeShader::FParameters* PassParameters = GraphBuilder.AllocParameters<FPerturbationComputeShader::FParameters>();
-	PassParameters->OutputSize = OutputExtent;
-	PassParameters->OutputOffset = ViewRect.Min;
+	PassParameters->OutputSize = MarchExtent;
+	PassParameters->OutputOffset = bReducedResolution ? FIntPoint::ZeroValue : ViewRect.Min;
+	PassParameters->ViewOffset = ViewRect.Min;
+	PassParameters->PixelStep = FVector2f(static_cast<float>(OutputExtent.X) / MarchExtent.X, static_cast<float>(OutputExtent.Y) / MarchExtent.Y);
 	PassParameters->RayDir00 = ToVector3f(Basis.DirPixel00);
 	PassParameters->RayDirDX = ToVector3f(Basis.DirDX);
 	PassParameters->RayDirDY = ToVector3f(Basis.DirDY);
@@ -224,7 +240,7 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 	PassParameters->BackgroundTexture = SceneColor.Texture;
 	PassParameters->BackgroundSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 	PassParameters->ReferenceOrbit = GraphBuilder.CreateSRV(FRDGBufferSRVDesc(OrbitBuffer));
-	PassParameters->OutputTexture = GraphBuilder.CreateUAV(OutputTexture);
+	PassParameters->OutputTexture = GraphBuilder.CreateUAV(MarchTexture);
 
 	FPerturbationComputeShader::FPermutationDomain Permutation;
 	Permutation.Set<FPerturbationComputeShader::FFractalTypeDim>(static_cast<int32>(Params.FractalType));
@@ -237,11 +253,27 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 	}
 
 	const FIntVector GroupCount(
-		FMath::DivideAndRoundUp(OutputExtent.X, NUM_THREADS_PerturbationShader_X),
-		FMath::DivideAndRoundUp(OutputExtent.Y, NUM_THREADS_PerturbationShader_Y),
+		FMath::DivideAndRoundUp(MarchExtent.X, NUM_THREADS_PerturbationShader_X),
+		FMath::DivideAndRoundUp(MarchExtent.Y, NUM_THREADS_PerturbationShader_Y),
 		1);
 
-	FComputeShaderUtils::AddPass(GraphBuilder, RDG_EVENT_NAME("RenderFractal"), ComputeShader, PassParameters, GroupCount);
+	FComputeShaderUtils::AddPass(GraphBuilder, RDG_EVENT_NAME("RenderFractal %dx%d", MarchExtent.X, MarchExtent.Y), ComputeShader, PassParameters, GroupCount);
+
+	if (bReducedResolution)
+	{
+		TShaderMapRef<FFractalUpscaleShader> UpscaleShader(GetGlobalShaderMap(View.GetFeatureLevel()));
+		FFractalUpscaleShader::FParameters* UpscaleParameters = GraphBuilder.AllocParameters<FFractalUpscaleShader::FParameters>();
+		UpscaleParameters->OutputSize = OutputExtent;
+		UpscaleParameters->OutputOffset = ViewRect.Min;
+		UpscaleParameters->InputTexture = MarchTexture;
+		UpscaleParameters->InputSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+		UpscaleParameters->OutputTexture = GraphBuilder.CreateUAV(OutputTexture);
+		const FIntVector UpscaleGroups(
+			FMath::DivideAndRoundUp(OutputExtent.X, NUM_THREADS_PerturbationShader_X),
+			FMath::DivideAndRoundUp(OutputExtent.Y, NUM_THREADS_PerturbationShader_Y),
+			1);
+		FComputeShaderUtils::AddPass(GraphBuilder, RDG_EVENT_NAME("UpscaleFractal"), UpscaleShader, UpscaleParameters, UpscaleGroups);
+	}
 
 	return FScreenPassTexture(OutputTexture, ViewRect);
 }

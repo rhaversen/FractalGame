@@ -67,6 +67,24 @@ struct FRACTALRENDERER_API FFractalParameter
 	float BailoutRadius = 10.0f;
 
 	/**
+	 * Frame rate the adaptive resolution aims for (frames per second); 0 disables it and renders at full
+	 * resolution. The controller (UFractalControlSubsystem::UpdateAdaptiveResolution) lowers ResolutionScale while
+	 * the GPU frame time is above the target and raises it again when there is headroom. The iteration limit is
+	 * not used for this: it is sized from the zoom depth (FractalMath::ComputeIterationBudget) because below that
+	 * the image falls apart instead of degrading.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal|Performance")
+	float TargetFrameRate = 60.0f;
+
+	/** Lowest internal resolution (fraction of the view size per axis) the controller may choose. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal|Performance", meta = (ClampMin = "0.1", ClampMax = "1.0"))
+	float MinResolutionScale = 0.3f;
+
+	/** Current internal resolution (fraction of the view size per axis). Written by the controller. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fractal|Performance")
+	float ResolutionScale = 1.0f;
+
+	/**
 	 * Fractal-space pixel footprint above which a march sample uses plain float iteration instead of
 	 * perturbation (it is exact enough there and cheaper). 0 = always use perturbation.
 	 */

@@ -463,6 +463,18 @@ the GPU draws (`UFractalControlSubsystem::GetDistanceAtWorld`).
   at little cost because the series skip passes over the deep iterations. The lab's `render_lab` writes a `*_ends.ppm`
   map of how every ray ended (grey: hit, red: hit with the orbit at the limit, yellow: step limit, blue: left the scene)
   and prints the shares. Colours use the smooth escape iteration, so there is no banding between integer counts.
+* **Frame-rate target.** The knob is the internal resolution, not the iteration or step limit. Measured in the lab on
+  eight deep views (`LAB_ITERSCALE`, `LAB_MAXSTEPS`, `LAB_RESSCALE` in `render_lab`): scaling the iteration limit down
+  changes the frame time by 0.9-1.1x until it falls below what the zoom needs, then the image collapses (50-100% of the
+  pixels wrong); cutting the step limit from 150 to 60 gains 0-40% while 1-69% of the pixels go wrong; marching at 0.5x
+  resolution costs 0.19-0.24x of the time with a 1-2% mean colour difference after bilinear upscaling (8% on the
+  finest-detail view, Burning Ship at 1e-25). `UFractalControlSubsystem::UpdateAdaptiveResolution` therefore steers
+  `ResolutionScale` (0.3-1) from the smoothed GPU frame time (`RHIGetGPUFrameCycles`, the frame delta as fallback):
+  down by `sqrt(target / measured)` (cost follows the pixel count) when more than 5% over budget, up by at most 6% when
+  more than 15% under, at most every 0.25 s. The march runs at the reduced size with `PixelStep` full-resolution pixels
+  per marched pixel (so the ray basis and the hit threshold follow), and `FractalUpscale.usf` upsamples it into the view.
+  Page Up / Page Down step the target through off / 30 / 45 / 60 / 90 / 120 / 144 fps; the HUD shows the internal
+  resolution, the measured frame rate and the target.
 * **VIEW panel.** The HUD prints the formula, power, user scale, exact zoom and scale, the number of coordinate
   decimals (set by the zoom), the facing and up vectors and pitch/yaw/roll: together with POSITION everything
   needed to return to a spot, or to reproduce a rendering problem with `ray_profile`.

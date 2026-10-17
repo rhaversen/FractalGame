@@ -80,6 +80,12 @@ private:
 	void ShowHelp(float Value);
 	void HandleQuit();
 	void CycleFractalType();
+	void RaiseTargetFrameRate();
+	void LowerTargetFrameRate();
+	void StepTargetFrameRate(int32 Direction);
+
+	/** Frame rates PageUp / PageDown step through (0 = adaptive resolution off). */
+	static constexpr float TargetFrameRates[] = {0.0f, 30.0f, 45.0f, 60.0f, 90.0f, 120.0f, 144.0f};
 
 	/** Start position, speed and the current fractal's defaults, with the fractal origin in front of the start. */
 	void ResetToStart();

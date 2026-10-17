@@ -30,6 +30,9 @@ public:
 	FractalMath::FDDVec3 FractalPosition;           // camera position in fractal space
 	double FractalScale = 1.0e-3;                   // fractal units per world unit (cm)
 	double UserScale = 1.0e-3;                      // fractal units per cm before any camera zoom
+	float TargetFrameRate = 0.0f;                   // adaptive resolution target (0 = off)
+	float ResolutionScale = 1.0f;                   // current internal resolution per axis
+	float FrameMilliseconds = 0.0f;                 // smoothed frame time the controller sees
 	FVector ViewForward = FVector::ForwardVector;   // camera axes in fractal space (world axes == fractal axes)
 	FVector ViewUp = FVector::UpVector;
 	FRotator ViewRotation = FRotator::ZeroRotator;  // degrees

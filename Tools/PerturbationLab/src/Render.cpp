@@ -165,6 +165,7 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 		// distance to the surface); LAB_ITERATIONS overrides it with a fixed limit.
 		if (!getenv("LAB_ITERATIONS"))
 			RS.Params.MaxIterations = ComputeIterationBudget(F::Type, RS.Params.Power, 150, RS.Params.Bailout, Sc.CamDistance * S * Basis.PixelRadiusPerUnitDistance);
+		if (const char* IterScale = getenv("LAB_ITERSCALE")) RS.Params.MaxIterations = std::max(2, (int)(RS.Params.MaxIterations * std::atof(IterScale)));
 		// --- production CPU path: reference ray march + reference orbit ---
 		auto TRef0 = std::chrono::steady_clock::now();
 		FReferenceMarchSettings MS;
@@ -204,6 +205,7 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 		P->ReferenceCenter[3] = 0.0f;
 		P->Misc[0] = (float)RS.MaxRayDistance;
 		P->Misc[1] = (float)DirectFootprint;
+		P->Misc[2] = P->Misc[3] = 1.0f;
 		P->IParams[0] = RS.Params.MaxIterations; P->IParams[1] = 0; P->IParams[2] = RS.MaxRaySteps; P->IParams[3] = OrbitLen;
 		P->IParams2[0] = W; P->IParams2[1] = H;
 
@@ -223,6 +225,41 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 		Grab(ImgP);
 		std::vector<FPixel> ImgS((size_t)W * H);
 		for (int I = 0; I < W * H; I++) { const float* C = OS.As<float>() + 4 * I; ImgS[I] = {C[0], C[1], C[2], 0, 0, 0, 0}; }
+		if (const char* ResScale = getenv("LAB_RESSCALE"))
+		{
+			// Adaptive resolution: march at a fraction of the resolution (as the plugin does) and upscale bilinearly.
+			const double Sc2 = std::atof(ResScale);
+			const int WL = std::max(1, (int)std::ceil(W * Sc2)), HL = std::max(1, (int)std::ceil(H * Sc2));
+			FVkBuffer OC2 = Ctx.CreateBuffer((size_t)WL * HL * 16), OD2 = Ctx.CreateBuffer((size_t)WL * HL * 16), OS2 = Ctx.CreateBuffer((size_t)WL * HL * 16), OE2 = Ctx.CreateBuffer((size_t)WL * HL * 16);
+			P->IParams2[0] = WL; P->IParams2[1] = HL;
+			P->Misc[2] = (float)W / WL; P->Misc[3] = (float)H / HL;
+			KPert.Dispatch({&CB, &Orb, &OC2, &OD2, &OS2, &OE2}, (WL + 7) / 8, (HL + 7) / 8, 1);
+			double LowMs = 1e30;
+			for (int Rep = 0; Rep < 3; Rep++) LowMs = std::min(LowMs, KPert.Dispatch({&CB, &Orb, &OC2, &OD2, &OS2, &OE2}, (WL + 7) / 8, (HL + 7) / 8, 1));
+			std::vector<FPixel> ImgU((size_t)W * H);
+			const float* Lo = OS2.As<float>();
+			for (int Y = 0; Y < H; Y++)
+				for (int X = 0; X < W; X++)
+				{
+					const double U = (X + 0.5) * WL / W - 0.5, V2 = (Y + 0.5) * HL / H - 0.5;
+					const int X0 = (int)std::floor(U), Y0 = (int)std::floor(V2);
+					const double FX = U - X0, FY = V2 - Y0;
+					auto At = [&](int XX, int YY, int C) { return Lo[4 * (std::min(std::max(YY, 0), HL - 1) * WL + std::min(std::max(XX, 0), WL - 1)) + C]; };
+					float Col[3];
+					for (int C = 0; C < 3; C++) Col[C] = (float)((1 - FY) * ((1 - FX) * At(X0, Y0, C) + FX * At(X0 + 1, Y0, C)) + FY * ((1 - FX) * At(X0, Y0 + 1, C) + FX * At(X0 + 1, Y0 + 1, C)));
+					ImgU[Y * W + X] = {Col[0], Col[1], Col[2], 0, 0, 0, 0};
+				}
+			double Diff = 0; int Bad = 0;
+			for (int I = 0; I < W * H; I++)
+			{
+				const double D = (std::fabs(ImgU[I].R - ImgS[I].R) + std::fabs(ImgU[I].G - ImgS[I].G) + std::fabs(ImgU[I].B - ImgS[I].B)) / 3.0;
+				Diff += D; Bad += D > 0.1;
+			}
+			WritePPM(ImageDir + "/" + Sc.Name + "_scaled.ppm", ImgU, W, H);
+			std::printf("          resolution %.2f (%dx%d): march %.1f ms vs %.1f ms (%.2fx), mean colour difference %.1f%%, pixels off by > 10%%: %.1f%%\n", Sc2, WL, HL, LowMs, PertMs, LowMs / PertMs, 100.0 * Diff / (W * H), 100.0 * Bad / (W * H));
+			P->IParams2[0] = W; P->IParams2[1] = H; P->Misc[2] = P->Misc[3] = 1.0f;
+			for (FVkBuffer* B : {&OC2, &OD2, &OS2, &OE2}) Ctx.DestroyBuffer(*B);
+		}
 		{
 			// How each ray ended: grey = hit with an escaping orbit (brightness ~ iterations), red = hit where the
 			// orbit hit the iteration limit, yellow = ray ran out of steps, dark blue = left the scene.

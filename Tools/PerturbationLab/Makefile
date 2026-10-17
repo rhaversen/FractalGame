@@ -76,6 +76,11 @@ ue-shader-check: | $(OUT)
 		LD_LIBRARY_PATH=$(DXC_LIB) $(DXC) -T cs_6_0 -E PerturbationShader -Zpr -O3 -HV $$HV -spirv -I $(PLUGIN)/Shaders \
 			-D THREADS_X=8 -D THREADS_Y=8 -D THREADS_Z=1 -D FP_FRACTAL_TYPE=$$1 -D FP_STATIC_POWER_8=$$2 $(OUT)/PerturbationShader.check.hlsl -Fo $(OUT)/ue_$$1_$$2_$$HV.spv || exit 1; \
 	done; done
+	sed 's|#include "/Engine/Public/Platform.ush"||' $(PLUGIN)/Shaders/FractalUpscale.usf > $(OUT)/FractalUpscale.check.hlsl
+	for HV in 2018 2021; do \
+		LD_LIBRARY_PATH=$(DXC_LIB) $(DXC) -T cs_6_0 -E FractalUpscale -Zpr -O3 -HV $$HV -D THREADS_X=8 -D THREADS_Y=8 -D THREADS_Z=1 $(OUT)/FractalUpscale.check.hlsl -Fo $(OUT)/ue_upscale_$$HV.dxil || exit 1; \
+		LD_LIBRARY_PATH=$(DXC_LIB) $(DXC) -T cs_6_0 -E FractalUpscale -Zpr -O3 -HV $$HV -spirv -D THREADS_X=8 -D THREADS_Y=8 -D THREADS_Z=1 $(OUT)/FractalUpscale.check.hlsl -Fo $(OUT)/ue_upscale_$$HV.spv || exit 1; \
+	done
 	@echo "PerturbationShader.usf compiles (DXIL + SPIR-V, HLSL 2018/2021, all permutations)"
 
 # The reference is placed from rays across the view; with the view turned away from the surface the centre ray alone

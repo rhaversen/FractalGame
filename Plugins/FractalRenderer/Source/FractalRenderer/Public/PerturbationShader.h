@@ -36,6 +36,8 @@ public:
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER(FIntPoint, OutputSize)
 		SHADER_PARAMETER(FIntPoint, OutputOffset)
+		SHADER_PARAMETER(FIntPoint, ViewOffset)
+		SHADER_PARAMETER(FVector2f, PixelStep)
 		SHADER_PARAMETER(FVector3f, RayDir00)
 		SHADER_PARAMETER(float, PixelRadiusPerUnitDistance)
 		SHADER_PARAMETER(FVector3f, RayDirDX)
@@ -64,6 +66,38 @@ public:
 		{
 			return false;
 		}
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("THREADS_X"), NUM_THREADS_PerturbationShader_X);
+		OutEnvironment.SetDefine(TEXT("THREADS_Y"), NUM_THREADS_PerturbationShader_Y);
+		OutEnvironment.SetDefine(TEXT("THREADS_Z"), NUM_THREADS_PerturbationShader_Z);
+	}
+};
+
+/**
+ * Bilinear upscale of the fractal marched at reduced resolution (adaptive resolution) into the view rect of the
+ * output texture.
+ */
+class FRACTALRENDERER_API FFractalUpscaleShader : public FGlobalShader
+{
+public:
+	DECLARE_GLOBAL_SHADER(FFractalUpscaleShader);
+	SHADER_USE_PARAMETER_STRUCT(FFractalUpscaleShader, FGlobalShader);
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER(FIntPoint, OutputSize)
+		SHADER_PARAMETER(FIntPoint, OutputOffset)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<float4>, InputTexture)
+		SHADER_PARAMETER_SAMPLER(SamplerState, InputSampler)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, OutputTexture)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
 		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
 	}
 

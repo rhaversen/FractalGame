@@ -157,6 +157,8 @@ void AFractalPlayerController::Tick(float DeltaTime)
 		return;
 	}
 
+	Fractal->UpdateAdaptiveResolution(DeltaTime);
+
 	// The subsystem zooms around the camera manager's location, so the distance is measured at the same point. After
 	// a teleport that location is outdated for a frame; the camera sits at the pawn's origin, so use that instead.
 	const FVector Loc = (PlayerCameraManager && !bCameraLocationStale) ? PlayerCameraManager->GetCameraLocation() : P->GetActorLocation();
@@ -265,6 +267,9 @@ void AFractalPlayerController::Tick(float DeltaTime)
 		HUD->FractalPosition = Fractal->GetCameraFractalPositionDD();
 		HUD->FractalScale = Fractal->GetFractalScale();
 		HUD->UserScale = Fractal->GetUserScale();
+		HUD->TargetFrameRate = Fractal->GetTargetFrameRate();
+		HUD->ResolutionScale = Fractal->GetResolutionScale();
+		HUD->FrameMilliseconds = Fractal->GetMeasuredFrameMilliseconds();
 		if (PlayerCameraManager)
 		{
 			const FRotator CameraRotation = PlayerCameraManager->GetCameraRotation();
@@ -320,6 +325,8 @@ void AFractalPlayerController::SetupInputComponent()
 
 	InputComponent->BindAction(TEXT("Quit"), IE_Pressed, this, &AFractalPlayerController::HandleQuit);
 	InputComponent->BindAction(TEXT("CycleFractalType"), IE_Pressed, this, &AFractalPlayerController::CycleFractalType);
+	InputComponent->BindAction(TEXT("TargetFrameRateUp"), IE_Pressed, this, &AFractalPlayerController::RaiseTargetFrameRate);
+	InputComponent->BindAction(TEXT("TargetFrameRateDown"), IE_Pressed, this, &AFractalPlayerController::LowerTargetFrameRate);
 }
 
 void AFractalPlayerController::MoveForward(float Value)
@@ -463,6 +470,36 @@ void AFractalPlayerController::HandleQuit()
 {
 	// Works for PIE and packaged builds
 	ConsoleCommand(TEXT("quit"));
+}
+
+void AFractalPlayerController::StepTargetFrameRate(int32 Direction)
+{
+	UFractalControlSubsystem* Fractal = GetFractalSubsystem();
+	if (!Fractal)
+	{
+		return;
+	}
+	const float Current = Fractal->GetTargetFrameRate();
+	int32 Index = 0;
+	for (int32 I = 0; I < UE_ARRAY_COUNT(TargetFrameRates); ++I)
+	{
+		if (FMath::Abs(TargetFrameRates[I] - Current) < FMath::Abs(TargetFrameRates[Index] - Current))
+		{
+			Index = I;
+		}
+	}
+	Index = FMath::Clamp(Index + Direction, 0, static_cast<int32>(UE_ARRAY_COUNT(TargetFrameRates)) - 1);
+	Fractal->SetTargetFrameRate(TargetFrameRates[Index]);
+}
+
+void AFractalPlayerController::RaiseTargetFrameRate()
+{
+	StepTargetFrameRate(1);
+}
+
+void AFractalPlayerController::LowerTargetFrameRate()
+{
+	StepTargetFrameRate(-1);
 }
 
 void AFractalPlayerController::CycleFractalType()

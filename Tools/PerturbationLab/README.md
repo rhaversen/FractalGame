@@ -43,6 +43,6 @@ Formulas are named by index or name prefix (`mandelbulb`, `burning`, `julia`, `m
 
 Environment knobs: `LAB_POWER` (power / folding scale instead of the formula's default), `LAB_DEPTH` (only this
 log10 zoom depth), `LAB_DIRECT_FOOTPRINT` (hybrid threshold, 0 = always perturb), `LAB_SERIES_TOL` (series skip
-tolerance, 0 = off), `LAB_CAMDIST`, `LAB_ZOOM`, `LAB_MAXRAY`, `LAB_MAXSTEPS`, `LAB_ITERATIONS` (render_lab: camera distances, zoom, ray / step limits and iteration count of a game-like approach), `LAB_STEPS=1` (march / iteration statistics), `LAB_VERBOSE=1`, `LAB_DUMP=1` (worst cases).
+tolerance, 0 = off), `LAB_RESSCALE` (march at that fraction of the resolution and upscale like the plugin), `LAB_ITERSCALE`, `LAB_CAMDIST`, `LAB_ZOOM`, `LAB_MAXRAY`, `LAB_MAXSTEPS`, `LAB_ITERATIONS` (render_lab: camera distances, zoom, ray / step limits and iteration count of a game-like approach), `LAB_STEPS=1` (march / iteration statistics), `LAB_VERBOSE=1`, `LAB_DUMP=1` (worst cases).
 
 Timings come from lavapipe, i.e. a CPU; only ratios between kernels are meaningful.

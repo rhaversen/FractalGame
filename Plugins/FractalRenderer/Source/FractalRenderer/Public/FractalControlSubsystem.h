@@ -79,6 +79,26 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Fractal|Formula")
 	static FString GetFractalDisplayName(EFractalType Type);
 
+	// --- Adaptive resolution ---
+
+	/** Frame rate to aim for (0 = off: full resolution). */
+	UFUNCTION(BlueprintCallable, Category = "Fractal|Performance")
+	void SetTargetFrameRate(float InFramesPerSecond);
+
+	UFUNCTION(BlueprintPure, Category = "Fractal|Performance")
+	float GetTargetFrameRate() const { return FractalParameters.TargetFrameRate; }
+
+	/** Current internal resolution as a fraction of the view size per axis. */
+	UFUNCTION(BlueprintPure, Category = "Fractal|Performance")
+	float GetResolutionScale() const { return FractalParameters.ResolutionScale; }
+
+	/** Smoothed frame time the controller works from (ms): GPU frame time when the RHI reports it, else the frame delta. */
+	UFUNCTION(BlueprintPure, Category = "Fractal|Performance")
+	float GetMeasuredFrameMilliseconds() const { return MeasuredFrameMilliseconds; }
+
+	/** Call once per frame (the player controller does): steers ResolutionScale towards the target frame rate. */
+	void UpdateAdaptiveResolution(float DeltaSeconds);
+
 	// --- World <-> fractal mapping ---
 
 	/**
@@ -136,6 +156,8 @@ private:
 
 	FFractalCameraMapping CameraMapping;
 	double UserScale = 1.0e-3;
+	float MeasuredFrameMilliseconds = 0.0f;
+	float SecondsSinceResolutionChange = 0.0f;
 
 	/** Current camera location in world space (falls back to the mapping anchor). */
 	FVector3d GetCameraWorldLocation() const;

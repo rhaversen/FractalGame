@@ -26,7 +26,8 @@ struct FPViewParams
 	float3 RayDir00;      // world direction through pixel (0, 0) (unnormalised)
 	float3 RayDirDX;      // per-pixel step to the right
 	float3 RayDirDY;      // per-pixel step down
-	float PixelRadiusPerUnitDistance;
+	float2 PixelStep;     // full-resolution pixels per marched pixel (1 = full resolution, 2 = half resolution)
+	float PixelRadiusPerUnitDistance; // of one marched pixel
 	float3 CameraOffset;  // (camera - C_ref) / Scale, world units
 	float Scale;          // fractal units per world unit
 	float3 ReferenceCenter; // float(C_ref), only used without a reference orbit
@@ -52,9 +53,12 @@ struct FPMarchResult
 	bool bLastEscaped;    // the last distance estimate saw its orbit escape (false: it ran into the iteration limit)
 };
 
+// Direction through the centre of marched pixel Pixel. The ray basis is expressed in full-resolution pixels (its origin
+// is the centre of pixel 0), so a marched pixel covers PixelStep of them.
 float3 FP_PixelRayDirection(FPViewParams V, uint2 Pixel)
 {
-	return normalize(V.RayDir00 + (float)Pixel.x * V.RayDirDX + (float)Pixel.y * V.RayDirDY);
+	float2 Full = ((float2)Pixel + 0.5f) * V.PixelStep - 0.5f;
+	return normalize(V.RayDir00 + Full.x * V.RayDirDX + Full.y * V.RayDirDY);
 }
 
 FPDEResult FP_DistanceEstimate(StructuredBuffer<float4> Orbit, FPViewParams V, FPFormulaArgs Args, float3 DC, float PixelRadius)

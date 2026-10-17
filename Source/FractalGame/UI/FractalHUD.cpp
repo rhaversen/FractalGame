@@ -98,6 +98,15 @@ void AFractalHUD::DrawTopLeftInfo(float X, float Y, float UIScale)
 	const float VelFraction = VelMax > 0.0 ? static_cast<float>(VelMagnitude / VelMax) : 0.0f;
 	DrawCompactStatBar(X, CurrentY, BarWidth, BarHeight, TEXT("VELOCITY"), VelFraction, FormatQuantity(VelMagnitude, 1, TEXT("m/s")),
 					   FLinearColor(0.4f, 0.9f, 1.0f, 0.9f), UIScale);
+	CurrentY += LineSpacing;
+
+	// Adaptive resolution: the bar is the internal resolution, the text the frame rate against its target.
+	const FString TargetText = TargetFrameRate > 0.0f ? FString::Printf(TEXT("%.0f"), TargetFrameRate) : FString(TEXT("OFF"));
+	const FString FrameText = FrameMilliseconds > 0.0f
+		? FString::Printf(TEXT("%.0f %%  %.0f fps / %s"), ResolutionScale * 100.0f, 1000.0f / FrameMilliseconds, *TargetText)
+		: FString::Printf(TEXT("%.0f %%  target %s"), ResolutionScale * 100.0f, *TargetText);
+	DrawCompactStatBar(X, CurrentY, BarWidth, BarHeight, TEXT("RESOLUTION"), ResolutionScale, FrameText,
+					   FLinearColor(0.9f, 0.5f, 1.0f, 0.9f), UIScale);
 }
 
 void AFractalHUD::DrawTopRightInfo(float X, float Y, float UIScale)
@@ -324,7 +333,7 @@ void AFractalHUD::DrawControlsPanel(float CenterX, float CenterY, float UIScale)
 	DrawMouseButtons(CenterX - ItemSpacing * 1.3f, BottomSectionY, UIScale);
 
 	// Keyboard controls in a row
-	DrawOtherControls(CenterX + ItemSpacing * 0.3f, BottomSectionY, KeySize * 0.85f, KeySpacing, UIScale);
+	DrawOtherControls(CenterX - 10.0f * UIScale, BottomSectionY, KeySize * 0.85f, KeySpacing, UIScale);
 }
 
 void AFractalHUD::DrawKeyboardLayout(float X, float Y, float KeySize, float KeySpacing, float UIScale)
@@ -492,6 +501,9 @@ void AFractalHUD::DrawOtherControls(float X, float Y, float KeySize, float KeySp
 	DrawLabeledKey(X, Y, KeySize, TEXT("R"), TEXT("RESET"), ResetColor, UIScale);
 	DrawLabeledKey(X + KeySize + KeySpacing, Y, KeySize, TEXT("H"), TEXT("HELP"), HelpColor, UIScale);
 	DrawLabeledKey(X + (KeySize + KeySpacing) * 2, Y, KeySize, TEXT("TAB"), TEXT("CYCLE"), FractalColor, UIScale);
+	const FLinearColor RateColor = FLinearColor(0.9f, 0.5f, 1.0f, 1.0f);
+	DrawLabeledKey(X + (KeySize + KeySpacing) * 3, Y, KeySize, TEXT("PGUP"), TEXT("TARGET\nFPS +"), RateColor, UIScale);
+	DrawLabeledKey(X + (KeySize + KeySpacing) * 4, Y, KeySize, TEXT("PGDN"), TEXT("TARGET\nFPS -"), RateColor, UIScale);
 }
 
 void AFractalHUD::DrawPanel(float X, float Y, float Width, float Height, const FLinearColor& Color)

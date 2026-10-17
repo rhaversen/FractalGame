@@ -9,7 +9,7 @@ struct FLabRenderParams
 	float4 RayDirDY;        // xyz, w = Power
 	float4 CameraOffset;    // xyz, w = Bailout
 	float4 ReferenceCenter; // xyz
-	float4 Misc;            // x = MaxRayDistance, y = DirectFootprint
+	float4 Misc;            // x = MaxRayDistance, y = DirectFootprint, zw = full-resolution pixels per marched pixel (PixelStep)
 	int4 IParams;           // x = MaxIterations, z = MaxRaySteps, w = OrbitLength
 	int4 IParams2;          // x = Width, y = Height
 };
@@ -45,7 +45,8 @@ void RenderMain(uint3 Id : SV_DispatchThreadID)
 	V.RayDir00 = P.RayDir00.xyz;
 	V.RayDirDX = P.RayDirDX.xyz;
 	V.RayDirDY = P.RayDirDY.xyz;
-	V.PixelRadiusPerUnitDistance = P.RayDir00.w;
+	V.PixelStep = P.Misc.zw;
+	V.PixelRadiusPerUnitDistance = P.RayDir00.w * max(V.PixelStep.x, V.PixelStep.y);
 	V.CameraOffset = P.CameraOffset.xyz;
 	V.Scale = P.RayDirDX.w;
 	V.ReferenceCenter = P.ReferenceCenter.xyz;

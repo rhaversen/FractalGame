@@ -1,0 +1,21 @@
+// Bilinear upscale of the fractal marched at reduced resolution (adaptive resolution, see FFractalSceneViewExtension).
+// Engine include only for the compute shader macros; the maths is trivial.
+
+#include "/Engine/Public/Platform.ush"
+
+int2 OutputSize;   // view rect size in pixels
+int2 OutputOffset; // view rect min in the output texture
+Texture2D<float4> InputTexture;
+SamplerState InputSampler;
+RWTexture2D<float4> OutputTexture;
+
+[numthreads(THREADS_X, THREADS_Y, THREADS_Z)]
+void FractalUpscale(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (DispatchThreadId.x >= (uint)OutputSize.x || DispatchThreadId.y >= (uint)OutputSize.y)
+	{
+		return;
+	}
+	float2 UV = (float2(DispatchThreadId.xy) + 0.5f) / float2(OutputSize);
+	OutputTexture[DispatchThreadId.xy + (uint2)OutputOffset] = float4(InputTexture.SampleLevel(InputSampler, UV, 0.0f).rgb, 1.0f);
+}

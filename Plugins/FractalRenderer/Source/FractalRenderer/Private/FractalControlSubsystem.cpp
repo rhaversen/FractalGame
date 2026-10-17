@@ -1,6 +1,8 @@
 #include "FractalControlSubsystem.h"
 #include "FractalRenderer.h"
 #include "FractalSceneViewExtension.h"
+#include "HAL/PlatformTime.h"
+#include "RHI.h"
 #include "Engine/GameInstance.h"
 #include "GameFramework/PlayerController.h"
 #include "Camera/PlayerCameraManager.h"
@@ -61,6 +63,78 @@ void UFractalControlSubsystem::SetFractalPower(float InPower)
 {
 	FractalParameters.FractalPower = InPower;
 	PushParameters();
+}
+
+void UFractalControlSubsystem::SetTargetFrameRate(float InFramesPerSecond)
+{
+	FractalParameters.TargetFrameRate = FMath::Max(InFramesPerSecond, 0.0f);
+	if (FractalParameters.TargetFrameRate <= 0.0f)
+	{
+		FractalParameters.ResolutionScale = 1.0f;
+	}
+	PushParameters();
+}
+
+void UFractalControlSubsystem::UpdateAdaptiveResolution(float DeltaSeconds)
+{
+	if (!(DeltaSeconds > 0.0f))
+	{
+		return;
+	}
+
+	// GPU frame time of the last completed frame; the frame delta is the fallback (and is capped by v-sync, which
+	// is why the GPU time is preferred: it shows headroom below the refresh rate).
+	float FrameMilliseconds = DeltaSeconds * 1000.0f;
+	const uint32 GpuCycles = RHIGetGPUFrameCycles();
+	if (GpuCycles > 0)
+	{
+		FrameMilliseconds = static_cast<float>(FPlatformTime::ToMilliseconds(GpuCycles));
+	}
+	// Smooth over ~0.3 s so single slow frames do not move the resolution.
+	const float Blend = 1.0f - FMath::Exp(-DeltaSeconds / 0.3f);
+	MeasuredFrameMilliseconds = MeasuredFrameMilliseconds > 0.0f ? FMath::Lerp(MeasuredFrameMilliseconds, FrameMilliseconds, Blend) : FrameMilliseconds;
+
+	float& Scale = FractalParameters.ResolutionScale;
+	const float TargetFrameRate = FractalParameters.TargetFrameRate;
+	if (TargetFrameRate <= 0.0f)
+	{
+		if (Scale != 1.0f)
+		{
+			Scale = 1.0f;
+			PushParameters();
+		}
+		return;
+	}
+
+	// Cost follows the pixel count, i.e. the square of the scale (measured in Tools/PerturbationLab: 0.5 -> ~0.2x).
+	// Drop quickly when over budget, climb back slowly when there is headroom, and change at most every 0.25 s.
+	SecondsSinceResolutionChange += DeltaSeconds;
+	if (SecondsSinceResolutionChange < 0.25f)
+	{
+		return;
+	}
+	const float TargetMilliseconds = 1000.0f / TargetFrameRate;
+	const float Ratio = MeasuredFrameMilliseconds / TargetMilliseconds;
+	float NewScale = Scale;
+	if (Ratio > 1.05f)
+	{
+		NewScale = Scale * FMath::Clamp(FMath::Sqrt(1.0f / Ratio), 0.7f, 0.99f);
+	}
+	else if (Ratio < 0.85f && Scale < 1.0f)
+	{
+		NewScale = Scale * FMath::Min(FMath::Sqrt(1.0f / Ratio), 1.06f);
+	}
+	NewScale = FMath::Clamp(NewScale, FMath::Clamp(FractalParameters.MinResolutionScale, 0.1f, 1.0f), 1.0f);
+	if (NewScale > 0.97f)
+	{
+		NewScale = 1.0f; // the last few percent are not worth an upscale pass
+	}
+	if (!FMath::IsNearlyEqual(NewScale, Scale, 0.005f))
+	{
+		Scale = NewScale;
+		SecondsSinceResolutionChange = 0.0f;
+		PushParameters();
+	}
 }
 
 const FractalMath::FFractalPreset& UFractalControlSubsystem::GetPreset(EFractalType Type)

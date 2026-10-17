@@ -13,8 +13,10 @@
 #include "FractalRender.ush"
 
 // Shader parameters (FPerturbationComputeShader::FParameters)
-int2 OutputSize;
-int2 OutputOffset;
+int2 OutputSize;   // marched pixels (the view rect size divided by the resolution scale)
+int2 OutputOffset; // where the marched pixels are written
+int2 ViewOffset;   // view rect min in the scene colour texture (for the background lookup)
+float2 PixelStep;  // full-resolution pixels per marched pixel
 float3 RayDir00;
 float PixelRadiusPerUnitDistance;
 float3 RayDirDX;
@@ -47,7 +49,8 @@ void PerturbationShader(uint3 DispatchThreadId : SV_DispatchThreadID)
 	V.RayDir00 = RayDir00;
 	V.RayDirDX = RayDirDX;
 	V.RayDirDY = RayDirDY;
-	V.PixelRadiusPerUnitDistance = PixelRadiusPerUnitDistance;
+	V.PixelStep = PixelStep;
+	V.PixelRadiusPerUnitDistance = PixelRadiusPerUnitDistance * max(PixelStep.x, PixelStep.y);
 	V.CameraOffset = CameraOffset;
 	V.Scale = FractalScale;
 	V.ReferenceCenter = ReferenceCenter;
@@ -62,9 +65,9 @@ void PerturbationShader(uint3 DispatchThreadId : SV_DispatchThreadID)
 	float3 Dir = FP_PixelRayDirection(V, DispatchThreadId.xy);
 	FPMarchResult March = FP_MarchRay(ReferenceOrbit, V, Dir);
 
-	// The output texture shares the scene colour extent; write inside the view rect.
+	// Background: the scene colour under the centre of this marched pixel.
 	uint2 PixelPos = DispatchThreadId.xy + (uint2)OutputOffset;
-	float2 BackgroundUV = saturate((float2(PixelPos) + 0.5f) * BackgroundInvExtent);
+	float2 BackgroundUV = saturate(((float2(DispatchThreadId.xy) + 0.5f) * PixelStep + (float2)ViewOffset) * BackgroundInvExtent);
 	float3 Background = BackgroundTexture.SampleLevel(BackgroundSampler, BackgroundUV, 0.0f).rgb;
 	OutputTexture[PixelPos] = float4(FP_Shade(ReferenceOrbit, V, March, Dir, Background), 1.0f);
 }

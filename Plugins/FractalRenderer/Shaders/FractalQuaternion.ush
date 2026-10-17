@@ -1,0 +1,234 @@
+// Quaternion power map q -> q^p and its exact perturbation (Quaternion Julia set, FormulaQuaternion.ush).
+// Pure HLSL.
+//
+// q = (x, y, z, w) = x + y i + z j + w k (x real), a = x, v = (y, z, w), s = |v|, n = v / s, r = |q|,
+// theta = atan2(s, a) in [0, pi]. With zeta = a + i s (CPU: FractalMath/Formulas/QuaternionFormula.h):
+//     q^p = r^p (cos(p theta) + n sin(p theta)) = (Re zeta^p, K v),      K = Im(zeta^p) / s
+//
+// Perturbation, W = Q~ + D. In the (real, |imag|) half-plane zeta_w^p - zeta^p is a complex power difference,
+// evaluated like the Mandelbulb meridian plane (FractalPowerMap.ush) without forming either power:
+//     dr = (2 Q.d + d.d) / (|W| + |Q|),   u = (r_w / r)^p - 1  (binary powering, or expm1(p log1p(dr / r)))
+//     ds = (2 v.dv + dv.dv) / (s_w + s)
+//     dtheta from cross / dot = (a ds - s da, a a_w + s s_w)   (exact angle between (a, s) and (a_w, s_w))
+//     zeta_w^p - zeta^p = r^p (u e^{i p theta_w} + e^{i p theta_w} - e^{i p theta})
+// The imaginary output follows the moving direction n_w:
+//     Im(zeta_w^p) n_w - Im(zeta^p) n = [Im(zeta_w^p) - Im(zeta^p)] n_w + K s (n_w - n),
+//     s (n_w - n) = (dv s - v ds) / s_w   (s_w >= s / 2),   s n_w - v   (s_w < s / 2, where |dv| >= s / 2)
+// Each term carries float error relative to ||J|| |d|, so there is no cancellation. On the real axis (s -> 0) K stays
+// finite for integer p (K -> p a^(p-1)) and s (n_w - n) -> 0; s_w = 0 means n_w := 0, i.e. the output is -K v.
+// Non-integer powers are singular on the negative real axis (K ~ r^p sin(p pi) / s): there the map itself has
+// condition number ~ K |d| / |delta|, which no float evaluation can beat.
+
+#pragma once
+
+#include "FractalMathCommon.ush"
+
+// Reference block of FractalMath::FQuaternionFormula::Pack (3 float4).
+struct FPQuaternionRef
+{
+	float4 Q;     // float-rounded reference Q~ (real, i, j, k)
+	float R;      // |Q~|
+	float InvR;   // 1 / |Q~| (0 for Q~ = 0)
+	float S;      // |imag(Q~)|
+	float RPow;   // |Q~|^p
+	float CosPT;  // cos(p theta)
+	float SinPT;  // sin(p theta)
+	float K;      // Im(zeta^p) / s: Q~^p = (RPow CosPT, K imag(Q~))
+};
+
+FPQuaternionRef FP_DecodeQuaternionRef(float4 A, float4 B, float4 C)
+{
+	FPQuaternionRef P;
+	P.Q = A;
+	P.R = B.x;
+	P.InvR = B.y;
+	P.S = B.z;
+	P.RPow = B.w;
+	P.CosPT = C.x;
+	P.SinPT = C.y;
+	P.K = C.z;
+	return P;
+}
+
+FPQuaternionRef FP_LoadQuaternionRef(StructuredBuffer<float4> Orbit, int Base)
+{
+	return FP_DecodeQuaternionRef(Orbit[Base], Orbit[Base + 1], Orbit[Base + 2]);
+}
+
+// (Re(zeta^P), Im(zeta^P) / s) for zeta = A + i s, S2 = s^2, integer P >= 1, by binary powering on pairs
+// zeta^m = R + i s I:  (R, I)^2 = (R^2 - s^2 I^2, 2 R I),  (R, I) zeta = (R A - s^2 I, R + I A).
+void FP_QuaternionComplexPowParts(float A, float S2, int P, out float OutRe, out float OutK)
+{
+	float Re = A;
+	float K = 1.0f;
+	[loop]
+	for (int Bit = firstbithigh(P) - 1; Bit >= 0; --Bit)
+	{
+		float NewRe = Re * Re - S2 * K * K;
+		K = 2.0f * Re * K;
+		Re = NewRe;
+		if (((P >> Bit) & 1) != 0)
+		{
+			float MulRe = Re * A - S2 * K;
+			K = Re + K * A;
+			Re = MulRe;
+		}
+	}
+	OutRe = Re;
+	OutK = K;
+}
+
+// q^p at W, |W| = RW and 1/|W| = InvRW given. Returns |W|^(p-1) in OutRWPowM1.
+float4 FP_QuaternionPower(float4 W, float RW, float InvRW, float Power, int PowerInt, out float OutRWPowM1)
+{
+	float3 V = W.yzw;
+	if (PowerInt > 0)
+	{
+		// Normalised polynomial form: zeta / r = (a / r) + i (s / r), q^p = (r^p Re', r^(p-1) K' v). An underflowing
+		// s^2 / r^2 only enters Re' and K' at relative order s^2 / r^2.
+		float3 NV = V * InvRW;
+		float Re, K;
+		FP_QuaternionComplexPowParts(W.x * InvRW, dot(NV, NV), PowerInt, Re, K);
+		float RWPowM1 = 1.0f;
+		float Dummy = 0.0f;
+		if (PowerInt > 1)
+		{
+			FP_ComplexPowInt(RW, 0.0f, PowerInt - 1, RWPowM1, Dummy);
+		}
+		OutRWPowM1 = RWPowM1;
+		return float4(RWPowM1 * RW * Re, (RWPowM1 * K) * V);
+	}
+
+	// Principal power; the imaginary part is rescaled by an exact power of two before squaring.
+	float MaxV = max(max(abs(V.x), abs(V.y)), abs(V.z));
+	float3 SV = V * FP_Pow2Normalizer(MaxV);
+	float SS = sqrt(dot(SV, SV));
+	float S = SS * FP_Pow2Denormalizer(MaxV);
+	float RWPow = (RW > 0.0f) ? exp2(Power * log2(RW)) : 0.0f;
+	OutRWPowM1 = RWPow * InvRW;
+	float SinPT, CosPT;
+	FP_SinCos(Power * FP_Atan2(S, W.x), SinPT, CosPT);
+	float3 N = (SS > 0.0f) ? SV / SS : float3(0.0f, 0.0f, 0.0f);
+	return float4(RWPow * CosPT, (RWPow * SinPT) * N);
+}
+
+// Q~^p evaluated from the reference block.
+float4 FP_QuaternionRefPower(FPQuaternionRef Ref)
+{
+	return float4(Ref.RPow * Ref.CosPT, Ref.K * Ref.Q.yzw);
+}
+
+// (W^p) - (Q~^p) for the reference point Ref, W = Q~ + D, RW = |W|, InvRW = 1/|W|. PowerInt is FP_IntegerPower(Power).
+// Requires |W| >= |D| (the caller switches to direct iteration otherwise), i.e. r_w >= r / 2.
+// Returns |W|^(p-1) in OutRWPowM1 (for the running derivative).
+float4 FP_PerturbedQuaternionPowerDelta(FPQuaternionRef Ref, float4 D, float4 W, float RW, float InvRW, float Power, int PowerInt,
+	out float OutRWPowM1)
+{
+	// The reference is negligible next to the full point: |W^p| dominates, the plain difference does not cancel.
+	if (Ref.R <= 0.5f * RW)
+	{
+		float4 GW = FP_QuaternionPower(W, RW, InvRW, Power, PowerInt, OutRWPowM1);
+		return GW - FP_QuaternionRefPower(Ref);
+	}
+
+	// Radial factor u = (r_w / r)^p - 1 with s_r = dr / r >= -1/2 computed without cancellation.
+	float SR = (2.0f * dot(Ref.Q, D) + dot(D, D)) / (RW + Ref.R) * Ref.InvR;
+	float U;
+	float OnePlusU;
+	if (PowerInt > 0)
+	{
+		// (1+s)^p - 1 by binary powering on A = (1+s)^k - 1, B = (1+s)^k (as in FractalPowerMap.ush):
+		//   k -> 2k:  A' = A (A + 2), B' = B^2;   k -> k+1:  A' = A (1+s) + s, B' = B (1+s)
+		float Base = 1.0f + SR;
+		float A = SR;
+		float B = Base;
+		[loop]
+		for (int Bit = firstbithigh(PowerInt) - 1; Bit >= 0; --Bit)
+		{
+			A = A * (A + 2.0f);
+			B = B * B;
+			if (((PowerInt >> Bit) & 1) != 0)
+			{
+				A = A * Base + SR;
+				B = B * Base;
+			}
+		}
+		U = A;
+		OnePlusU = B;
+	}
+	else
+	{
+		U = FP_Expm1(Power * FP_Log1p(SR));
+		OnePlusU = 1.0f + U;
+	}
+
+	// Imaginary parts are rescaled by an exact power of two so that products of small components (orbits close
+	// to the real axis at deep zoom) never underflow.
+	float3 V = Ref.Q.yzw;
+	float3 VW = W.yzw;
+	float MaxV = max(max(max(abs(V.x), abs(V.y)), abs(V.z)), max(max(abs(VW.x), abs(VW.y)), abs(VW.z)));
+	float VScale = FP_Pow2Normalizer(MaxV);
+	float InvVScale = FP_Pow2Denormalizer(MaxV);
+	float3 SV = V * VScale;
+	float3 SDV = D.yzw * VScale;
+	float3 SVW = VW * VScale;
+	float SS = Ref.S * VScale;
+	float SSW = sqrt(dot(SVW, SVW));
+	// s_w - s = (s_w^2 - s^2) / (s_w + s)
+	float SDS = dot(2.0f * SV + SDV, SDV) / max(SSW + SS, 1.0e-30f);
+	float SW = SSW * InvVScale;
+	float DS = SDS * InvVScale;
+
+	// Angle between (a, s) and (a_w, s_w); both vectors lie in the closed upper half-plane, so no wrapping.
+	float CrossT = Ref.Q.x * DS - Ref.S * D.x;
+	float DotT = Ref.Q.x * W.x + Ref.S * SW;
+
+	float DSin;  // sin(p theta_w) - sin(p theta)
+	float DCos;  // cos(p theta_w) - cos(p theta)
+	if (PowerInt > 0)
+	{
+		// Trig-free: (1 - cos, sin) of dtheta from the normalised cross / dot (the vectors have lengths r and r_w),
+		// raised to the power p with FP_VersSinPowInt.
+		float NormT = Ref.InvR * InvRW;
+		float SinDT = CrossT * NormT;
+		float CosDT = DotT * NormT;
+		float VT, ST;
+		FP_VersSinPowInt(FP_VersineFromCosSin(CosDT, SinDT), SinDT, PowerInt, VT, ST);
+		DSin = Ref.CosPT * ST - Ref.SinPT * VT;
+		DCos = -Ref.SinPT * ST - Ref.CosPT * VT;
+	}
+	else
+	{
+		// Half-angle rotation (sum-to-product): sin(T + dT) - sin T = 2 cos(T + dT/2) sin(dT/2), etc.
+		float SA, CA;
+		FP_SinCos(0.5f * Power * FP_Atan2(CrossT, DotT), SA, CA);
+		DSin = 2.0f * (Ref.CosPT * CA - Ref.SinPT * SA) * SA;
+		DCos = -2.0f * (Ref.SinPT * CA + Ref.CosPT * SA) * SA;
+	}
+
+	// zeta_w^p - zeta^p = r^p (u e^{i p theta_w} + [e^{i p theta_w} - e^{i p theta}])
+	float DRe = Ref.RPow * (U * (Ref.CosPT + DCos) + DCos);
+	float DIm = Ref.RPow * (U * (Ref.SinPT + DSin) + DSin);
+
+	float3 DImag;
+	if (SSW > 0.0f)
+	{
+		// Im(zeta_w^p) n_w - K v = DIm n_w + (Im(zeta^p) n_w - K v). For s > 0 the bracket is K s (n_w - n) with
+		// s (n_w - n) = (dv s - v ds) / s_w while s_w >= s / 2 (errors ~eps s |dv| <= 2 eps s_w |dv|), else s n_w - v
+		// (|dv| >= s / 2 there): either way the error is <= 2 eps K |dv|. It is formed in the rescaled units and
+		// brought back before multiplying by K, so only the physically sized result can underflow. A reference exactly
+		// on the negative real axis (non-integer p) has K v = 0 although Im(zeta^p) = r^p sin(p pi): there the bracket
+		// is r^p sin(p pi) n_w (elsewhere on the axis sin(p theta) = 0).
+		float InvSSW = 1.0f / SSW;
+		float3 NW = SVW * InvSSW;
+		float3 SNChange = (SSW >= 0.5f * SS) ? (SDV * SS - SV * SDS) * InvSSW : SS * NW - SV;
+		float DImW = DIm + ((Ref.S > 0.0f) ? 0.0f : Ref.RPow * Ref.SinPT);
+		DImag = DImW * NW + Ref.K * (SNChange * InvVScale);
+	}
+	else
+	{
+		DImag = -Ref.K * V;
+	}
+	OutRWPowM1 = Ref.RPow * OnePlusU * InvRW;
+	return float4(DRe, DImag);
+}

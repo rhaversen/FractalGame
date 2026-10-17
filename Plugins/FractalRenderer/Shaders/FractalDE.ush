@@ -32,6 +32,12 @@ struct FPDEResult
 	int Skipped;      // iterations replaced by the linear series skip
 };
 
+// |W| from RW2 = |W|^2 and 1/|W|; |W|^2 overflows float above ~1.8e19 (power maps with a high exponent).
+float FP_SafeLength(FP_STATE W, float RW2, float InvRW)
+{
+	return isinf(RW2) ? length(W * 5.42101086e-20f) * 1.84467441e19f : RW2 * InvRW;
+}
+
 FPFormulaArgs FP_MakeFormulaArgs(float Power, float Scale)
 {
 	FPFormulaArgs Args;
@@ -120,16 +126,24 @@ FPDEResult FP_PerturbedDE(StructuredBuffer<float4> Orbit, int OrbitLength, float
 	[loop]
 	for (; N < MaxIterations; ++N)
 	{
-		FP_STATE W = bDirect ? Z : FP_FormulaLoadState(Orbit, FP_ORBIT_STRIDE * M) + D;
+		FP_STATE RefZ = bDirect ? (FP_STATE)0.0f : FP_FormulaLoadState(Orbit, FP_ORBIT_STRIDE * M);
+		FP_STATE W = bDirect ? Z : RefZ + D;
 		float RW2 = dot(W, W);
 		float InvRW = (RW2 > 0.0f) ? rsqrt(RW2) : 0.0f;
-		RW = RW2 * InvRW;
-		if (FP_TestEscapeAt(N) && RW2 > Bailout2)
+		RW = FP_SafeLength(W, RW2, InvRW);
+		// Escape test: |Z + d|^2 - Bailout^2 = 2 Z.d + d.d - (Bailout^2 - |Z|^2) with the margin exact from the CPU.
+		// A float |W|^2 would carry an absolute error of ~1e-7 Bailout^2 and make the decision noise for pixels
+		// whose reference orbit sits next to the bailout sphere.
+		bool bOutside = bDirect ? (RW2 > Bailout2)
+			: (dot(2.0f * RefZ + D, D) > Orbit[FP_ORBIT_STRIDE * M + FP_SKIP_ROW + 2].w);
+		if (FP_TestEscapeAt(N) && bOutside)
 		{
 			bEscaped = true;
 			break;
 		}
-		if (!bDirect && (RW2 < dot(D, D) || M >= OrbitLength - 1))
+		// Formulas without c continue with plain float iteration once the pixel has left the reference. The
+		// next reference point is formed with an error of up to ~(|Z|/|W|)^p eps, so switch early (|W|^2 < 64 |d|^2).
+		if (!bDirect && (RW2 < (FP_FORMULA_ADDS_C ? 1.0f : 64.0f) * dot(D, D) || M >= OrbitLength - 1))
 		{
 			++Rebases;
 #if FP_FORMULA_ADDS_C
@@ -184,7 +198,7 @@ FPDEResult FP_DirectDE(float3 C, FPFormulaArgs Args, int MaxIterations, float Ba
 	{
 		float RW2 = dot(Z, Z);
 		float InvRW = (RW2 > 0.0f) ? rsqrt(RW2) : 0.0f;
-		RW = RW2 * InvRW;
+		RW = FP_SafeLength(Z, RW2, InvRW);
 		if (FP_TestEscapeAt(N) && RW2 > Bailout2)
 		{
 			bEscaped = true;

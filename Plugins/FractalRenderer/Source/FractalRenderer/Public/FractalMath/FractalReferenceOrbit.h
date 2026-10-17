@@ -12,7 +12,7 @@
 // GPU orbit layout, per point m (F::PayloadFloat4 + F::StateDim float4):
 //   [0 .. PayloadFloat4-1]  formula data (F::Pack), starting with the float-rounded Z~_m
 //   [PayloadFloat4 + i]     series row i: (A_m[i][0], A_m[i][1], A_m[i][2], extra_i), extra_0 = skip radius,
-//                           extra_1 = reference running derivative dr_m
+//                           extra_1 = reference running derivative dr_m, extra_2 = Bailout^2 - |Z_m|^2
 // Point 0 is the zero state (the rebase target of formulas that add c); the orbit proper starts at m = 1.
 
 #pragma once
@@ -92,7 +92,11 @@ struct TSeriesState
 			return;
 		}
 		double J[4][4] = {};
-		const double Limit = F::SeriesStep(Z, Params, Tolerance, J);
+		double Limit = F::SeriesStep(Z, Params, Tolerance, J);
+		// A pixel that crosses the bailout between two orbit points must not be skipped over: its offset has to
+		// stay below half the reference's distance to the bailout sphere.
+		const double ToBailout = 0.5 * (Params.Bailout - std::sqrt(Dot(Z, Z)));
+		Limit = Limit < ToBailout ? Limit : ToBailout;
 		double NormA2 = 0.0;
 		for (int Row = 0; Row < F::StateDim; ++Row)
 		{
@@ -166,6 +170,10 @@ inline int GenerateReferenceOrbit(const TFractalVec3<T>& C, const FFormulaParams
 				Rows[I] = 0.0f;
 			}
 		}
+		// Spare slot of series row 2: Bailout^2 - |Z|^2 rounded from T precision. The GPU decides whether a pixel
+		// has escaped from |Z + d|^2 - Bailout^2 = 2 Z.d + d.d - margin, which stays exact where the reference
+		// itself sits next to the bailout sphere (a float |Z + d|^2 has an absolute error of ~eps Bailout^2).
+		Rows[4 * 2 + 3] = ClampToFloatRange(RToDouble(T(Params.Bailout * Params.Bailout) - Dot(Z, Z)));
 		if (OutOrbit)
 		{
 			OutOrbit[Index] = Z;
@@ -212,7 +220,8 @@ inline FDistanceEstimate DistanceEstimate(const TFractalVec3<T>& Position, const
 	for (; N < Params.MaxIterations; ++N)
 	{
 		R = std::sqrt(RToDouble(Dot(Z, Z)));
-		if ((F::Family == EFractalFamily::EscapeTime || N > 1) && R > Params.Bailout)
+		// Compared in T precision: a double |z| next to the bailout sphere would misjudge deep-zoom samples.
+		if ((F::Family == EFractalFamily::EscapeTime || N > 1) && Dot(Z, Z) > T(Params.Bailout * Params.Bailout))
 		{
 			Result.bEscaped = true;
 			break;

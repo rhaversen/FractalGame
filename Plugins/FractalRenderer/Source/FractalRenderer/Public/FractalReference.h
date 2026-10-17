@@ -22,9 +22,6 @@ struct FRACTALRENDERER_API FFractalCameraMapping
 
 	/** Multiplies Scale by Factor while keeping the fractal position of WorldPoint fixed. */
 	void ZoomAround(const FVector3d& WorldPoint, double Factor);
-
-	/** Re-anchors so that WorldPoint maps exactly to FractalPoint (Scale unchanged). */
-	void SetFractalPositionOf(const FVector3d& WorldPoint, const FractalMath::FDDVec3& FractalPoint);
 };
 
 /**

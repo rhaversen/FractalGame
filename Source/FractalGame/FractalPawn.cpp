@@ -1,135 +1,35 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "FractalPawn.h"
+#include "Components/SphereComponent.h"
 #include "Camera/CameraComponent.h"
+#include "Engine/CollisionProfile.h"
 #include "GameFramework/FloatingPawnMovement.h"
-#include "Engine/GameInstance.h"
-#include "FractalControlSubsystem.h"
 
 AFractalPawn::AFractalPawn()
 {
-    PrimaryActorTick.bCanEverTick = false;
+	PrimaryActorTick.bCanEverTick = false;
 
-    // Create camera component
-    Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
-    RootComponent = Camera;
+	Collision = CreateDefaultSubobject<USphereComponent>(TEXT("Collision"));
+	SetRootComponent(Collision);
+	Collision->InitSphereRadius(40.0f);
+	Collision->SetCollisionProfileName(UCollisionProfile::Pawn_ProfileName);
 
-    // Create movement component
-    MovementComponent = CreateDefaultSubobject<UFloatingPawnMovement>(TEXT("MovementComponent"));
-    MovementComponent->MaxSpeed = MovementSpeed;
-    MovementComponent->Acceleration = 20000.0f;
-    MovementComponent->Deceleration = 40000.0f;
+	// The camera sits at the pawn's origin, which is the pivot of every rotation: the controller measures the
+	// fractal distance at the camera, and turning must not swing the view around an offset pivot (deep in the
+	// zoom the surface is only centimetres away). It follows the pawn's rotation, which the controller sets
+	// directly.
+	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
+	Camera->SetupAttachment(Collision);
+	Camera->bUsePawnControlRotation = false;
 
-    bUseControllerRotationPitch = false;
-    bUseControllerRotationYaw = false;
-    bUseControllerRotationRoll = false;
-}
+	Movement = CreateDefaultSubobject<UFloatingPawnMovement>(TEXT("Movement"));
+	Movement->MaxSpeed = 1200.0f;
+	Movement->Acceleration = 4096.0f;
+	Movement->Deceleration = 4096.0f;
 
-void AFractalPawn::BeginPlay()
-{
-    Super::BeginPlay();
-}
-
-void AFractalPawn::SetupPlayerInputComponent(UInputComponent *PlayerInputComponent)
-{
-    Super::SetupPlayerInputComponent(PlayerInputComponent);
-
-    // Bind axis mappings
-    PlayerInputComponent->BindAxis("MoveForward", this, &AFractalPawn::MoveForward);
-    PlayerInputComponent->BindAxis("MoveRight", this, &AFractalPawn::MoveRight);
-    PlayerInputComponent->BindAxis("MoveUp", this, &AFractalPawn::MoveUp);
-    PlayerInputComponent->BindAxis("Turn", this, &AFractalPawn::Turn);
-    PlayerInputComponent->BindAxis("LookUp", this, &AFractalPawn::LookUp);
-    PlayerInputComponent->BindAxis("Roll", this, &AFractalPawn::Roll);
-    PlayerInputComponent->BindAxis("Zoom", this, &AFractalPawn::Zoom);
-}
-
-void AFractalPawn::MoveForward(float Value)
-{
-    if (FMath::IsNearlyZero(Value))
-    {
-        return;
-    }
-
-    AddMovementInput(GetActorForwardVector(), Value);
-}
-
-void AFractalPawn::MoveRight(float Value)
-{
-    if (FMath::IsNearlyZero(Value))
-    {
-        return;
-    }
-
-    AddMovementInput(GetActorRightVector(), Value);
-}
-
-void AFractalPawn::MoveUp(float Value)
-{
-    if (FMath::IsNearlyZero(Value))
-    {
-        return;
-    }
-
-    AddMovementInput(GetActorUpVector(), Value);
-}
-
-void AFractalPawn::Turn(float Value)
-{
-    if (FMath::IsNearlyZero(Value))
-    {
-        return;
-    }
-
-    const float AngleRad = FMath::DegreesToRadians(Value * LookSensitivity);
-    const FQuat Delta = FQuat(GetActorUpVector(), AngleRad);
-    const FQuat NewRotation = Delta * GetActorQuat();
-    SetActorRotation(NewRotation);
-
-}
-
-void AFractalPawn::LookUp(float Value)
-{
-    if (FMath::IsNearlyZero(Value))
-    {
-        return;
-    }
-
-    const float AngleRad = FMath::DegreesToRadians(-Value * LookSensitivity);
-    const FQuat Delta = FQuat(GetActorRightVector(), AngleRad);
-    const FQuat NewRotation = Delta * GetActorQuat();
-    SetActorRotation(NewRotation);
-
-}
-
-void AFractalPawn::Roll(float Value)
-{
-    if (FMath::IsNearlyZero(Value))
-    {
-        return;
-    }
-
-    const float AngleRad = FMath::DegreesToRadians(-Value * LookSensitivity);
-    const FQuat Delta = FQuat(GetActorForwardVector(), AngleRad);
-    const FQuat NewRotation = Delta * GetActorQuat();
-    SetActorRotation(NewRotation);
-
-}
-
-void AFractalPawn::Zoom(float Value)
-{
-    if (FMath::IsNearlyZero(Value))
-    {
-        return;
-    }
-
-    // Zooming rescales world units around the camera (the view itself does not change); the pawn keeps
-    // its world-space speed, so after zooming in it moves proportionally slower through the fractal.
-    if (UGameInstance* GameInstance = GetGameInstance())
-    {
-        if (UFractalControlSubsystem* Fractal = GameInstance->GetSubsystem<UFractalControlSubsystem>())
-        {
-            Fractal->ZoomAroundCamera(FMath::Pow(2.0, -static_cast<double>(Value) * ZoomOctavesPerNotch));
-        }
-    }
+	// The controller sets the pawn's rotation directly; following the control rotation would undo it every frame.
+	bUseControllerRotationYaw = false;
+	bUseControllerRotationPitch = false;
+	bUseControllerRotationRoll = false;
 }

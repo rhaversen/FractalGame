@@ -446,14 +446,17 @@ the GPU draws (`UFractalControlSubsystem::GetDistanceAtWorld`).
 * **HUD** values keep their v1.1 meaning at any depth: distances are shown divided by the user scale and speeds
   multiplied by the zoom factor; the ZOOM bar extends to the deepest reachable level and the magnification is shown;
   the position is printed in double-double with as many decimals as the zoom needs.
-* **Shading.** Colours used to come from the step and iteration counts (more work = brighter, tinted towards
-  white-teal), and rays that never hit were blended from that bright colour back to the sky with
-  `pow(steps / max, 0.1)` (≈ 1), which painted an opaque bright veil over empty space and over everything near
-  the camera. Now `FP_Shade` lights hits with a headlight and a fixed light using the normal from the distance
-  estimate's gradient (4 extra estimates per hit), darkens by step count (ambient occlusion: it never brightens),
-  colours by the escape iteration of the hit (cosine palette), fades with distance in fractal units, and shows misses
-  as the untouched background plus a faint glow. Raising the iteration count was never the cure: at the hit the
-  count is only 7-30 of 150, the old mapping simply encoded effort as brightness.
+* **Shading and the haze.** The iteration limit is the limit of the detail the renderer can resolve, and the haze is
+  how it ends gracefully. The first lit-shading change removed the haze because it looked like a veil: colours came from
+  the step and iteration counts (more work = brighter, tinted towards white-teal) and rays that never hit were blended
+  from that bright colour back to the sky with `pow(steps / max, 0.1)` (≈ 1). That was the wrong reading: the tint
+  (`IterFactor > 0.9`) was the fade where the iteration limit runs out. `FP_Shade` now lights hits (headlight + fixed
+  light, normal from the distance estimate's gradient, 4 extra estimates per hit), darkens by step count (ambient
+  occlusion, never brightens), colours by the smooth escape iteration, and fades each hit towards the haze colour
+  between 55% and 100% of the iteration limit (`smoothstep`, `FP_HAZE_START`); an orbit that never escaped is fully
+  hazed, so the end of the resolvable detail is a soft transition instead of a solid fill or a hole. Misses show the
+  background with a faint glow where the ray grazed geometry. With the automatic limit (next item) the haze touches
+  0-0.4% of the pixels in ordinary views; it takes over where the limit is lowered or the depth outgrows 1000 iterations.
 * **The iteration limit is not a graceful limit.** A sample whose orbit has not escaped when the limit is reached is
   treated as inside the set, so a limit that is too low for the zoom depth fills the surface in solid (power
   fractals) or hits nothing at all (folding fractals). Measured at zoom 1e-25 with a fixed limit (hit / of those at the

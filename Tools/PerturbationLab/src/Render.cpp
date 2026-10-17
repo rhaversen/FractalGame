@@ -264,12 +264,13 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 			// How each ray ended: grey = hit with an escaping orbit (brightness ~ iterations), red = hit where the
 			// orbit hit the iteration limit, yellow = ray ran out of steps, dark blue = left the scene.
 			std::vector<FPixel> ImgE((size_t)W * H);
-			int Cap = 0, Esc = 0, StepMiss = 0, DistMiss = 0;
+			int Cap = 0, Esc = 0, StepMiss = 0, DistMiss = 0, NearLimit = 0;
 			for (int I = 0; I < W * H; I++)
 			{
 				const int St = ImgP[I].Status;
 				const float Iter = OE.As<float>()[4 * I], Escaped = OE.As<float>()[4 * I + 1];
 				float R = 0.05f, G = 0.08f, B = 0.2f;
+				if (St == 1 && Escaped > 0.5f && Iter > 0.55f * RS.Params.MaxIterations) NearLimit++;
 				if (St == 1 && Escaped > 0.5f) { R = G = B = 0.15f + 0.85f * std::min(1.0f, Iter / (float)RS.Params.MaxIterations); Esc++; }
 				else if (St == 1) { R = 1.0f; G = B = 0.1f; Cap++; }
 				else if (St == 3) { R = G = 1.0f; B = 0.1f; StepMiss++; }
@@ -277,7 +278,7 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 				ImgE[I] = {R, G, B, 0, 0, 0, 0};
 			}
 			WritePPM(ImageDir + "/" + Sc.Name + "_ends.ppm", ImgE, W, H);
-			std::printf("          ray ends: hit %.1f%% (orbit at iteration limit %.2f%%), step limit %.2f%%, left the scene %.1f%%\n", 100.0 * (Esc + Cap) / (W * H), 100.0 * Cap / (W * H), 100.0 * StepMiss / (W * H), 100.0 * DistMiss / (W * H));
+			std::printf("          ray ends: hit %.1f%% (orbit at iteration limit %.2f%%), step limit %.2f%%, left the scene %.1f%%, hazed (past 55%% of the limit or at it) %.2f%%\n", 100.0 * (Esc + Cap) / (W * H), 100.0 * Cap / (W * H), 100.0 * StepMiss / (W * H), 100.0 * DistMiss / (W * H), 100.0 * (NearLimit + Cap) / (W * H));
 		}
 		KNaive.Dispatch({&CB, &Orb, &OC, &OD, &OS, &OE}, (W + 7) / 8, (H + 7) / 8, 1);
 		double NaiveMs = KNaive.Dispatch({&CB, &Orb, &OC, &OD, &OS, &OE}, (W + 7) / 8, (H + 7) / 8, 1);

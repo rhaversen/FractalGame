@@ -122,9 +122,14 @@ FPMarchResult FP_MarchRay(StructuredBuffer<float4> Orbit, FPViewParams V, float3
 // Shading
 // ---------------------------------------------------------------------------------------------
 // Surfaces are lit (headlight + one fixed light) with the normal taken from the distance estimate's gradient.
-// The number of march steps only darkens (ambient occlusion: rays that crawl along crevices); it never brightens,
-// so close geometry cannot wash out. The colour comes from the iteration at which the hit point escapes. Rays that
-// never hit show the background untouched, apart from a faint glow where they grazed geometry.
+// The number of march steps only darkens (ambient occlusion: rays that crawl along crevices); it never brightens.
+// The colour comes from the iteration at which the hit point escapes.
+//
+// The iteration limit is the limit of the detail the renderer can resolve. Where it is approached the surface fades
+// into haze instead of ending in a hard edge: a hit whose orbit needed a large share of the limit (smooth escape
+// iteration over the limit, from FP_HazeStart on) blends towards the haze colour, and one that never escaped
+// (the orbit ran into the limit) is fully hazed. Rays that never hit show the background, with a faint glow where
+// they grazed geometry.
 
 float3 FP_Palette(float T)
 {
@@ -147,6 +152,16 @@ float3 FP_SurfaceNormal(StructuredBuffer<float4> Orbit, FPViewParams V, FPFormul
 		+ K3 * FP_DistanceEstimate(Orbit, V, Args, DCHit + V.Scale * Eps * K3, PixelRadius).Distance;
 	float L2 = dot(G, G);
 	return (L2 > 0.0f) ? G * rsqrt(L2) : -Dir;
+}
+
+// Share of the iteration limit at which a hit starts to fade into haze (fully hazed at the limit).
+#ifndef FP_HAZE_START
+#define FP_HAZE_START 0.55f
+#endif
+
+float3 FP_HazeColor(float3 Background)
+{
+	return lerp(Background, float3(0.50f, 0.64f, 0.86f), 0.6f);
 }
 
 float3 FP_Shade(StructuredBuffer<float4> Orbit, FPViewParams V, FPMarchResult R, float3 Dir, float3 Background)
@@ -176,6 +191,11 @@ float3 FP_Shade(StructuredBuffer<float4> Orbit, FPViewParams V, FPMarchResult R,
 
 	float3 Albedo = FP_Palette(log2(1.0f + R.LastSmooth) * 0.22f);
 	float3 Color = Albedo * Light * AO;
+
+	// Detail limit: fade towards haze as the orbit uses up the iteration limit (an orbit that never escaped has).
+	float Used = R.bLastEscaped ? R.LastSmooth / max((float)V.MaxIterations, 1.0f) : 1.0f;
+	float Haze = smoothstep(FP_HAZE_START, 1.0f, Used);
+	Color = lerp(Color, FP_HazeColor(Background), Haze);
 
 	// Distance fog towards the background, in fractal units so it does not depend on the zoom.
 	float Fog = 1.0f - exp(-V.Scale * R.Distance * 0.25f);

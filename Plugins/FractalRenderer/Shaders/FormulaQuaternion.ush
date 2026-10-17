@@ -1,3 +1,47 @@
-// PLACEHOLDER (to be implemented): currently renders the Mandelbulb.
+// Quaternion Julia set: q = (x, y, z, w) with the real part in x, z_1 = (position, 0), z_{n+1} = z_n^p + c_J,
+// dr' = p |z|^(p-1) dr (CPU: FractalMath/Formulas/QuaternionFormula.h, power map in FractalQuaternion.ush).
+// c only sets the starting point, so the perturbation is d <- (Z + d)^p - Z^p and a pixel that leaves the reference
+// continues with plain float iteration.
+//
+// Orbit point layout (FP_ORBIT_STRIDE = 7 float4): Q~ | R, 1/R, |imag Q~|, R^p | cos(p theta), sin(p theta), K, 0 |
+// 4 series rows (A_m is 4x3).
+
 #pragma once
-#include "FormulaMandelbulb.ush"
+
+#include "FractalQuaternion.ush"
+
+#define FP_STATE float4
+#define FP_STATE_DIM 4
+#define FP_PAYLOAD_FLOAT4 3
+#define FP_FORMULA_ADDS_C 0
+#define FP_FORMULA_FOLDING 0
+
+// FQuaternionFormula::CX, CY, CZ, CW
+static const float4 FP_QUATERNION_C = float4(0.264f, 0.542f, 0.0f, 0.542f);
+
+FP_STATE FP_FormulaStart(float3 Position)
+{
+	return float4(Position, 0.0f);
+}
+
+FP_STATE FP_FormulaLoadState(StructuredBuffer<float4> Orbit, int Base)
+{
+	return Orbit[Base];
+}
+
+void FP_FormulaPerturbedStep(StructuredBuffer<float4> Orbit, int Base, inout FP_STATE D, FP_STATE W, float RW, float InvRW,
+	float3 DC, inout float DRS, FPFormulaArgs Args)
+{
+	FPQuaternionRef Ref = FP_LoadQuaternionRef(Orbit, Base);
+	float RWPowM1;
+	D = FP_PerturbedQuaternionPowerDelta(Ref, D, W, RW, InvRW, Args.Power, Args.PowerInt, RWPowM1);
+	DRS = Args.Power * RWPowM1 * DRS;
+}
+
+void FP_FormulaDirectStep(inout FP_STATE Z, float RW, float InvRW, float3 C, inout float DRS, FPFormulaArgs Args)
+{
+	float RWPowM1;
+	float4 G = FP_QuaternionPower(Z, RW, InvRW, Args.Power, Args.PowerInt, RWPowM1);
+	DRS = Args.Power * RWPowM1 * DRS;
+	Z = G + FP_QUATERNION_C;
+}

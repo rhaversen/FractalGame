@@ -1,3 +1,61 @@
-// PLACEHOLDER (to be implemented): currently renders the Mandelbulb.
+// Burning Ship: z_1 = c, z_{n+1} = g_p(|z_n|) + c with |z| per component, dr' = p r^(p-1) dr + 1
+// (CPU: FractalMath/Formulas/BurningShipFormula.h).
+//
+// Payload (3 float4): (Z~, |Z~|) | (Rho, RPow, Phi, InvR) | (SinPT, CosPT, SinPP, CosPP), i.e. the power
+// reference block of the folded point abs(Z~) with the signed reference Z~ in place of abs(Z~).
+//
+// Perturbed step: d' = |Z~ + d| - |Z~| per component (exact, below), then the power-map perturbation of the
+// folded reference, g_p(abs(Z~) + d') - g_p(abs(Z~)), with abs(W) as the folded pixel.
+
 #pragma once
-#include "FormulaMandelbulb.ush"
+
+#include "FractalPowerMap.ush"
+
+#define FP_STATE float3
+#define FP_STATE_DIM 3
+#define FP_PAYLOAD_FLOAT4 3
+#define FP_FORMULA_ADDS_C 1
+#define FP_FORMULA_FOLDING 0
+
+FP_STATE FP_FormulaStart(float3 Position)
+{
+	return Position;
+}
+
+FP_STATE FP_FormulaLoadState(StructuredBuffer<float4> Orbit, int Base)
+{
+	return Orbit[Base].xyz;
+}
+
+// |Z + D| - |Z| for one component, W = Z + D (float). The branch test is exact: fl(Z + D) has the sign of
+// the real sum Z + D (up to denormal flushing, |Z + D| < 1e-38). Same side: +-D, exact. Opposite sides:
+// -+(2Z + D); there |Z| < |D|, so its rounding and the use of Z~ for the double-double reference
+// (|Z~ - Z| <= eps |Z| / 2) both cost O(eps |D|). Z~ can also put the pixel on the wrong side only when
+// |Z + D| <= eps |Z| / 2, i.e. |Z| ~ |D|, and the wrong branch is then off by 2 |Z + D| <= eps |D|: the fold is
+// exact to float precision relative to D.
+float FP_BurningShipAbsDelta(float Z, float D, float W)
+{
+	float SZ = (Z < 0.0f) ? -1.0f : 1.0f;
+	float SW = (W < 0.0f) ? -1.0f : 1.0f;
+	return (SZ == SW) ? SZ * D : -SZ * (2.0f * Z + D);
+}
+
+void FP_FormulaPerturbedStep(StructuredBuffer<float4> Orbit, int Base, inout FP_STATE D, FP_STATE W, float RW, float InvRW,
+	float3 DC, inout float DRS, FPFormulaArgs Args)
+{
+	float4 P0 = Orbit[Base];
+	FPPowerRef Ref = FP_DecodePowerRef(float4(abs(P0.xyz), P0.w), Orbit[Base + 1], Orbit[Base + 2]);
+	float3 DF = float3(FP_BurningShipAbsDelta(P0.x, D.x, W.x), FP_BurningShipAbsDelta(P0.y, D.y, W.y), FP_BurningShipAbsDelta(P0.z, D.z, W.z));
+	float RWPowM1;
+	float3 G = FP_PerturbedPowerDelta(Ref, DF, abs(W), RW, InvRW, Args.Power, Args.PowerInt, RWPowM1);
+	DRS = Args.Power * RWPowM1 * DRS + Args.Scale;
+	D = G + DC;
+}
+
+void FP_FormulaDirectStep(inout FP_STATE Z, float RW, float InvRW, float3 C, inout float DRS, FPFormulaArgs Args)
+{
+	float RWPowM1;
+	float3 G = FP_MandelbulbPower(abs(Z), RW, InvRW, Args.Power, Args.PowerInt, RWPowM1);
+	DRS = Args.Power * RWPowM1 * DRS + Args.Scale;
+	Z = G + C;
+}

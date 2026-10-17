@@ -77,21 +77,32 @@ inline FReferenceMarchResult MarchReferenceFan(EFractalFormula Formula, const TF
 }
 
 /**
- * Iterations per sample for a given pixel footprint (fractal units). Folding fractals expand by ~|s| per
- * iteration, so a point one footprint away from the surface needs ~log(Bailout / footprint) / log|s|
- * iterations to escape; deep zooms with small scale factors need more than BaseIterations. Rounded up to
- * multiples of 50 (so that the reference orbit, whose length depends on it, is only rebuilt occasionally)
- * and capped at 1000. Power fractals return BaseIterations.
+ * Iterations per sample for a given pixel footprint (fractal units). A sample one footprint away from the surface
+ * escapes after about ln(Bailout / footprint) / ln(growth) iterations, where growth is the per-iteration expansion:
+ * the scale factor of folding fractals, the exponent of power fractals (at least 1.5: boundary orbits expand much
+ * more slowly than the exponent suggests near critical points). Measured on the lab scenes the real need is up to
+ * twice that, so the estimate is doubled, plus a margin. Too few iterations are not a graceful degradation: every
+ * sample that does not escape counts as inside the set and the surface fills in solid (or, for folding fractals,
+ * nothing is hit at all). The result is rounded up to multiples of 50 (so that the reference orbit, whose length
+ * depends on it, is only rebuilt occasionally), is never below BaseIterations and is capped at 1000.
  */
 inline int ComputeIterationBudget(EFractalFormula Formula, double Power, int BaseIterations, double Bailout, double FootprintFractal)
 {
 	const int Base = BaseIterations > 2 ? BaseIterations : 2;
-	const double Growth = std::fabs(Power);
-	if (FormulaFamily(Formula) != EFractalFamily::Folding || !(Growth > 1.01) || !(FootprintFractal > 0.0))
+	if (!(FootprintFractal > 0.0))
 	{
 		return Base;
 	}
-	const double Needed = std::log((Bailout > 1.0 ? Bailout : 1.0) / FootprintFractal) / std::log(Growth) + 20.0;
+	double Growth = std::fabs(Power);
+	if (FormulaFamily(Formula) == EFractalFamily::EscapeTime)
+	{
+		Growth = Growth > 1.5 ? Growth : 1.5;
+	}
+	else if (!(Growth > 1.01))
+	{
+		return Base;
+	}
+	const double Needed = 2.0 * std::log((Bailout > 1.0 ? Bailout : 1.0) / FootprintFractal) / std::log(Growth) + 20.0;
 	const double Capped = Needed < 0.0 ? 0.0 : (Needed > 1000.0 ? 1000.0 : Needed);
 	int Rounded = static_cast<int>(std::ceil(Capped / 50.0)) * 50;
 	Rounded = Rounded < Base ? Base : Rounded;

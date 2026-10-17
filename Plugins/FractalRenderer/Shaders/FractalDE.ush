@@ -30,7 +30,20 @@ struct FPDEResult
 	bool bEscaped;
 	int Rebases;      // rebases / switches to plain iteration
 	int Skipped;      // iterations replaced by the linear series skip
+	float Smooth;     // continuous escape iteration (== Iterations when the orbit did not escape)
 };
+
+// Continuous escape iteration: N + 1 - ln(ln|z| / ln Bailout) / ln(growth), with growth = the exponent (power
+// fractals) or the scale factor (folding fractals). It removes the colour banding of the integer count.
+float FP_SmoothIteration(int N, float RW, float Bailout, float Power, bool bEscaped)
+{
+	if (!bEscaped)
+	{
+		return (float)N;
+	}
+	float Ratio = log(max(RW, 1.0001f)) / log(max(Bailout, 1.0001f));
+	return (float)N + 1.0f - log(max(Ratio, 1.0f)) / log(max(abs(Power), 1.5f));
+}
 
 // |W| from RW2 = |W|^2 and 1/|W|; |W|^2 overflows float above ~1.8e19 (power maps with a high exponent).
 float FP_SafeLength(FP_STATE W, float RW2, float InvRW)
@@ -179,6 +192,7 @@ FPDEResult FP_PerturbedDE(StructuredBuffer<float4> Orbit, int OrbitLength, float
 	Result.bEscaped = bEscaped;
 	Result.Rebases = Rebases;
 	Result.Skipped = Skipped;
+	Result.Smooth = FP_SmoothIteration(N, RW, Bailout, Args.Power, bEscaped);
 	Result.Distance = FP_FinalDistance(bEscaped, RW, DRS, Args.Scale);
 	return Result;
 }
@@ -217,6 +231,7 @@ FPDEResult FP_DirectDE(float3 C, FPFormulaArgs Args, int MaxIterations, float Ba
 	Result.bEscaped = bEscaped;
 	Result.Rebases = 0;
 	Result.Skipped = 0;
+	Result.Smooth = FP_SmoothIteration(N, RW, Bailout, Args.Power, bEscaped);
 	Result.Distance = FP_FinalDistance(bEscaped, RW, DRS, Args.Scale);
 	return Result;
 }

@@ -47,7 +47,9 @@ struct FPMarchResult
 	int Status;
 	int TotalIterations;  // sum of escape iterations over the march
 	int TotalSkipped;     // iterations the series skip did not have to execute
-	int LastIterations;   // escape iteration of the last distance estimate (the colour of a hit)
+	int LastIterations;   // iterations of the last distance estimate
+	float LastSmooth;     // its continuous escape iteration (the colour of a hit)
+	bool bLastEscaped;    // the last distance estimate saw its orbit escape (false: it ran into the iteration limit)
 };
 
 float3 FP_PixelRayDirection(FPViewParams V, uint2 Pixel)
@@ -78,6 +80,9 @@ FPMarchResult FP_MarchRay(StructuredBuffer<float4> Orbit, FPViewParams V, float3
 	Result.Status = FP_MISS_STEPS;
 	Result.TotalIterations = 0;
 	Result.TotalSkipped = 0;
+	Result.LastIterations = 0;
+	Result.LastSmooth = 0.0f;
+	Result.bLastEscaped = false;
 
 	FPFormulaArgs Args = FP_MakeFormulaArgs(V.Power, V.Scale);
 	float T = 0.0f;
@@ -96,6 +101,8 @@ FPMarchResult FP_MarchRay(StructuredBuffer<float4> Orbit, FPViewParams V, float3
 		Result.TotalIterations += DE.Iterations;
 		Result.TotalSkipped += DE.Skipped;
 		Result.LastIterations = DE.Iterations;
+		Result.LastSmooth = DE.Smooth;
+		Result.bLastEscaped = DE.bEscaped;
 		if (DE.Distance <= PixelRadius)
 		{
 			Result.Status = FP_HIT_SURFACE;
@@ -163,7 +170,7 @@ float3 FP_Shade(StructuredBuffer<float4> Orbit, FPViewParams V, FPMarchResult R,
 		AO *= 0.6f;
 	}
 
-	float3 Albedo = FP_Palette(log2(1.0f + R.LastIterations) * 0.22f);
+	float3 Albedo = FP_Palette(log2(1.0f + R.LastSmooth) * 0.22f);
 	float3 Color = Albedo * Light * AO;
 
 	// Distance fog towards the background, in fractal units so it does not depend on the zoom.

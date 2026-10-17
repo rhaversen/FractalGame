@@ -107,8 +107,8 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 	FRenderSettings RS;
 	RS.Params.Power = getenv("LAB_POWER") ? std::atof(getenv("LAB_POWER")) : Lab.Power;
 	const int Index = static_cast<int>(F::Type);
-	FVkKernel KPert(Ctx, LabSpv("RenderMain_T" + std::to_string(Index)), "RenderMain", {true, false, false, false, false});
-	FVkKernel KNaive(Ctx, LabSpv("RenderNaive_T" + std::to_string(Index)), "RenderMain", {true, false, false, false, false});
+	FVkKernel KPert(Ctx, LabSpv("RenderMain_T" + std::to_string(Index)), "RenderMain", {true, false, false, false, false, false});
+	FVkKernel KNaive(Ctx, LabSpv("RenderNaive_T" + std::to_string(Index)), "RenderMain", {true, false, false, false, false, false});
 	const std::string ImageDir = std::string(LAB_OUT_DIR) + "/images/" + GetFractalName(F::Type);
 	mkdir(ImageDir.c_str(), 0755);
 	std::printf("\n##### %s (power/scale %g) #####\n", GetFractalName(F::Type), RS.Params.Power);
@@ -161,6 +161,10 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 		InvertMatrix4(Proj, InvProj);
 		FFractalRayBasis Basis = BuildRayBasis(InvProj, V2W, W, H);
 
+		// Iteration limit as the plugin sizes it (ComputeIterationBudget from the pixel footprint at the camera's
+		// distance to the surface); LAB_ITERATIONS overrides it with a fixed limit.
+		if (!getenv("LAB_ITERATIONS"))
+			RS.Params.MaxIterations = ComputeIterationBudget(F::Type, RS.Params.Power, 150, RS.Params.Bailout, Sc.CamDistance * S * Basis.PixelRadiusPerUnitDistance);
 		// --- production CPU path: reference ray march + reference orbit ---
 		auto TRef0 = std::chrono::steady_clock::now();
 		FReferenceMarchSettings MS;
@@ -180,7 +184,7 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 		// --- GPU renders ---
 		FVkBuffer CB = Ctx.CreateBuffer(sizeof(FLabRenderParams), true);
 		FVkBuffer Orb = Ctx.CreateBuffer(Orbit.size() * sizeof(float));
-		FVkBuffer OC = Ctx.CreateBuffer((size_t)W * H * 16), OD = Ctx.CreateBuffer((size_t)W * H * 16), OS = Ctx.CreateBuffer((size_t)W * H * 16);
+		FVkBuffer OC = Ctx.CreateBuffer((size_t)W * H * 16), OD = Ctx.CreateBuffer((size_t)W * H * 16), OS = Ctx.CreateBuffer((size_t)W * H * 16), OE = Ctx.CreateBuffer((size_t)W * H * 16);
 		std::memcpy(Orb.Mapped, Orbit.data(), Orbit.size() * sizeof(float));
 		FLabRenderParams* P = CB.As<FLabRenderParams>();
 		for (int I = 0; I < 3; I++)
@@ -214,15 +218,34 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 		auto SumIter = [&](const std::vector<FPixel>& Img) { double T = 0; for (const FPixel& X : Img) T += X.TotalIter; return T; };
 		auto SumSteps = [&](const std::vector<FPixel>& Img) { double T = 0; for (const FPixel& X : Img) T += X.Steps; return T; };
 		auto SumSkipped = [&](const std::vector<FPixel>& Img) { double T = 0; for (const FPixel& X : Img) T += X.Skipped; return T; };
-		KPert.Dispatch({&CB, &Orb, &OC, &OD, &OS}, (W + 7) / 8, (H + 7) / 8, 1); // warm-up (JIT)
-		double PertMs = KPert.Dispatch({&CB, &Orb, &OC, &OD, &OS}, (W + 7) / 8, (H + 7) / 8, 1);
+		KPert.Dispatch({&CB, &Orb, &OC, &OD, &OS, &OE}, (W + 7) / 8, (H + 7) / 8, 1); // warm-up (JIT)
+		double PertMs = KPert.Dispatch({&CB, &Orb, &OC, &OD, &OS, &OE}, (W + 7) / 8, (H + 7) / 8, 1);
 		Grab(ImgP);
 		std::vector<FPixel> ImgS((size_t)W * H);
 		for (int I = 0; I < W * H; I++) { const float* C = OS.As<float>() + 4 * I; ImgS[I] = {C[0], C[1], C[2], 0, 0, 0, 0}; }
-		KNaive.Dispatch({&CB, &Orb, &OC, &OD, &OS}, (W + 7) / 8, (H + 7) / 8, 1);
-		double NaiveMs = KNaive.Dispatch({&CB, &Orb, &OC, &OD, &OS}, (W + 7) / 8, (H + 7) / 8, 1);
+		{
+			// How each ray ended: grey = hit with an escaping orbit (brightness ~ iterations), red = hit where the
+			// orbit hit the iteration limit, yellow = ray ran out of steps, dark blue = left the scene.
+			std::vector<FPixel> ImgE((size_t)W * H);
+			int Cap = 0, Esc = 0, StepMiss = 0, DistMiss = 0;
+			for (int I = 0; I < W * H; I++)
+			{
+				const int St = ImgP[I].Status;
+				const float Iter = OE.As<float>()[4 * I], Escaped = OE.As<float>()[4 * I + 1];
+				float R = 0.05f, G = 0.08f, B = 0.2f;
+				if (St == 1 && Escaped > 0.5f) { R = G = B = 0.15f + 0.85f * std::min(1.0f, Iter / (float)RS.Params.MaxIterations); Esc++; }
+				else if (St == 1) { R = 1.0f; G = B = 0.1f; Cap++; }
+				else if (St == 3) { R = G = 1.0f; B = 0.1f; StepMiss++; }
+				else DistMiss++;
+				ImgE[I] = {R, G, B, 0, 0, 0, 0};
+			}
+			WritePPM(ImageDir + "/" + Sc.Name + "_ends.ppm", ImgE, W, H);
+			std::printf("          ray ends: hit %.1f%% (orbit at iteration limit %.2f%%), step limit %.2f%%, left the scene %.1f%%\n", 100.0 * (Esc + Cap) / (W * H), 100.0 * Cap / (W * H), 100.0 * StepMiss / (W * H), 100.0 * DistMiss / (W * H));
+		}
+		KNaive.Dispatch({&CB, &Orb, &OC, &OD, &OS, &OE}, (W + 7) / 8, (H + 7) / 8, 1);
+		double NaiveMs = KNaive.Dispatch({&CB, &Orb, &OC, &OD, &OS, &OE}, (W + 7) / 8, (H + 7) / 8, 1);
 		Grab(ImgN);
-		for (FVkBuffer* B : {&CB, &Orb, &OC, &OD, &OS}) Ctx.DestroyBuffer(*B);
+		for (FVkBuffer* B : {&CB, &Orb, &OC, &OD, &OS, &OE}) Ctx.DestroyBuffer(*B);
 
 		// --- CPU ground truth (double-double positions, identical march logic) ---
 		double CpuMs = 0;

@@ -454,6 +454,15 @@ the GPU draws (`UFractalControlSubsystem::GetDistanceAtWorld`).
   colours by the escape iteration of the hit (cosine palette), fades with distance in fractal units, and shows misses
   as the untouched background plus a faint glow. Raising the iteration count was never the cure: at the hit the
   count is only 7-30 of 150, the old mapping simply encoded effort as brightness.
+* **The iteration limit is not a graceful limit.** A sample whose orbit has not escaped when the limit is reached is
+  treated as inside the set, so a limit that is too low for the zoom depth fills the surface in solid (power
+  fractals) or hits nothing at all (folding fractals). Measured at zoom 1e-25 with a fixed limit (hit / of those at the
+  limit): Burning Ship 100%/100% at 110, 9% at 150, 0% from 200; Kaleidoscopic IFS nothing hit at 80, 100% solid at 110,
+  14% at 150; Julia 100% solid at 50, fine from 80. The limit therefore follows the depth for every fractal
+  (`ComputeIterationBudget`: twice `ln(Bailout / footprint) / ln(growth)` plus a margin, rounded to 50, at most 1000),
+  at little cost because the series skip passes over the deep iterations. The lab's `render_lab` writes a `*_ends.ppm`
+  map of how every ray ended (grey: hit, red: hit with the orbit at the limit, yellow: step limit, blue: left the scene)
+  and prints the shares. Colours use the smooth escape iteration, so there is no banding between integer counts.
 * **VIEW panel.** The HUD prints the formula, power, user scale, exact zoom and scale, the number of coordinate
   decimals (set by the zoom), the facing and up vectors and pitch/yaw/roll: together with POSITION everything
   needed to return to a spot, or to reproduce a rendering problem with `ray_profile`.

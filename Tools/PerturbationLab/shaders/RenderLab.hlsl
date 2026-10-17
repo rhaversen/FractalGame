@@ -19,6 +19,7 @@ struct FLabRenderParams
 [[vk::binding(2, 0)]] RWStructuredBuffer<float4> OutColor : register(u0);
 [[vk::binding(3, 0)]] RWStructuredBuffer<float4> OutData : register(u1);
 [[vk::binding(4, 0)]] RWStructuredBuffer<float4> OutShaded : register(u2);
+[[vk::binding(5, 0)]] RWStructuredBuffer<float4> OutEnd : register(u3);   // x = last iterations, y = last estimate escaped
 
 // The step-count palette the CPU ground truth image (Render.cpp ShadeCPU) uses, so the perturbation and truth columns of
 // the comparison panels are directly comparable; the game itself shades with FP_Shade (the "shaded" column).
@@ -66,6 +67,7 @@ void RenderMain(uint3 Id : SV_DispatchThreadID)
 		StepColor = StepColor * pow(StepFactor, 0.1f); // over a black background
 	}
 	OutColor[Index] = float4(StepColor, (float)R.Status);
+	OutEnd[Index] = float4((float)R.LastIterations, R.bLastEscaped ? 1.0f : 0.0f, 0.0f, 0.0f);
 	OutShaded[Index] = float4(FP_Shade(ReferenceOrbit, V, R, Dir, float3(0.02f, 0.03f, 0.06f)), 1.0f);
 	OutData[Index] = float4(R.Distance, (float)R.Steps, (float)R.TotalIterations, (float)R.TotalSkipped);
 }

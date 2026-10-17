@@ -79,11 +79,15 @@ void UFractalControlSubsystem::SetUserScale(double InUserScale)
 	{
 		return;
 	}
-	// Scale the camera's fractal position about the fractal origin (the camera stays where it is in the world).
+	// Unzoomed: scale the camera's fractal position about the fractal origin (the camera stays where it is in
+	// the world), so the fractal grows or shrinks around its centre. Zoomed: the camera is at a tiny feature far
+	// from the origin and moving it by (Factor - 1) * |position| would throw it out of the picture, so it keeps its
+	// fractal position and only the units change.
 	const double Factor = InUserScale / UserScale;
 	const FVector3d Camera = GetCameraWorldLocation();
 	const FDDVec3 CameraFractal = CameraMapping.WorldToFractal(Camera);
-	CameraMapping.Origin = FDDVec3(CameraFractal.X * Factor, CameraFractal.Y * Factor, CameraFractal.Z * Factor);
+	const bool bZoomed = GetZoomFactor() < 1.0 - 1.0e-9;
+	CameraMapping.Origin = bZoomed ? CameraFractal : FDDVec3(CameraFractal.X * Factor, CameraFractal.Y * Factor, CameraFractal.Z * Factor);
 	CameraMapping.Anchor = Camera;
 	CameraMapping.Scale = FMath::Max(CameraMapping.Scale * Factor, MinFractalScale);
 	UserScale = InUserScale;
@@ -103,6 +107,7 @@ double UFractalControlSubsystem::ZoomAroundCamera(double Factor)
 		return 1.0;
 	}
 	CameraMapping.ZoomAround(GetCameraWorldLocation(), Applied);
+	CameraMapping.Scale = NewScale; // exact at the limits (Scale * (Limit / Scale) need not round to Limit)
 	PushCameraMapping();
 	return Applied;
 }
@@ -154,7 +159,8 @@ FString UFractalControlSubsystem::FormatCoordinate(const FDD& Value, int32 Decim
 	const bool bNegative = Value.Hi < 0.0;
 	FDD A = bNegative ? -Value : Value;
 
-	// Integer part, then the fraction digit by digit (exact in double-double: each step only multiplies by 10).
+	// Integer part, then the fraction digit by digit (each step multiplies by 10 in double-double, so digits beyond
+	// the ~32 significant ones of a double-double are noise).
 	double IntPart = FMath::FloorToDouble(A.Hi);
 	FDD Fraction = A - FDD(IntPart);
 	if (Fraction.Hi < 0.0)
@@ -194,7 +200,13 @@ FString UFractalControlSubsystem::FormatCoordinate(const FDD& Value, int32 Decim
 		IntPart += 1.0;
 	}
 
-	FString Result = FString::Printf(TEXT("%s%.0f"), bNegative ? TEXT("-") : TEXT(""), IntPart);
+	// A value that rounds to zero is printed without a sign.
+	bool bNonZero = IntPart != 0.0;
+	for (const int32 Digit : Digits)
+	{
+		bNonZero = bNonZero || Digit != 0;
+	}
+	FString Result = FString::Printf(TEXT("%s%.0f"), (bNegative && bNonZero) ? TEXT("-") : TEXT(""), IntPart);
 	if (Decimals > 0)
 	{
 		Result += TEXT(".");

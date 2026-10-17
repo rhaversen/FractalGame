@@ -1,4 +1,4 @@
-// GPU-side maths validation: runs FractalPerturbation.ush (compiled by DXC) on Vulkan and compares
+// GPU-side maths validation: runs FractalMathCommon.ush and FractalPowerMap.ush (compiled by DXC) on Vulkan and compares
 // against __float128 ground truth.
 #include "LabCommon.h"
 #include <random>

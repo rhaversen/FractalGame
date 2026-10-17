@@ -18,11 +18,11 @@ namespace
 		return FMath::Clamp((Value - MinValue) / FMath::Max(MaxValue - MinValue, UE_KINDA_SMALL_NUMBER), 0.0f, 1.0f);
 	}
 
-	// Fixed-point with the given decimals while that still shows two significant digits, scientific below
+	// Fixed-point with the given decimals while the value does not round to zero, scientific below
 	// (deep in the zoom distances and speeds shrink to ~1e-27 of their unzoomed size).
 	FString FormatQuantity(double Value, int32 Decimals, const TCHAR* Unit)
 	{
-		if (Value == 0.0 || FMath::Abs(Value) >= FMath::Pow(10.0, 1.0 - Decimals))
+		if (Value == 0.0 || FMath::Abs(Value) >= 0.5 * FMath::Pow(10.0, -Decimals))
 		{
 			return FString::Printf(TEXT("%.*f %s"), Decimals, Value, Unit);
 		}

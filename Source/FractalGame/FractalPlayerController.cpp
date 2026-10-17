@@ -276,7 +276,7 @@ double AFractalPlayerController::UpdateZoom(UFractalControlSubsystem& Fractal, d
 	// Inside a power fractal the distance is 0 and there is nothing to zoom towards (press R to get out).
 	const bool bTooClose = CameraDistance > 0.0 && CameraDistance < ZoomBand::ZoomInBelow;
 	// Zooming out stops at the unzoomed scale (ZoomAroundCamera caps the factor there).
-	const bool bTooFar = CameraDistance > ZoomBand::ZoomOutAbove && Fractal.GetZoomFactor() < 1.0;
+	const bool bTooFar = CameraDistance > ZoomBand::ZoomOutAbove && Fractal.GetZoomFactor() < 1.0 - 1.0e-9;
 	if (!bTooClose && !bTooFar)
 	{
 		return 1.0;

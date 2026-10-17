@@ -1,4 +1,4 @@
-// Mandelbulb: z_1 = c, z_{n+1} = g_p(z_n) + c (GPU: Shaders/Formulas/FormulaMandelbulb.ush).
+// Mandelbulb: z_1 = c, z_{n+1} = g_p(z_n) + c (GPU: Shaders/FormulaMandelbulb.ush).
 
 #pragma once
 

@@ -43,7 +43,8 @@ void FFractalSceneViewExtension::SubscribeToPostProcessingPass(
 	FPostProcessingPassDelegateArray& InOutPassCallbacks,
 	bool bIsPassEnabled)
 {
-	if (bIsPassEnabled && PassId == EPostProcessingPass::Tonemap)
+	// One reference serves the player's view; captures (reflection, planar, scene capture) would fight over it.
+	if (bIsPassEnabled && PassId == EPostProcessingPass::Tonemap && !View.bIsSceneCapture && !View.bIsReflectionCapture && !View.bIsPlanarReflection)
 	{
 		InOutPassCallbacks.Add(FPostProcessingPassDelegate::CreateRaw(this, &FFractalSceneViewExtension::RenderFractal_RenderThread));
 	}
@@ -165,7 +166,7 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 	}
 
 	// --- GPU resources ---
-	// The orbit is a few KB (4-7 float4 per iteration); uploading it every frame is cheaper than tracking
+	// The orbit is a few KB (6-7 float4 per iteration); uploading it every frame is cheaper than tracking
 	// buffer lifetimes across frames and views.
 	FRDGBufferRef OrbitBuffer;
 	if (OrbitLength > 0)

@@ -30,7 +30,7 @@ struct FRACTALRENDERER_API FFractalDistanceInfo
  *
  * World space and fractal space are related by Fractal = Origin + (World - Anchor) * Scale, with Origin in
  * double-double precision (FFractalCameraMapping). Two kinds of change are offered:
- *  - SetUserScale: the original renderer's "scale multiplier". The fractal grows or shrinks around its own
+ *  - SetUserScale: v1.1's "scale multiplier". The fractal grows or shrinks around its own
  *    origin, i.e. the camera's fractal position is scaled about the fractal origin.
  *  - ZoomAroundCamera: rescales world units around the camera without changing what is seen. Gameplay uses
  *    it to keep world-space distances comfortable while the player flies ever closer to the surface, which
@@ -73,7 +73,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Fractal|Formula")
 	float GetFractalPower() const { return FractalParameters.FractalPower; }
 
-	/** Interactive power / scale ranges and defaults of a fractal (same values as the original renderer). */
+	/** Interactive power / scale ranges and defaults of a fractal (same values as v1.1). */
 	static const FractalMath::FFractalPreset& GetPreset(EFractalType Type);
 
 	UFUNCTION(BlueprintPure, Category = "Fractal|Formula")

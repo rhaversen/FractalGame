@@ -1,10 +1,12 @@
-# Mandelbulb Perturbation Rendering
+# Perturbation Rendering of Eight 3D Fractals
 
-How the FractalRenderer plugin ray marches the Mandelbulb at zoom levels far beyond 32-bit float
-precision, why each piece of maths is the way it is, and how it was verified. Every claim with a
+How the FractalRenderer plugin ray marches Mandelbulb, Burning Ship, Julia Set, Mandelbox, Inverted Menger, Quaternion
+Julia, Sierpinski Tetrahedron and Kaleidoscopic IFS at zoom levels far beyond 32-bit float
+precision, why each piece of maths is the way it is, and how it was verified. Sections 1-9 derive and verify the technique on the Mandelbulb; section 10 extends it to the other
+seven formulas and section 11 describes how the game uses it. Every claim with a
 number in it is reproduced by `Tools/PerturbationLab` (see its README).
 
-![naive float vs perturbation vs ground truth](Tools/PerturbationLab/docs/comparison.png)
+![naive float vs perturbation vs ground truth](Tools/PerturbationLab/docs/Mandelbulb.png)
 
 *Same camera, same march, three ways to evaluate the distance estimator: plain float at absolute
 coordinates (what the renderer did before), the GPU perturbation shader, and a CPU double-double
@@ -45,11 +47,14 @@ Code map:
 | Piece | File |
 |---|---|
 | double-double arithmetic + transcendental functions | `Plugins/FractalRenderer/Source/FractalRenderer/Public/FractalMath/DoubleDouble.h` |
-| power map (double / dd), orbit + series skip, packing, DE, reference-ray march | `.../FractalMath/MandelbulbReference.h` |
+| scalar / vector abstraction (double, dd, quad) | `.../FractalMath/FractalScalar.h` |
+| formula catalogue (ids, names, presets) and the formula interface | `.../FractalMath/FractalFormulaTypes.h` |
+| generic orbit + series skip, packing, DE, reference-ray march (templated on the formula) | `.../FractalMath/FractalReferenceOrbit.h`, `FractalFormulas.h` (runtime dispatch) |
+| the formulas: `Formulas/{Mandelbulb,BurningShip,JuliaSet,Mandelbox,InvertedMenger,Quaternion,Sierpinski,KaleidoscopicIFS}Formula.h`, shared `PowerMap.h`, `FoldMaths.h`, `FoldTracker.h` | `.../FractalMath/Formulas/` |
 | UE view matrices → ray basis, UE matrix replicas for tests | `.../FractalMath/FractalCamera.h` |
 | reference lifetime (sync/async regeneration), world↔fractal mapping | `.../FractalReference.{h,cpp}` |
 | per-frame CPU→GPU constants, orbit upload, dispatch | `.../FractalSceneViewExtension.cpp` |
-| GPU perturbation maths (pure HLSL) | `Plugins/FractalRenderer/Shaders/FractalPerturbation.ush` |
+| GPU maths (pure HLSL): elementary functions, power-map step, fold steps, generic perturbed DE, formula selection by `FP_FRACTAL_TYPE` | `Plugins/FractalRenderer/Shaders/{FractalMathCommon,FractalPowerMap,FractalFolds,FractalFoldTracker,FractalQuaternion,FractalDE,FractalFormula}.ush`, one `Formula<Name>.ush` per fractal |
 | GPU ray march + shading (pure HLSL) | `Plugins/FractalRenderer/Shaders/FractalRender.ush` |
 | Unreal entry point (parameter binding only) | `Plugins/FractalRenderer/Shaders/PerturbationShader.usf` |
 
@@ -58,7 +63,7 @@ same files (C++ with g++/clang, HLSL with DXC) and runs the HLSL on Vulkan.
 
 ---
 
-## 2. Definitions (unchanged from the previous renderer)
+## 2. Definitions (Mandelbulb; the other fractals are in §10)
 
 ```
 r = |z|,  rho = sqrt(x^2 + y^2),  theta = atan2(rho, z) in [0, pi]  (angle from +Z),  phi = atan2(y, x)
@@ -140,7 +145,7 @@ cancellation and `g(W)` is evaluated directly (path A).
 
 * **GPU transcendental functions are not accurate for small arguments.** D3D only guarantees an
   absolute error of 8e-4 for `sin`/`cos` (Microsoft's `sincos` docs; Wine's tests see ~1e-6 on NVIDIA).
-  `sin(1e-20)` may come back as ~1e-6. `FractalPerturbation.ush` therefore implements `FP_SinCos`
+  `sin(1e-20)` may come back as ~1e-6. `FractalMathCommon.ush` therefore implements `FP_SinCos`
   (Cody-Waite + minimax), `FP_Atan2` (single minimax polynomial, one division), `FP_Log1p`, and
   `FP_Expm1`, all with relative accuracy down to 1e-38. Hardware `exp2`/`log2` appear only where
   absolute accuracy suffices.
@@ -229,7 +234,8 @@ loss (median errors are even slightly lower, since fewer float iterations means 
 | `CameraOffset` | `(P_cam - C_ref) / Scale`, world units | double-double, every frame |
 | `FractalScale` | fractal units per world unit (cm) | `FFractalCameraMapping::Scale` |
 | `ReferenceCenter` | `float(C_ref)`; used only by the plain-float path | |
-| `ReferenceOrbit`, `OrbitLength` | `StructuredBuffer<float4>`, 6 float4 per point (`FOrbitPointGPU`) | worker thread, uploaded each frame (~15 KB) |
+| `ReferenceOrbit`, `OrbitLength` | `StructuredBuffer<float4>`, `FormulaOrbitStride` float4 per point (6-7: formula payload + series-skip rows), layout in `FractalReferenceOrbit.h` | worker thread, uploaded each frame (~15-30 KB) |
+| `FractalPower`, `MaxIterations`, `MaxRayDistance` | exponent / folding scale; iterations (raised for deep folding zooms, `ComputeIterationBudget`); ray limit in world units (= fractal distance / Scale) | |
 | `DirectFootprint` | samples whose fractal-space pixel footprint exceeds this use plain float (hybrid, below) | `FFractalParameter::DirectEvaluationFootprint` (1e-4) |
 | `OutputSize, OutputOffset` | view rect size and min; the output is written at `id + OutputOffset` | |
 
@@ -252,11 +258,10 @@ split screen / editor viewports with `ViewRect.Min != 0`). The projection now us
 matrix, because the fractal is drawn after TAA/TSR.
 
 **World ↔ fractal mapping.** `Fractal = Origin + (World - Anchor) × Scale`, with `Origin` in
-double-double. With the defaults (`Origin = 0, Anchor = 0, Scale = 1e-5`) this is exactly the old
-`Center + world × Zoom`. `ZoomAround(point, f)` moves the anchor to the point first, so zooming never
-moves the camera. Unreal keeps using ordinary world coordinates; zooming rescales how far a world
-centimetre travels in the fractal, so the pawn automatically slows down relative to the fractal as you
-zoom in (mouse wheel).
+double-double. `ZoomAround(point, f)` moves the anchor to the point first, so zooming never
+moves the camera. Unreal keeps using ordinary world coordinates; the game rescales them around the camera
+while the player flies towards the surface (section 11), so a world centimetre always stays comparable to the
+distance to the surface.
 
 ---
 
@@ -346,9 +351,8 @@ count model for GPUs, where MUFU/division are relatively more expensive):
 * **Series skip** (§5) makes deep zoom cost roughly flat in depth.
 * **Power-8 permutation** (`FP_STATIC_POWER_8`) drops the general-power code and unrolls the powering
   loops.
-* `ConvergenceFactor` (the old early-out when the DE estimate stops changing) is now **0 by default**.
-  Measured with the old 0.01: it barely reduced iterations (315.7 → 315.3, 1247 → 1218 per pixel) and
-  dropped depth agreement to 91.4% at 1e-21.
+* The old early-out when the DE estimate stops changing was **removed**. Measured: it barely reduced
+  iterations (315.7 → 315.3, 1247 → 1218 per pixel) and dropped depth agreement to 91.4% at 1e-21.
 * The CPU reference march uses double while `Scale > 1e-9` (≈10× faster) and double-double below;
   the orbit is always double-double.
 
@@ -360,10 +364,84 @@ count model for GPUs, where MUFU/division are relatively more expensive):
   exponent extension on the GPU (float deltas underflow below ~1e-38; mathr's rescaling
   `z = S w` or float-exp), plus a split representation of `Scale`.
 * **Non-integer powers** work (general path) but are slower and inherit the formula's seams.
-* **Multiple views** share one reference manager; split screen with very different views would
-  thrash it (keep one manager per view state if that matters).
+* **Multiple views** share one reference manager, so the pass only runs on the player's view (not on reflection /
+  planar / scene captures). Split screen with very different views would thrash it.
 * **Further speed:** a full BLA table (merged linear segments, usable after rebases), cone marching
   or a coarse-to-fine pre-pass, analytic normals for shading.
 * **Not yet compiled inside Unreal.** The engine-free parts are compiled and tested; the `.usf`
-  compiles with DXC for both permutations (`make ue-shader-check`), but the plugin C++ has not been
+  compiles with DXC for every permutation (`make ue-shader-check`), but the plugin C++ has not been
   built in a UE 5.6 editor in this environment.
+
+---
+
+## 10. The other seven fractals
+
+All eight formulas run through the same machinery: a CPU formula struct (`FractalMath/Formulas/*.h`, templated on
+double / double-double / quad) that generates the reference orbit, derivative and series-skip data, and a GPU
+formula file (`Shaders/Formula*.ush`) that supplies the exact perturbed step. `FractalDE.ush` provides the loop:
+series skip, escape test, rebasing, the running derivative `dr · Scale`. Two kinds of formula:
+
+* **`z ← f(z) + c`** (Mandelbulb, Burning Ship, Mandelbox, Kaleidoscopic IFS): the pixel rebases onto orbit point 0.
+* **c only sets the start** (Julia Set, Quaternion, Inverted Menger, Sierpinski): there is nothing to rebase onto, so
+  once `|z|² < 64 |d|²` (or the reference ends) the pixel continues with plain float iteration. That is exact enough
+  because the map does not depend on c and the pixel has by then left the reference by a wide margin.
+
+The escape decision uses `Bailout² − |Z|²` rounded from double-double per orbit point (`2 Z·d + d·d` against it),
+so pixels next to a reference that sits on the bailout sphere are still classified correctly; the series skip never
+jumps past an escape.
+
+| Fractal | Exact step | v1.1 bug fixed |
+|---|---|---|
+| Mandelbulb | `g(Z+d) − g(Z)` (§3) | – |
+| Burning Ship | abs fold per component (`±d`, or `−sign(Z)(2Z + d)` across the plane) then the power-map step on `|Z|` | – |
+| Julia Set | same step, no `+ dc`, `dr` without the `+1` | the shader added 1 to `dr` |
+| Quaternion | proper quaternion Julia `q^p + c`: exact radial, angle and direction differences in the (real, \|imag\|) half-plane | the 4th component was always 0 (constant θ) |
+| Mandelbox | box fold, sphere fold with exact `1−Z`, `1+Z`, `¼−\|B\|²`, `1−\|B\|²` from the CPU; inversion–inversion difference `F²[d·R² − Z·δr²]/(r_p² R²)` | – |
+| Inverted Menger, Sierpinski, Kaleidoscopic IFS | abs, sort and tetrahedral folds map the reference to a signed permutation, so each comparison is `±X_i ± X_j`: the CPU supplies those pair values exactly and the GPU tracks the pixel as signed reference slot + Δ; KIFS adds the sphere fold above | – |
+
+Every formula is validated by `Tools/PerturbationLab` against `__float128` truth at 1e-3 … 1e-29 (`out/test_perturbed_de <formula>`,
+500-1000 samples, 4-7 surface locations each) and by renders against double-double truth (`out/render_lab`, `make images`).
+All eight pass at their default power / scale with no marching-relevant glitches from 1e-3 to 1e-27, and renders
+agree with the double-double truth in 99.9-100% of pixels in every scene (zoom 1e-1 … 1e-25), where plain float is
+blank or wrong from about 1e-9.
+
+Known limits (reported by the lab, not hidden):
+
+* **Burning Ship, powers below ~3**, **Julia Set, non-integer powers near the azimuth branch cut**, **Quaternion at the
+  top of its power range (25)**: orbits that run along a branch cut or are chaotic at float precision; an idealised float
+  perturbation (exact steps, offset rounded to float once per step) fails on the same samples.
+* **Kaleidoscopic IFS at scale 1.3** needs ~300 iterations to resolve 1e-27; the plugin raises the iteration
+  count automatically (`ComputeIterationBudget`, up to 1000), the lab test uses a fixed 200.
+* Depth is bounded by the double-double reference (~1e-27).
+
+---
+
+## 11. How the game uses it
+
+The player layer (`Source/FractalGame`) is the v1.1 experience on top of this renderer: the same controls, speed
+model and HUD (see `readme.md`), with the fractal distance now taken from a CPU estimate of exactly the formula
+the GPU draws (`UFractalControlSubsystem::GetDistanceAtWorld`).
+
+* **Zoom is flying closer.** v1.1 sets the speed limit proportional to the distance to the surface, which is
+  exponential approach. To keep float world coordinates sane the controller rescales world units around the camera
+  (`ZoomAroundCamera`, invisible: the camera keeps its fractal position) whenever the surface is closer than 2 cm
+  (zoom in) or farther than 8 cm while zoomed (zoom out, capped at the unzoomed scale); the pawn's velocity is
+  divided by the applied factor so motion in fractal space is continuous. Unzoomed, behaviour is exactly v1.1.
+* **User scale** (thumb buttons) is v1.1's scale multiplier: unzoomed it scales the camera's fractal position about
+  the fractal origin; while zoomed it only changes units (otherwise the camera would be thrown out of the picture).
+* **HUD** values keep their v1.1 meaning at any depth: distances are shown divided by the user scale and speeds
+  multiplied by the zoom factor; the ZOOM bar extends to the deepest reachable level and the magnification is shown;
+  the position is printed in double-double with as many decimals as the zoom needs.
+* **Start / reset** puts the fractal origin 2350 cm in front of the player start (v1.1's geometry) in any map.
+
+### Comparison panels
+
+Plain float | GPU perturbation | CPU double-double truth, zoom 1e-1 (top) to 1e-25, for every fractal
+(`make images` regenerates them in `Tools/PerturbationLab/out`).
+
+| | |
+|---|---|
+| ![Burning Ship](Tools/PerturbationLab/docs/BurningShip.png) | ![Julia Set](Tools/PerturbationLab/docs/JuliaSet.png) |
+| ![Mandelbox](Tools/PerturbationLab/docs/Mandelbox.png) | ![Inverted Menger](Tools/PerturbationLab/docs/InvertedMenger.png) |
+| ![Quaternion](Tools/PerturbationLab/docs/Quaternion.png) | ![Sierpinski Tetrahedron](Tools/PerturbationLab/docs/SierpinskiTetrahedron.png) |
+| ![Kaleidoscopic IFS](Tools/PerturbationLab/docs/KaleidoscopicIFS.png) | |

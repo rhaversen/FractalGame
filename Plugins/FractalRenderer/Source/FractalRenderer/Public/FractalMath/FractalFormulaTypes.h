@@ -1,5 +1,5 @@
 // Fractal formula catalogue: identifiers, display names, parameter presets and the interface every
-// formula implements (CPU side; the matching GPU code lives in Shaders/Formulas/*.ush).
+// formula implements (CPU side; the matching GPU code lives in Shaders/Formula*.ush).
 // Engine-free, shared by the Unreal plugin, the game module and Tools/PerturbationLab.
 
 #pragma once

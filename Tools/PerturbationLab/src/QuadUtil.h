@@ -27,12 +27,6 @@ inline FractalMath::FDD ToDD(quad Q)
 	double Lo = (double)(Q - (quad)Hi);
 	return FractalMath::FDD(Hi, Lo);
 }
-inline std::string QStr(quad Q, int Digits = 36)
-{
-	char Buf[128];
-	quadmath_snprintf(Buf, sizeof(Buf), "%.*Qe", Digits, Q);
-	return Buf;
-}
 inline quad QAbs(quad Q) { return Q < 0 ? -Q : Q; }
 
 struct QVec3 { quad X, Y, Z; };

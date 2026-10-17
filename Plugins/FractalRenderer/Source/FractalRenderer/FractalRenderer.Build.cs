@@ -23,16 +23,6 @@ public class FractalRenderer : ModuleRules
 			"Renderer"
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[]
-		{
-			// ... add private dependencies that you statically link with here ...
-		});
-
-		if (Target.bBuildEditor == true)
-		{
-			PrivateDependencyModuleNames.Add("UnrealEd");
-		}
-
 		// Double-double arithmetic (FractalMath/DoubleDouble.h) needs exact IEEE semantics: request precise
 		// floating point where UnrealBuildTool supports it (looked up by reflection so older engines still build).
 		var FPSemanticsField = GetType().GetField("FPSemantics");

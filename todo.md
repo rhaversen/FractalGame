@@ -2,9 +2,9 @@
 
 Move the player when changing power. Determine the direction the local space moves when changing power, and move the player by the same amount, making it so that the player moves along with the fractal.
 
-Pass fractal type and power to the playercontroller, and update the speed limit based on fractal type and power.
+DONE: Pass fractal type and power to the playercontroller, and update the speed limit based on fractal type and power.
 
-Instead of the player moving with WASD, move and scale the fractal around a fixed player position. This will have the same effect, but will allow us to achieve higher detail levels in the fractal without floating point precision issues.
+DONE (as a camera-centred rescale of world units, see PERTURBATION_IMPLEMENTATION_NOTES.md §11): Instead of the player moving with WASD, move and scale the fractal around a fixed player position. This will have the same effect, but will allow us to achieve higher detail levels in the fractal without floating point precision issues.
 
 When changing fractal type, smoothly interpolate between the two fractal types over a short duration, instead of snapping instantly. Power already does this.
 
@@ -21,7 +21,7 @@ Alternative fractal morphing mode: Automatically go in the sin and cos with powe
 Alternative fractal movement mode: Let the player move, but when changing speed, we actually scale up the fractal and move the player in the local space, to achieve higher detail levels without floating point issues.
 We do the same for morphing between fractal types and powers.
 
-Add seamless support for higher dimensional fractals, like the quaternion fractal. Swap between different dimension float vectors.
+DONE: Add seamless support for higher dimensional fractals, like the quaternion fractal. Swap between different dimension float vectors.
 
 DONE: There are many places where we should hit the surface, but are running out of DE iterations before we get close enough. This even happens when fractal is not far away. We should keep doing DE iterations until the marcher determines we are less than a pixel away, or we hit some very high iteration limit. This way both stepcount and DE iterations are adaptive to the situation, but we avoid infinite loops by having a hard cap on both stepcount and DE iterations.
 

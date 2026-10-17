@@ -33,7 +33,7 @@ make images          # renders out/images/<formula>/*.ppm and out/comparison_<fo
 | `scripts/verify_step_mpmath.py` | the step for `|d|/|Z| < 1e-25` against 80-digit mpmath (quad cannot resolve those differences) |
 | `out/test_perturbed_de [formula\|all] [samples]` | full perturbed distance estimator of each formula vs quad at 14 zoom depths (1e-3 … 1e-29), at the surface locations of `src/scenes/<formula>.inc`, reference inside / outside the surface; also plain float and a double-double conditioning probe |
 | `out/test_camera` | Unreal matrix conventions (`mul(v, M)` with `-Zpr`), ray basis vs FOV / orientation / per-pixel unprojection / the previous shader's `GetCameraRay`, float upload error |
-| `out/render_lab [w h truth formula\|all scene]` | complete renders of each formula's scenes (zoom 1e-1 … 1e-27) through the production CPU path (`MarchReferenceRay`, `GenerateReferenceOrbit`, `BuildRayBasis`), GPU perturbation vs plain float vs a CPU double-double ground truth running the same march |
+| `out/render_lab [w h truth formula\|all scene]` | complete renders of each formula's scenes (zoom 1e-1 … 1e-25, 1e-27 for the Mandelbulb) through the production CPU path (`MarchReferenceRay`, `GenerateReferenceOrbit`, `BuildRayBasis`), GPU perturbation vs plain float vs a CPU double-double ground truth running the same march |
 | `out/bench` | per-iteration ALU cost of the perturbed step, the plain trig-free step and the previous shader's step |
 | `scripts/polar_chaos.py` | shows that the +z pole bottleneck is numerically chaotic (escape iteration changes between 40/60/100 digits) |
 

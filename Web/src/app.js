@@ -32,6 +32,7 @@ const PRESETS = [
 	{ label: '1e-6', depth: 1e-6, start: [0.6, 0.8, 1.6], dir: [-0.3, -0.45, -0.85] },
 	{ label: '1e-10', depth: 1e-10, start: [2.0, 0.3, 0.2], dir: [-1, -0.12, -0.07] },
 	{ label: '1e-14', depth: 1e-14, start: [0.3, -1.6, -1.5], dir: [-0.15, 0.7, 0.7] },
+	{ label: '1e-18', depth: 1e-18, start: [-1.3, 1.2, -1.1], dir: [0.6, -0.55, 0.5] },
 ];
 
 const S = {

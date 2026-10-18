@@ -74,7 +74,7 @@ struct FRACTALRENDERER_API FFractalParameter
 	 * the image falls apart instead of degrading.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal|Performance")
-	float TargetFrameRate = 60.0f;
+	float TargetFrameRate = 0.0f;
 
 	/** Lowest internal resolution (fraction of the view size per axis) the controller may choose. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal|Performance", meta = (ClampMin = "0.1", ClampMax = "1.0"))

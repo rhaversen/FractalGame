@@ -20,7 +20,7 @@ Mac builds are not currently provided, but you can build from source following t
 | Right / left mouse button (hold) | Increase / decrease the power (exponent or folding scale) |
 | Mouse forward / back thumb button (hold) | Increase / decrease the fractal's scale |
 | Tab | Next fractal |
-| Page Up / Page Down | Raise / lower the target frame rate (off, 30, 45, 60, 90, 120, 144 fps); the renderer lowers its internal resolution to hold it |
+| Page Up / Page Down | Raise / lower the target frame rate (off by default, 30, 45, 60, 90, 120, 144 fps); optional: the renderer lowers its internal resolution to hold it, which trades sharpness for speed (the hit threshold and detail do not change) |
 | R | Reset position, speed and fractal parameters |
 | H (hold) | Show the controls |
 | Esc | Quit |

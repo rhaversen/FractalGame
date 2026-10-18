@@ -46,7 +46,7 @@ void RenderMain(uint3 Id : SV_DispatchThreadID)
 	V.RayDirDX = P.RayDirDX.xyz;
 	V.RayDirDY = P.RayDirDY.xyz;
 	V.PixelStep = P.Misc.zw;
-	V.PixelRadiusPerUnitDistance = P.RayDir00.w * max(V.PixelStep.x, V.PixelStep.y);
+	V.PixelRadiusPerUnitDistance = P.RayDir00.w;
 	V.CameraOffset = P.CameraOffset.xyz;
 	V.Scale = P.RayDirDX.w;
 	V.ReferenceCenter = P.ReferenceCenter.xyz;

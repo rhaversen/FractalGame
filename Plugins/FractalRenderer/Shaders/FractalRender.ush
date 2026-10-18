@@ -27,7 +27,7 @@ struct FPViewParams
 	float3 RayDirDX;      // per-pixel step to the right
 	float3 RayDirDY;      // per-pixel step down
 	float2 PixelStep;     // full-resolution pixels per marched pixel (1 = full resolution, 2 = half resolution)
-	float PixelRadiusPerUnitDistance; // of one marched pixel
+	float PixelRadiusPerUnitDistance; // of one full-resolution pixel (the hit threshold; independent of the render scale)
 	float3 CameraOffset;  // (camera - C_ref) / Scale, world units
 	float Scale;          // fractal units per world unit
 	float3 ReferenceCenter; // float(C_ref), only used without a reference orbit
@@ -63,17 +63,31 @@ float3 FP_PixelRayDirection(FPViewParams V, uint2 Pixel)
 
 FPDEResult FP_DistanceEstimate(StructuredBuffer<float4> Orbit, FPViewParams V, FPFormulaArgs Args, float3 DC, float PixelRadius)
 {
+	FPDEResult DE;
 #if FP_FORCE_NAIVE
-	return FP_DirectDE(V.ReferenceCenter + DC, Args, V.MaxIterations, V.Bailout);
+	DE = FP_DirectDE(V.ReferenceCenter + DC, Args, V.MaxIterations, V.Bailout);
 #else
 	// Plain float evaluation when there is no reference orbit yet, or when this sample's pixel footprint is
 	// so large that absolute float coordinates resolve it (the hybrid switch; cheaper per iteration).
 	if (V.OrbitLength < 2 || (V.DirectFootprint > 0.0f && V.Scale * PixelRadius > V.DirectFootprint))
 	{
-		return FP_DirectDE(V.ReferenceCenter + DC, Args, V.MaxIterations, V.Bailout);
+		DE = FP_DirectDE(V.ReferenceCenter + DC, Args, V.MaxIterations, V.Bailout);
 	}
-	return FP_PerturbedDE(Orbit, V.OrbitLength, DC, Args, V.MaxIterations, V.Bailout);
+	else
+	{
+		DE = FP_PerturbedDE(Orbit, V.OrbitLength, DC, Args, V.MaxIterations, V.Bailout);
+	}
 #endif
+#if FP_HAS_BOUND
+	// The estimate overshoots far from the set; the set cannot be closer than its bounding sphere. Only matters
+	// outside it, where the position is far from the reference and plain float is exact.
+	if (DE.bEscaped)
+	{
+		float Outside = length(V.ReferenceCenter + DC) - FP_FormulaBoundingRadius(Args.Power);
+		DE.Distance = (Outside > 0.0f) ? min(DE.Distance, Outside) : DE.Distance;
+	}
+#endif
+	return DE;
 }
 
 FPMarchResult FP_MarchRay(StructuredBuffer<float4> Orbit, FPViewParams V, float3 Dir)

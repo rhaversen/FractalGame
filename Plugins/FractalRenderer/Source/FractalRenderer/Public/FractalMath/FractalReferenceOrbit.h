@@ -245,6 +245,26 @@ inline FDistanceEstimate DistanceEstimate(const TFractalVec3<T>& Position, const
 	return Result;
 }
 
+/**
+ * DistanceEstimate, additionally limited by the distance to the formula's bounding sphere (if it has one). The escape-time
+ * estimate overshoots far from the set, so a ray marched with it can step clean over the object; the set cannot be closer
+ * than its bounding sphere. The GPU applies the same limit in FP_DistanceEstimate.
+ */
+template <typename F, typename T>
+inline FDistanceEstimate BoundedDistanceEstimate(const TFractalVec3<T>& Position, const FFormulaParams& Params)
+{
+	FDistanceEstimate Result = DistanceEstimate<F, T>(Position, Params);
+	if constexpr (requires { F::BoundingRadius(Params); })
+	{
+		const double Outside = std::sqrt(RToDouble(Dot(Position, Position))) - F::BoundingRadius(Params);
+		if (Result.bEscaped && Outside > 0.0 && Outside < Result.Distance)
+		{
+			Result.Distance = Outside;
+		}
+	}
+	return Result;
+}
+
 struct FReferenceMarchSettings
 {
 	FFormulaParams Params;
@@ -280,7 +300,7 @@ inline FReferenceMarchResult MarchReferenceRay(const TFractalVec3<T>& Origin, co
 	for (int Step = 0; Step < Settings.MaxSteps && Dist < Settings.MaxDistance; ++Step)
 	{
 		const TFractalVec3<T> P = OffsetDD(Origin, Dir, Dist * Scale);
-		const FDistanceEstimate DE = DistanceEstimate<F>(P, Settings.Params);
+		const FDistanceEstimate DE = BoundedDistanceEstimate<F, T>(P, Settings.Params);
 		const double DEWorld = DE.Distance / Scale;
 		if (Step == 0)
 		{
@@ -309,7 +329,7 @@ inline FReferenceMarchResult MarchReferenceRay(const TFractalVec3<T>& Origin, co
 	{
 		const double Dist2 = Result.HitDistance + Probe * static_cast<double>(Step);
 		const TFractalVec3<T> P = OffsetDD(Origin, Dir, Dist2 * Scale);
-		const FDistanceEstimate DE = DistanceEstimate<F>(P, Settings.Params);
+		const FDistanceEstimate DE = BoundedDistanceEstimate<F, T>(P, Settings.Params);
 		if (!DE.bEscaped)
 		{
 			Result.ReferenceDistance = Dist2;

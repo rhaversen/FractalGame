@@ -177,3 +177,15 @@ struct FPFormulaArgs
 	int PowerInt; // FP_IntegerPower(Power): > 0 selects the trig-free integer paths
 	float Scale;  // fractal units per world unit; the running derivative is tracked as dr * Scale
 };
+
+// Radius of a sphere around the origin containing the whole set of z -> |z|^p + c (|c| <= CMagnitude; the point itself for
+// Mandelbrot-type maps). Mirror of FractalMath::PowerMapBoundingRadius. 1e30 (no bound) for p close to 1.
+float FP_PowerMapBoundingRadius(float Power, float CMagnitude, bool bAddsPosition)
+{
+	if (Power < 1.05f)
+	{
+		return 1.0e30f;
+	}
+	float Growth = bAddsPosition ? 2.0f : 1.0f + CMagnitude;
+	return max(1.0f, pow(Growth, 1.0f / (Power - 1.0f)));
+}

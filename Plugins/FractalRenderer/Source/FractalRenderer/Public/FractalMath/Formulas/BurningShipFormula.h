@@ -89,6 +89,8 @@ struct FBurningShipFormula
 	{
 		return PowerMapReferenceEscapeRadius(Params.Bailout, Params.Power);
 	}
+
+	static double BoundingRadius(const FFormulaParams& Params) { return PowerMapBoundingRadius(Params.Power, 0.0, true); }
 };
 
 } // namespace FractalMath

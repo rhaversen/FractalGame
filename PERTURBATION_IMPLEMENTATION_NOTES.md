@@ -474,10 +474,21 @@ the GPU draws (`UFractalControlSubsystem::GetDistanceAtWorld`).
   finest-detail view, Burning Ship at 1e-25). `UFractalControlSubsystem::UpdateAdaptiveResolution` therefore steers
   `ResolutionScale` (0.3-1) from the smoothed GPU frame time (`RHIGetGPUFrameCycles`, the frame delta as fallback):
   down by `sqrt(target / measured)` (cost follows the pixel count) when more than 5% over budget, up by at most 6% when
-  more than 15% under, at most every 0.25 s. The march runs at the reduced size with `PixelStep` full-resolution pixels
-  per marched pixel (so the ray basis and the hit threshold follow), and `FractalUpscale.usf` upsamples it into the view.
+  more than 15% under, at most every 0.25 s. It is off by default (full quality). The march runs at the reduced size with
+  `PixelStep` full-resolution pixels per marched pixel (the ray basis follows; the hit threshold stays at one
+  full-resolution pixel, so the scale never changes what is resolved), and `FractalUpscale.usf` upsamples it into the view.
   Page Up / Page Down step the target through off / 30 / 45 / 60 / 90 / 120 / 144 fps; the HUD shows the internal
   resolution, the measured frame rate and the target.
+* **Blobs when far away.** The escape-time distance estimate (Mandelbulb, Burning Ship, Julia, Quaternion) overestimates
+  the distance far from the set, so a ray from 10-30 radii away stepped clean over the object: 22-25% of the pixels
+  inside the silhouette were misses (`cover` experiment: 4x4 sub-ray coverage vs the marched pixel) and the object
+  looked like blobs that sharpened as the camera approached. The estimate is now also limited by the distance to the
+  formula's bounding sphere (`F::BoundingRadius`, `PowerMapBoundingRadius`: beyond `max(1, (2 or 1+|c|)^(1/(p-1)))`
+  the orbit grows monotonically; mirrored in `FP_DistanceEstimate`, tested for soundness in `test_perturbed_de`). False
+  misses dropped to 0% and false hits to <= 0.4% at distances 2.2-30; the folding fractals (Menger, Mandelbox,
+  Sierpinski, KIFS) were already within a few per cent and have no bound. The hit threshold (one full-resolution pixel
+  radius at the ray distance) is the same at every distance and resolution scale, so the apparent detail does not
+  depend on either.
 * **VIEW panel.** The HUD prints the formula, power, user scale, exact zoom and scale, the number of coordinate
   decimals (set by the zoom), the facing and up vectors and pitch/yaw/roll: together with POSITION everything
   needed to return to a spot, or to reproduce a rendering problem with `ray_profile`.

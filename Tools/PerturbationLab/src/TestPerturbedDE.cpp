@@ -246,6 +246,29 @@ static void RunFormula(FVkContext& Ctx, const FFormulaLab& Lab, int NSamples)
 	}
 }
 
+// The bounding sphere (FractalMath::BoundedDistanceEstimate) is sound if no point of the set lies outside it: every
+// point beyond the radius must escape, and the bounded estimate must never be below the true distance to the sphere.
+template <typename F>
+static void CheckBoundingSphere()
+{
+	if constexpr (requires { F::BoundingRadius(GParams); })
+	{
+		const double R = F::BoundingRadius(GParams);
+		if (!(R < 1.0e6)) return;
+		int Inside = 0, N = 0;
+		for (int I = 0; I < 4000; I++)
+		{
+			const double A = 6.2831853 * ((I * 0.6180339887) - std::floor(I * 0.6180339887)), B = std::acos(1.0 - 2.0 * (((I * 0.7548776662) - std::floor(I * 0.7548776662))));
+			const double Rad = R * (1.0 + 0.5 * ((I % 7) + 1) / 7.0);
+			TFractalVec3<double> P(Rad * std::sin(B) * std::cos(A), Rad * std::sin(B) * std::sin(A), Rad * std::cos(B));
+			const FDistanceEstimate D = DistanceEstimate<F, double>(P, GParams);
+			Inside += D.bEscaped ? 0 : 1; N++;
+		}
+		std::printf("  bounding sphere r = %.3f: %d of %d points beyond it do not escape\n", R, Inside, N);
+		if (Inside) Failures++;
+	}
+}
+
 int main(int Argc, char** Argv)
 {
 	FVkContext Ctx;
@@ -270,7 +293,7 @@ int main(int Argc, char** Argv)
 			std::printf("\n##### %s: no test locations, skipped #####\n", GetFractalName(F));
 			continue;
 		}
-		VisitFormula(F, [&](auto Formula) { RunFormula<decltype(Formula)>(Ctx, Lab, NSamples); });
+		VisitFormula(F, [&](auto Formula) { RunFormula<decltype(Formula)>(Ctx, Lab, NSamples); CheckBoundingSphere<decltype(Formula)>(); });
 	}
 	std::printf("\n%s\n", Failures ? "PERTURBED DE TEST: FAILURES" : "PERTURBED DE TEST: ALL DEPTHS OK");
 	return Failures ? 1 : 0;

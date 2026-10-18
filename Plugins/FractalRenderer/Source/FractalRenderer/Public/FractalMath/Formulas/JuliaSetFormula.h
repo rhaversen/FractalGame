@@ -53,6 +53,11 @@ struct FJuliaSetFormula
 	{
 		return PowerMapReferenceEscapeRadius(Params.Bailout, Params.Power);
 	}
+
+	static double BoundingRadius(const FFormulaParams& Params)
+	{
+		return PowerMapBoundingRadius(Params.Power, std::sqrt(CX * CX + CY * CY + CZ * CZ), false);
+	}
 };
 
 } // namespace FractalMath

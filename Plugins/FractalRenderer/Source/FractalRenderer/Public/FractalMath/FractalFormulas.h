@@ -59,7 +59,7 @@ inline int GenerateReferenceOrbit(EFractalFormula Formula, const FDDVec3& C, con
 template <typename T>
 inline FDistanceEstimate DistanceEstimate(EFractalFormula Formula, const TFractalVec3<T>& Position, const FFormulaParams& Params)
 {
-	return VisitFormula(Formula, [&](auto F) { return DistanceEstimate<decltype(F), T>(Position, Params); });
+	return VisitFormula(Formula, [&](auto F) { return BoundedDistanceEstimate<decltype(F), T>(Position, Params); });
 }
 
 template <typename T>

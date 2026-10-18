@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include <limits>
+
 #include "../FractalScalar.h"
 #include "../FractalFormulaTypes.h"
 
@@ -218,6 +220,23 @@ inline double PowerMapReferenceEscapeRadius(double PixelBailout, double Power)
 	const double Wanted = 4.0 * PixelBailout;
 	const double FloatSafe = std::pow(10.0, 28.0 / (Power > 1.0 ? Power : 1.0));
 	return Wanted < FloatSafe ? Wanted : (FloatSafe > 2.0 * PixelBailout ? FloatSafe : 2.0 * PixelBailout);
+}
+
+/**
+ * Radius of a sphere around the origin that contains the whole set of z -> |z|^p + c, where |c| <= CMagnitude (the
+ * point itself for Mandelbrot-type maps, the constant for Julia maps; Burning Ship and the quaternion map obey the
+ * same bound). Beyond r = max(1, (1 + CMagnitude)^(1/(p-1)))  (and r >= |c| for the Mandelbrot type, hence the 2)
+ * |z_{n+1}| > |z_n|, so the orbit escapes. No bound (infinity) for p close to 1.
+ */
+inline double PowerMapBoundingRadius(double Power, double CMagnitude, bool bAddsPosition)
+{
+	if (Power < 1.05)
+	{
+		return std::numeric_limits<double>::infinity();
+	}
+	const double Growth = bAddsPosition ? 2.0 : 1.0 + CMagnitude;
+	const double R = std::pow(Growth, 1.0 / (Power - 1.0));
+	return R > 1.0 ? R : 1.0;
 }
 
 } // namespace FractalMath

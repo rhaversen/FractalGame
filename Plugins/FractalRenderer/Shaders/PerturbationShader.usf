@@ -50,7 +50,7 @@ void PerturbationShader(uint3 DispatchThreadId : SV_DispatchThreadID)
 	V.RayDirDX = RayDirDX;
 	V.RayDirDY = RayDirDY;
 	V.PixelStep = PixelStep;
-	V.PixelRadiusPerUnitDistance = PixelRadiusPerUnitDistance * max(PixelStep.x, PixelStep.y);
+	V.PixelRadiusPerUnitDistance = PixelRadiusPerUnitDistance;
 	V.CameraOffset = CameraOffset;
 	V.Scale = FractalScale;
 	V.ReferenceCenter = ReferenceCenter;

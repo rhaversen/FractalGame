@@ -148,7 +148,7 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 		EstimateParams.Power = Params.FractalPower;
 		EstimateParams.Bailout = Params.BailoutRadius;
 		EstimateParams.MaxIterations = FMath::Max(Params.MaxIterations, 2);
-		Request.CameraDistanceWorld = FractalMath::DistanceEstimateAtScale(Formula, CameraFractal, Mapping.Scale, EstimateParams).Distance / Mapping.Scale;
+		Request.CameraDistanceWorld = FractalMath::DistanceEstimateAtScale(Formula, CameraFractal, Mapping.Scale, EstimateParams).SafeDistance() / Mapping.Scale;
 		const double SurfaceDistanceFractal = FMath::Max(Request.CameraDistanceWorld * Mapping.Scale, Mapping.Scale);
 		Request.Params.MaxIterations = FractalMath::ComputeIterationBudget(Formula, Params.FractalPower, Params.MaxIterations, Params.BailoutRadius,
 			SurfaceDistanceFractal * Basis.PixelRadiusPerUnitDistance);

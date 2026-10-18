@@ -266,6 +266,29 @@ static void CheckBoundingSphere()
 		}
 		std::printf("  bounding sphere r = %.3f: %d of %d points beyond it do not escape\n", R, Inside, N);
 		if (Inside) Failures++;
+
+		// The sphere only limits the STEP of a ray; reaching it is not a hit. Rays from 6 units away must end on the set
+		// (inside the sphere), never on the sphere itself (a clamped hit test would stop every ray there).
+		int Hits = 0, OnSphere = 0, Rays = 0;
+		for (int I = 0; I < 200; I++)
+		{
+			const double A = 6.2831853 * ((I * 0.6180339887) - std::floor(I * 0.6180339887)), Z = 1.0 - 2.0 * ((I + 0.5) / 200.0);
+			const double S = std::sqrt(1.0 - Z * Z);
+			const double Dir[3] = {-S * std::cos(A), -S * std::sin(A), -Z}; // towards the origin, from the point below
+			const double O[3] = {-6.0 * Dir[0], -6.0 * Dir[1], -6.0 * Dir[2]};
+			double T = 0.0;
+			bool bHit = false;
+			Rays++;
+			for (int Step = 0; Step < 400 && T < 12.0; Step++)
+			{
+				const TFractalVec3<double> P(O[0] + Dir[0] * T, O[1] + Dir[1] * T, O[2] + Dir[2] * T);
+				const FDistanceEstimate DE = BoundedDistanceEstimate<F, double>(P, GParams);
+				if (DE.Distance <= 1.0e-4) { bHit = true; Hits++; OnSphere += std::sqrt(P.X * P.X + P.Y * P.Y + P.Z * P.Z) > R - 1.0e-4; break; }
+				T += std::max(DE.SafeDistance(), 2.0e-5);
+			}
+		}
+		std::printf("  rays from 6 units away: %d of %d hit the set, %d of them on the bounding sphere\n", Hits, Rays, OnSphere);
+		if (OnSphere || Hits < Rays / 2) Failures++;
 	}
 }
 

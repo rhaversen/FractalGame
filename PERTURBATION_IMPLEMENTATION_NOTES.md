@@ -482,13 +482,19 @@ the GPU draws (`UFractalControlSubsystem::GetDistanceAtWorld`).
 * **Blobs when far away.** The escape-time distance estimate (Mandelbulb, Burning Ship, Julia, Quaternion) overestimates
   the distance far from the set, so a ray from 10-30 radii away stepped clean over the object: 22-25% of the pixels
   inside the silhouette were misses (`cover` experiment: 4x4 sub-ray coverage vs the marched pixel) and the object
-  looked like blobs that sharpened as the camera approached. The estimate is now also limited by the distance to the
-  formula's bounding sphere (`F::BoundingRadius`, `PowerMapBoundingRadius`: beyond `max(1, (2 or 1+|c|)^(1/(p-1)))`
-  the orbit grows monotonically; mirrored in `FP_DistanceEstimate`, tested for soundness in `test_perturbed_de`). False
-  misses dropped to 0% and false hits to <= 0.4% at distances 2.2-30; the folding fractals (Menger, Mandelbox,
-  Sierpinski, KIFS) were already within a few per cent and have no bound. The hit threshold (one full-resolution pixel
-  radius at the ray distance) is the same at every distance and resolution scale, so the apparent detail does not
-  depend on either.
+  looked like blobs that sharpened as the camera approached. Each of these formulas now has a bounding sphere
+  (`F::BoundingRadius`, `PowerMapBoundingRadius`: beyond `max(1, (2 or 1+|c|)^(1/(p-1)))` the orbit grows
+  monotonically; tested in `test_perturbed_de` against sample points). Every ray is clipped to it before marching
+  (`MarchReferenceRay`, `FP_MarchRay`): a ray that misses the sphere ends at once as background, one that crosses it
+  starts where it enters. False misses dropped from ~23% to 0% and false hits to <= 1.8% at distances 2.2-30, and
+  far views need ~8x fewer iterations per pixel. The folding fractals (Menger, Mandelbox, Sierpinski, KIFS) were
+  already within a few per cent and have no bound. The hit threshold (one full-resolution pixel radius at the ray
+  distance) is the same at every distance and resolution scale, so the apparent detail does not depend on either.
+  A first version clamped the estimate itself to the distance to the sphere. That made every ray "hit" at the sphere
+  (the distance reaches 0 there), which the lab's checks missed because its reference march used the same clamped
+  function; the sphere may only limit where marching starts, never decide a hit. `test_perturbed_de` now marches rays
+  from 6 units away and fails if any ends on the sphere. `FDistanceEstimate::SafeDistance()` (the estimate capped by the
+  distance to the sphere) is what the movement speed and the reference upkeep use as "distance to the surface".
 * **VIEW panel.** The HUD prints the formula, power, user scale, exact zoom and scale, the number of coordinate
   decimals (set by the zoom), the facing and up vectors and pitch/yaw/roll: together with POSITION everything
   needed to return to a spot, or to reproduce a rendering problem with `ray_profile`.

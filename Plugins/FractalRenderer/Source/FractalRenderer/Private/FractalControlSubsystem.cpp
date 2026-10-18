@@ -207,8 +207,8 @@ FFractalDistanceInfo UFractalControlSubsystem::GetDistanceAtWorld(FVector WorldP
 	const FractalMath::FDistanceEstimate DE = FractalMath::DistanceEstimateAtScale(Formula, Position, CameraMapping.Scale, Params);
 
 	FFractalDistanceInfo Info;
-	Info.FractalDistance = DE.Distance;
-	Info.WorldDistance = DE.Distance / CameraMapping.Scale;
+	Info.FractalDistance = DE.SafeDistance();
+	Info.WorldDistance = DE.SafeDistance() / CameraMapping.Scale;
 	Info.bEscaped = DE.bEscaped;
 	return Info;
 }

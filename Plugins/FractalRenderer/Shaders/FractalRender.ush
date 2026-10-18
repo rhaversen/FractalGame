@@ -78,15 +78,6 @@ FPDEResult FP_DistanceEstimate(StructuredBuffer<float4> Orbit, FPViewParams V, F
 		DE = FP_PerturbedDE(Orbit, V.OrbitLength, DC, Args, V.MaxIterations, V.Bailout);
 	}
 #endif
-#if FP_HAS_BOUND
-	// The estimate overshoots far from the set; the set cannot be closer than its bounding sphere. Only matters
-	// outside it, where the position is far from the reference and plain float is exact.
-	if (DE.bEscaped)
-	{
-		float Outside = length(V.ReferenceCenter + DC) - FP_FormulaBoundingRadius(Args.Power);
-		DE.Distance = (Outside > 0.0f) ? min(DE.Distance, Outside) : DE.Distance;
-	}
-#endif
 	return DE;
 }
 
@@ -104,10 +95,34 @@ FPMarchResult FP_MarchRay(StructuredBuffer<float4> Orbit, FPViewParams V, float3
 
 	FPFormulaArgs Args = FP_MakeFormulaArgs(V.Power, V.Scale);
 	float T = 0.0f;
+	float TEnd = V.MaxRayDistance;
+#if FP_HAS_BOUND
+	// Bounding sphere of the set: a ray that misses it hits nothing (background, no marching), and one that
+	// crosses it is marched from where it enters. The escape-time estimate overshoots far from the set, so without
+	// this a ray could step clean over the object (and rays grazing the sphere would crawl).
+	{
+		float R = FP_FormulaBoundingRadius(V.Power) * 1.001f;
+		float3 O = V.ReferenceCenter + V.Scale * V.CameraOffset; // absolute position; only used outside the sphere
+		float C = dot(O, O) - R * R;
+		if (C > 0.0f)
+		{
+			float B = dot(O, Dir);
+			float Disc = B * B - C;
+			if (B >= 0.0f || Disc < 0.0f)
+			{
+				Result.Status = FP_MISS_DISTANCE;
+				return Result;
+			}
+			float Root = sqrt(Disc);
+			T = (-B - Root) / V.Scale;
+			TEnd = min(TEnd, (-B + Root) / V.Scale);
+		}
+	}
+#endif
 	[loop]
 	while (Result.Steps < V.MaxRaySteps)
 	{
-		if (T >= V.MaxRayDistance)
+		if (T >= TEnd)
 		{
 			Result.Status = FP_MISS_DISTANCE;
 			break;

@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <limits>
+
 #include "FractalScalar.h"
 #include "FractalFormulaTypes.h"
 
@@ -204,8 +206,12 @@ inline int GenerateReferenceOrbit(const TFractalVec3<T>& C, const FFormulaParams
 struct FDistanceEstimate
 {
 	double Distance = 0.0;   // in fractal units
+	double StepLimit = std::numeric_limits<double>::infinity(); // largest step that provably cannot overshoot the set (BoundedDistanceEstimate)
 	int Iterations = 0;      // n at which |z_n| > Bailout (or MaxIterations)
 	bool bEscaped = false;
+
+	/** Distance a ray may safely advance: the estimate, capped by StepLimit. Hits are still decided on Distance. */
+	double SafeDistance() const { return Distance < StepLimit ? Distance : StepLimit; }
 };
 
 /** Direct (non-perturbed) DE with the orbit in T precision and the derivative in double. */
@@ -246,9 +252,10 @@ inline FDistanceEstimate DistanceEstimate(const TFractalVec3<T>& Position, const
 }
 
 /**
- * DistanceEstimate, additionally limited by the distance to the formula's bounding sphere (if it has one). The escape-time
- * estimate overshoots far from the set, so a ray marched with it can step clean over the object; the set cannot be closer
- * than its bounding sphere. The GPU applies the same limit in FP_DistanceEstimate.
+ * DistanceEstimate, plus the distance to the formula's bounding sphere (StepLimit). The escape-time estimate overshoots far
+ * from the set, which only makes a distance used for speed or placement too large (SafeDistance caps it). Rays do not use
+ * the cap: MarchReferenceRay and the GPU march clip each ray to the sphere instead, which also ends rays that miss it at
+ * once. Reaching the sphere is never a hit, so Distance stays the plain estimate.
  */
 template <typename F, typename T>
 inline FDistanceEstimate BoundedDistanceEstimate(const TFractalVec3<T>& Position, const FFormulaParams& Params)
@@ -257,9 +264,9 @@ inline FDistanceEstimate BoundedDistanceEstimate(const TFractalVec3<T>& Position
 	if constexpr (requires { F::BoundingRadius(Params); })
 	{
 		const double Outside = std::sqrt(RToDouble(Dot(Position, Position))) - F::BoundingRadius(Params);
-		if (Result.bEscaped && Outside > 0.0 && Outside < Result.Distance)
+		if (Outside > 0.0)
 		{
-			Result.Distance = Outside;
+			Result.StepLimit = Outside;
 		}
 	}
 	return Result;
@@ -296,16 +303,36 @@ inline FReferenceMarchResult MarchReferenceRay(const TFractalVec3<T>& Origin, co
 	const FReferenceMarchSettings& Settings)
 {
 	FReferenceMarchResult Result;
+	Result.CameraDistanceEstimate = BoundedDistanceEstimate<F, T>(Origin, Settings.Params).SafeDistance() / Scale;
 	double Dist = 0.0;
-	for (int Step = 0; Step < Settings.MaxSteps && Dist < Settings.MaxDistance; ++Step)
+	double End = Settings.MaxDistance;
+	if constexpr (requires { F::BoundingRadius(Settings.Params); })
+	{
+		// A ray that misses the bounding sphere hits nothing; one that crosses it is marched from where it enters.
+		const double R = F::BoundingRadius(Settings.Params) * 1.001;
+		if (R < 1.0e300)
+		{
+			const FDVec3 O = ToDoubleVec(Origin);
+			const double C = O.X * O.X + O.Y * O.Y + O.Z * O.Z - R * R;
+			if (C > 0.0)
+			{
+				const double B = O.X * Dir[0] + O.Y * Dir[1] + O.Z * Dir[2];
+				const double Disc = B * B - C;
+				if (B >= 0.0 || Disc < 0.0)
+				{
+					return Result;
+				}
+				const double Root = std::sqrt(Disc);
+				Dist = (-B - Root) / Scale;
+				End = End < (-B + Root) / Scale ? End : (-B + Root) / Scale;
+			}
+		}
+	}
+	for (int Step = 0; Step < Settings.MaxSteps && Dist < End; ++Step)
 	{
 		const TFractalVec3<T> P = OffsetDD(Origin, Dir, Dist * Scale);
 		const FDistanceEstimate DE = BoundedDistanceEstimate<F, T>(P, Settings.Params);
 		const double DEWorld = DE.Distance / Scale;
-		if (Step == 0)
-		{
-			Result.CameraDistanceEstimate = DEWorld;
-		}
 		Result.Steps = Step + 1;
 		const double PixelRadius = Dist * Settings.PixelRadiusPerUnitDistance;
 		if ((F::Family == EFractalFamily::EscapeTime && !DE.bEscaped) || DEWorld <= PixelRadius)

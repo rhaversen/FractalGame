@@ -47,7 +47,8 @@ void FP_FormulaPerturbedStep(StructuredBuffer<float4> Orbit, int Base, inout FP_
 	FPPowerRef Ref = FP_DecodePowerRef(float4(abs(P0.xyz), P0.w), Orbit[Base + 1], Orbit[Base + 2]);
 	float3 DF = float3(FP_BurningShipAbsDelta(P0.x, D.x, W.x), FP_BurningShipAbsDelta(P0.y, D.y, W.y), FP_BurningShipAbsDelta(P0.z, D.z, W.z));
 	float RWPowM1;
-	float3 G = FP_PerturbedPowerDelta(Ref, DF, abs(W), RW, InvRW, Args.Power, Args.PowerInt, RWPowM1);
+	float4 Angles;
+	float3 G = FP_PerturbedPowerDelta(Ref, DF, abs(W), RW, InvRW, Args.Power, Args.PowerInt, RWPowM1, Angles);
 	DRS = Args.Power * RWPowM1 * DRS + Args.Scale;
 	D = G + DC;
 }
@@ -55,7 +56,8 @@ void FP_FormulaPerturbedStep(StructuredBuffer<float4> Orbit, int Base, inout FP_
 void FP_FormulaDirectStep(inout FP_STATE Z, float RW, float InvRW, float3 C, inout float DRS, FPFormulaArgs Args)
 {
 	float RWPowM1;
-	float3 G = FP_MandelbulbPower(abs(Z), RW, InvRW, Args.Power, Args.PowerInt, RWPowM1);
+	float4 Angles;
+	float3 G = FP_MandelbulbPower(abs(Z), RW, InvRW, Args.Power, Args.PowerInt, RWPowM1, Angles);
 	DRS = Args.Power * RWPowM1 * DRS + Args.Scale;
 	Z = G + C;
 }

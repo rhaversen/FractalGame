@@ -10,7 +10,7 @@ struct FLabRenderParams
 	float4 CameraOffset;    // xyz, w = Bailout
 	float4 ReferenceCenter; // xyz
 	float4 Misc;            // x = MaxRayDistance, y = DirectFootprint, zw = full-resolution pixels per marched pixel (PixelStep)
-	int4 IParams;           // x = MaxIterations, z = MaxRaySteps, w = OrbitLength
+	int4 IParams;           // x = MaxIterations, y = cone tile (0 = no cone pre-pass), z = MaxRaySteps, w = OrbitLength
 	int4 IParams2;          // x = Width, y = Height
 };
 
@@ -20,6 +20,7 @@ struct FLabRenderParams
 [[vk::binding(3, 0)]] RWStructuredBuffer<float4> OutData : register(u1);
 [[vk::binding(4, 0)]] RWStructuredBuffer<float4> OutShaded : register(u2);
 [[vk::binding(5, 0)]] RWStructuredBuffer<float4> OutEnd : register(u3);   // x = last iterations, y = last estimate escaped
+[[vk::binding(6, 0)]] RWStructuredBuffer<float4> ConeStart : register(u4); // per cone tile: x = where its rays can start (FP_ConeMarch)
 
 // The step-count palette the CPU ground truth image (Render.cpp ShadeCPU) uses, so the perturbation and truth columns of
 // the comparison panels are directly comparable; the game itself shades with FP_Shade (the "shaded" column).
@@ -37,11 +38,10 @@ float3 LabStepPalette(FPMarchResult R, int MaxRaySteps, int MaxIterations)
 	return Color;
 }
 
-[numthreads(8, 8, 1)]
-void RenderMain(uint3 Id : SV_DispatchThreadID)
+FPViewParams LabView()
 {
-	if (Id.x >= (uint)P.IParams2.x || Id.y >= (uint)P.IParams2.y) return;
 	FPViewParams V;
+	V.HazeBase = 0;
 	V.RayDir00 = P.RayDir00.xyz;
 	V.RayDirDX = P.RayDirDX.xyz;
 	V.RayDirDY = P.RayDirDY.xyz;
@@ -57,9 +57,37 @@ void RenderMain(uint3 Id : SV_DispatchThreadID)
 	V.MaxRayDistance = P.Misc.x;
 	V.OrbitLength = P.IParams.w;
 	V.DirectFootprint = P.Misc.y;
+	return V;
+}
+
+// Cone pre-pass (PerturbationShader.usf FractalCone): one thread per tile of P.IParams.y x P.IParams.y pixels.
+[numthreads(8, 8, 1)]
+void ConeMain(uint3 Id : SV_DispatchThreadID)
+{
+	const int Tile = max(P.IParams.y, 1);
+	uint2 Tiles = ((uint2)P.IParams2.xy + (uint)Tile - 1u) / (uint)Tile;
+	if (Id.x >= Tiles.x || Id.y >= Tiles.y) return;
+	FPViewParams V = LabView();
+	float Half = 0.5f * (float)Tile;
+	float3 Dir = FP_PixelRayDirectionAt(V, (float2)Id.xy * (float)Tile + Half - 0.5f);
+	ConeStart[Id.y * Tiles.x + Id.x] = float4(FP_ConeMarch(ReferenceOrbit, V, Dir, FP_ConeAngle(V, Tile)), 0.0f, 0.0f, 0.0f);
+}
+
+[numthreads(8, 8, 1)]
+void RenderMain(uint3 Id : SV_DispatchThreadID)
+{
+	if (Id.x >= (uint)P.IParams2.x || Id.y >= (uint)P.IParams2.y) return;
+	FPViewParams V = LabView();
 
 	float3 Dir = FP_PixelRayDirection(V, Id.xy);
-	FPMarchResult R = FP_MarchRay(ReferenceOrbit, V, Dir);
+	float TStart = 0.0f;
+	if (P.IParams.y > 0)
+	{
+		const uint Tile = (uint)P.IParams.y;
+		uint TilesX = ((uint)P.IParams2.x + Tile - 1u) / Tile;
+		TStart = ConeStart[(Id.y / Tile) * TilesX + Id.x / Tile].x;
+	}
+	FPMarchResult R = FP_MarchRayFrom(ReferenceOrbit, V, Dir, TStart);
 	uint Index = Id.y * (uint)P.IParams2.x + Id.x;
 	float3 StepColor = LabStepPalette(R, V.MaxRaySteps, V.MaxIterations);
 	if (R.Status == FP_MISS_DISTANCE)

@@ -180,6 +180,10 @@ The derivative is tracked multiplied by the world→fractal scale. That keeps it
 at any depth (`dr` alone reaches ~1e33 at a scale of 1e-30), and it returns the DE directly in world
 units for the march.
 
+For the Mandelbulb the scalar `dr` is replaced by the full Jacobian `J = dz/dc` (§12.1): the scalar
+running derivative overestimates `|J|` by orders of magnitude next to the surface at depth. The other
+formulas still use `dr`.
+
 ---
 
 ## 4. Rebasing and the reference orbit
@@ -224,7 +228,7 @@ The number of iterations per distance estimate grows with zoom depth: 3 at 1e-1,
 `A_{n+1} = J_n A_n + I`. The CPU stores `A_m` (3×3), the reference's `dr_m`, and a validity radius:
 
 ```
-R_m = min_{n<m} tol * min(|Z_n|, rho_n) / ||A_n||_F         (tol = 1e-8)
+R_m = min_{n<m} tol * min(|Z_n|, rho_n) / ||A_n||_F         (tol = 1e-6, §12.3)
 ```
 
 `|Z_n|` bounds the quadratic term `(p-1)/2 |d|/|Z|`. `rho_n` is there because `g` is not smooth on the
@@ -380,8 +384,10 @@ count model for GPUs, where MUFU/division are relatively more expensive):
 * **Non-integer powers** work (general path) but are slower and inherit the formula's seams.
 * **Multiple views** share one reference manager, so the pass only runs on the player's view (not on reflection /
   planar / scene captures). Split screen with very different views would thrash it.
-* **Further speed:** a full BLA table (merged linear segments, usable after rebases), cone marching
-  or a coarse-to-fine pre-pass, analytic normals for shading.
+* **Further speed:** a full BLA table (merged linear segments, usable after rebases), analytic normals
+  for shading. Views that look through dust-like regions of the set (filaments everywhere, each thinner
+  than a pixel) stay expensive: the distance to the nearest filament never drops below a pixel radius
+  until the ray has travelled ~1/pixel-angle times that distance, so such rays end at the step limit.
 * **Not yet compiled inside Unreal.** The engine-free parts are compiled and tested; the `.usf`
   compiles with DXC for every permutation (`make ue-shader-check`), but the plugin C++ has not been
   built in a UE 5.6 editor in this environment.
@@ -511,3 +517,80 @@ Plain float | GPU perturbation | CPU double-double truth (all three use the plai
 | ![Mandelbox](Tools/PerturbationLab/docs/Mandelbox.png) | ![Inverted Menger](Tools/PerturbationLab/docs/InvertedMenger.png) |
 | ![Quaternion](Tools/PerturbationLab/docs/Quaternion.png) | ![Sierpinski Tetrahedron](Tools/PerturbationLab/docs/SierpinskiTetrahedron.png) |
 | ![Kaleidoscopic IFS](Tools/PerturbationLab/docs/KaleidoscopicIFS.png) | |
+
+---
+
+## 12. Deep-zoom correctness and speed
+
+Found while benchmarking the browser port (`Web/bench`), fixed in both renderers.
+
+### 12.1 The scalar running derivative fails at depth (Jacobian distance estimate)
+
+The classic Mandelbulb estimate `0.5 r ln r / dr` with `dr' = p r^(p-1) dr + 1` assumes the map stretches every
+direction by `p r^(p-1)`. The true Jacobian of `g_p` is
+
+```
+J_g = p r^(p-1) [ e'_r e_r^T + e'_theta e_theta^T + (sin(p theta) / sin(theta)) e'_phi e_phi^T ]
+```
+
+(unit vectors at `z` and at the multiplied angles): the azimuth is stretched by `sin(p theta)/sin(theta)` more or less.
+Over the hundreds of iterations of an orbit next to the surface at depth the error compounds. Measured along view rays
+(CPU, double-double): the scalar estimate was 1/100 to 1/1000 of the distance to the surface the ray actually reaches,
+so rays declared a hit far in front of the fractal. The real surface (first point that stays bounded) was 18 times
+farther than the rendered hit at 1e-14 and more than 40 times farther at 1e-22 and 1e-26. Deep zooms showed a smooth
+shell around the fractal instead of the fractal. Near the polar axis the scalar estimate is too large instead (a camera
+it placed 4e-6 from the surface had set points within 1e-20).
+
+The renderer now tracks `J = dz/dc` as a 3×3 matrix (`J' = J_g(W) J + I`; the series matrix `A_m` is exactly `dz_m/dc`,
+so the skip seeds it) and uses `0.5 r ln r / |J^T z/r|`. On the GPU `J` is scaled by `Scale` like `dr` was, and `|grad|`
+is computed without squaring (components above ~1e19 overflow float). Checks: the recursion matches double-double finite
+differences of `z_n` to 1e-9 relative over 60 iterations; along view rays the real surface now lies 1-6% behind every
+rendered hit; `test_perturbed_de` (GPU vs 128-bit truth, every depth) passes for all formulas. Rays need 1-17 steps per
+pixel at 1e-14..1e-26 instead of ~65 (and 150, the step limit, at full-HD pixel sizes). The camera distance, and with
+it the flight speed, is right at depth too.
+
+`FractalMath::PowerMapJacobian`, `FMandelbulbFormula::JacobianStep` (CPU, used by `DistanceEstimate` when a formula
+provides it), `FP_PowerMapJacobianStep` / `FP_DERIV` (GPU, `FractalPowerMap.ush`, `FractalDE.ush`).
+
+### 12.2 Iteration budget from the camera's orbit
+
+`ComputeIterationBudget` assumes orbits grow by the power (~8x) per iteration. Next to the surface they grow 1.05-1.4x,
+so at depth the budget (150) ran out before the camera's own orbit escaped and the view rendered as "inside". The view
+now also gets `ComputeOrbitIterationBudget(n, D, pixel angle)`: the camera escapes after `n` iterations with distance
+`D`, so its orbit grows by `(2/D)^(1/n)` per iteration and the surface pixels, `1/pixel angle` times closer, need
+`ln(1/pixel angle)/ln(growth)` more; twice that plus 20 is budgeted (cap 3000). The haze is measured from the camera's
+escape count (`HazeBase`), so only detail finer than the pixels fades.
+
+### 12.3 Series tolerance 1e-6
+
+The skip's validity tolerance went from 1e-8 to 1e-6. `test_perturbed_de` passes for every formula and depth at 1e-6
+and 2e-6; 3e-6 fails once, and 1e-5 fails with median errors of 4e-5 and occasional large outliers. In the browser
+benchmark 1e-6 renders identical images (<0.01% colour difference) with 16-70% fewer iterations at depth.
+
+### 12.4 Relaxed sphere tracing and the cone pre-pass
+
+* **Over-relaxation** (Keinert et al. 2014, `FP_RELAX` = 1.6): steps of 1.6x the distance while consecutive spheres
+  overlap; at the first gap the march goes back inside the previous sphere and continues with plain steps. 30-40% fewer
+  steps where rays run along a surface. Images change by 1-4% mean colour through the step-count ambient occlusion only.
+* **Cone pre-pass** (`FractalCone`, 8×8 tiles): one ray per tile, widened to a cone containing all 64 pixel rays, steps
+  `(D - t c)/(1 + c)` while `D > 2 t c`, which keeps every pixel ray inside the empty sphere. The tile's pixels start
+  where it stopped (or end at once when the cone leaves the scene). Up to 2x fewer per-pixel steps in the browser
+  benchmark at full-HD pixel sizes.
+
+### 12.5 Benchmark (`Web/bench`)
+
+Headless Chromium with software WebGPU (SwiftShader), fixed views from the start view down to 1e-26 (placed with the
+Jacobian estimate, `views.json`), work counters in the shader (distance estimates, executed / skipped iterations, march
+steps per pixel) and image comparison between variants. `virtual` renders a window of a 1920×1080 frame so pixel sizes,
+hit thresholds and cone tiles are those of full HD. Shipping configuration at virtual full HD:
+
+| view | steps / pixel | iterations / pixel | |
+|---|---|---|---|
+| start | 11.7 | 87 | |
+| 1e-6 | 45 | 2,200 | grazing view |
+| 1e-10 | 150 | 182,000 | camera inside a dust cloud: every ray reaches the step limit |
+| 1e-14 | 13 | 1,480 | |
+| 1e-18 | 9.6 | 1,270 | |
+| 1e-22 | 9 | 250 | |
+| 1e-26 | 12.8 | 3,500 | |
+

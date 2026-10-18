@@ -172,6 +172,62 @@ inline double PowerMapDerivative(const TFractalVec3<double>& Z, double DR, doubl
 }
 
 /**
+ * Jacobian of g_p at Z (double). With the unit vectors e_r, e_theta, e_phi at Z and e'_r, e'_theta, e'_phi at the multiplied
+ * angles (p theta, p phi):
+ *     J = p r^(p-1) [ e'_r e_r^T + e'_theta e_theta^T + (sin(p theta) / sin(theta)) e'_phi e_phi^T ]
+ * The map stretches the azimuth by sin(p theta) / sin(theta) less (or more) than the other two directions. The scalar
+ * running derivative dr' = p r^(p-1) dr ignores that, and over the hundreds of iterations of an orbit next to the surface
+ * its error compounds: the classic estimate comes out 1e2-1e8 times too small (or, near the polar axis, too large) at depth.
+ * Returns false at the origin.
+ */
+inline bool PowerMapJacobian(const TFractalVec3<double>& Z, double Power, double OutJ[3][3])
+{
+	const double Rho = std::sqrt(Z.X * Z.X + Z.Y * Z.Y);
+	const double R = std::sqrt(Rho * Rho + Z.Z * Z.Z);
+	if (!(R > 0.0))
+	{
+		return false;
+	}
+	const double CT = Z.Z / R, ST = Rho / R;
+	const double CP = Rho > 0.0 ? Z.X / Rho : 1.0, SP = Rho > 0.0 ? Z.Y / Rho : 0.0;
+	double CPT, SPT, CPP, SPP;
+	if (IsIntegerPower(Power))
+	{
+		// (cos theta + i sin theta)^p and (cos phi + i sin phi)^p
+		double ARe = CT, AIm = ST, BRe = CP, BIm = SP, TRe = 1.0, TIm = 0.0, QRe = 1.0, QIm = 0.0;
+		for (int E = static_cast<int>(Power); E > 0; E >>= 1)
+		{
+			if (E & 1)
+			{
+				const double NT = TRe * ARe - TIm * AIm; TIm = TRe * AIm + TIm * ARe; TRe = NT;
+				const double NQ = QRe * BRe - QIm * BIm; QIm = QRe * BIm + QIm * BRe; QRe = NQ;
+			}
+			const double NA = ARe * ARe - AIm * AIm; AIm = 2.0 * ARe * AIm; ARe = NA;
+			const double NB = BRe * BRe - BIm * BIm; BIm = 2.0 * BRe * BIm; BRe = NB;
+		}
+		CPT = TRe; SPT = TIm; CPP = QRe; SPP = QIm;
+	}
+	else
+	{
+		const double Theta = std::atan2(Rho, Z.Z), Phi = Rho > 0.0 ? std::atan2(Z.Y, Z.X) : 0.0;
+		CPT = std::cos(Power * Theta); SPT = std::sin(Power * Theta);
+		CPP = std::cos(Power * Phi); SPP = std::sin(Power * Phi);
+	}
+	const double K = Power * std::pow(R, Power - 1.0);
+	const double Az = ST > 1.0e-300 ? SPT / ST : Power * (CT >= 0.0 ? 1.0 : -1.0);
+	const double Er[3] = {ST * CP, ST * SP, CT}, Et[3] = {CT * CP, CT * SP, -ST}, Ep[3] = {-SP, CP, 0.0};
+	const double Er2[3] = {SPT * CPP, SPT * SPP, CPT}, Et2[3] = {CPT * CPP, CPT * SPP, -SPT}, Ep2[3] = {-SPP, CPP, 0.0};
+	for (int I = 0; I < 3; ++I)
+	{
+		for (int J = 0; J < 3; ++J)
+		{
+			OutJ[I][J] = K * (Er2[I] * Er[J] + Et2[I] * Et[J] + Az * Ep2[I] * Ep[J]);
+		}
+	}
+	return true;
+}
+
+/**
  * Series step of g_p at Z: Jacobian by central differences (h << rho keeps both samples on the same side of
  * the polar axis) and the linear validity limit. One linear step is accurate to relative error
  * ~ (p-1)/2 |d| / |Z| (Hessian ~ p(p-1) R^(p-2)), and next to the polar axis the map is not smooth (its Hessian

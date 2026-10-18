@@ -30,7 +30,7 @@ namespace FractalMath
 {
 
 /** Default tolerance of the linear series skip (validated in Tools/PerturbationLab). */
-constexpr double DefaultSeriesTolerance = 1.0e-8;
+constexpr double DefaultSeriesTolerance = 1.0e-6;
 
 template <typename F>
 constexpr int FormulaOrbitStride() { return F::PayloadFloat4 + F::StateDim; }
@@ -221,6 +221,9 @@ inline FDistanceEstimate DistanceEstimate(const TFractalVec3<T>& Position, const
 	FDistanceEstimate Result;
 	typename F::template TState<T> Z = F::Start(Position);
 	double DR = 1.0;
+	// Formulas with a JacobianStep track dz/dc as a matrix (see PowerMapJacobian); the others the scalar derivative.
+	constexpr bool bJacobian = requires(const typename F::template TState<double>& S, double M[3][3], const FFormulaParams& P) { F::JacobianStep(S, M, P); };
+	double J[3][3] = {{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}};
 	double R = 0.0;
 	int N = 1;
 	for (; N < Params.MaxIterations; ++N)
@@ -232,11 +235,33 @@ inline FDistanceEstimate DistanceEstimate(const TFractalVec3<T>& Position, const
 			Result.bEscaped = true;
 			break;
 		}
-		DR = F::DerivativeStep(ToDoubleState(Z), DR, Params);
+		if constexpr (bJacobian)
+		{
+			F::JacobianStep(ToDoubleState(Z), J, Params);
+		}
+		else
+		{
+			DR = F::DerivativeStep(ToDoubleState(Z), DR, Params);
+		}
 		Z = F::Step(Z, Position, Params);
 	}
 	Result.Iterations = N;
-	if (F::Family == EFractalFamily::EscapeTime)
+	if constexpr (bJacobian)
+	{
+		// 0.5 r ln r / |grad r|, grad r = J^T z / r
+		double Grad2 = 0.0;
+		if (Result.bEscaped && R > 0.0)
+		{
+			const auto ZD = ToDoubleState(Z);
+			for (int Col = 0; Col < 3; ++Col)
+			{
+				const double G = (ZD[0] * J[0][Col] + ZD[1] * J[1][Col] + ZD[2] * J[2][Col]) / R;
+				Grad2 += G * G;
+			}
+		}
+		Result.Distance = Result.bEscaped && Grad2 > 0.0 ? 0.5 * R * std::log(R) / std::sqrt(Grad2) : 0.0;
+	}
+	else if (F::Family == EFractalFamily::EscapeTime)
 	{
 		Result.Distance = Result.bEscaped ? 0.5 * R * std::log(R) / DR : 0.0;
 	}

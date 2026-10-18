@@ -1,4 +1,5 @@
-// Fractal ray marcher with perturbation, injected after tonemapping by FFractalSceneViewExtension.
+// Fractal ray marcher with perturbation, injected after tonemapping by FFractalSceneViewExtension. Two entry points: the
+// cone pre-pass (FractalCone) and the per-pixel march (PerturbationShader).
 // All fractal maths lives in FractalRender.ush and the files it includes (pure HLSL, also exercised by
 // Tools/PerturbationLab); this file only binds Unreal's shader parameters.
 // Permutations: FP_FRACTAL_TYPE selects the formula (FractalFormula.ush), FP_STATIC_POWER_8 compiles the
@@ -30,21 +31,19 @@ float DirectFootprint;
 int OrbitLength;
 int MaxRaySteps;
 int MaxIterations;
+int HazeBase;
 float MaxRayDistance;
 float2 BackgroundInvExtent;
 Texture2D<float4> BackgroundTexture;
 SamplerState BackgroundSampler;
 StructuredBuffer<float4> ReferenceOrbit;
 RWTexture2D<float4> OutputTexture;
+int ConeTile;                 // marched pixels per cone tile side (FractalCone pass)
+Texture2D<float> ConeStart;   // per tile: where its rays can start (FP_ConeMarch), -1 = they hit nothing
+RWTexture2D<float> ConeOutput;
 
-[numthreads(THREADS_X, THREADS_Y, THREADS_Z)]
-void PerturbationShader(uint3 DispatchThreadId : SV_DispatchThreadID)
+FPViewParams FP_ViewFromParameters()
 {
-	if (DispatchThreadId.x >= (uint)OutputSize.x || DispatchThreadId.y >= (uint)OutputSize.y)
-	{
-		return;
-	}
-
 	FPViewParams V;
 	V.RayDir00 = RayDir00;
 	V.RayDirDX = RayDirDX;
@@ -57,13 +56,41 @@ void PerturbationShader(uint3 DispatchThreadId : SV_DispatchThreadID)
 	V.Power = FractalPower;
 	V.Bailout = BailoutRadius;
 	V.MaxIterations = MaxIterations;
+	V.HazeBase = HazeBase;
 	V.MaxRaySteps = MaxRaySteps;
 	V.MaxRayDistance = MaxRayDistance;
 	V.OrbitLength = OrbitLength;
 	V.DirectFootprint = DirectFootprint;
+	return V;
+}
 
+// Cone pre-pass: one thread per ConeTile x ConeTile block of marched pixels (FP_ConeMarch).
+[numthreads(THREADS_X, THREADS_Y, THREADS_Z)]
+void FractalCone(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint2 Tiles = ((uint2)OutputSize + (uint)ConeTile - 1u) / (uint)ConeTile;
+	if (DispatchThreadId.x >= Tiles.x || DispatchThreadId.y >= Tiles.y)
+	{
+		return;
+	}
+	FPViewParams V = FP_ViewFromParameters();
+	float Half = 0.5f * (float)ConeTile;
+	float3 Dir = FP_PixelRayDirectionAt(V, (float2)DispatchThreadId.xy * (float)ConeTile + Half - 0.5f);
+	ConeOutput[DispatchThreadId.xy] = FP_ConeMarch(ReferenceOrbit, V, Dir, FP_ConeAngle(V, ConeTile));
+}
+
+[numthreads(THREADS_X, THREADS_Y, THREADS_Z)]
+void PerturbationShader(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (DispatchThreadId.x >= (uint)OutputSize.x || DispatchThreadId.y >= (uint)OutputSize.y)
+	{
+		return;
+	}
+
+	FPViewParams V = FP_ViewFromParameters();
 	float3 Dir = FP_PixelRayDirection(V, DispatchThreadId.xy);
-	FPMarchResult March = FP_MarchRay(ReferenceOrbit, V, Dir);
+	float TStart = ConeStart.Load(int3(DispatchThreadId.xy / (uint)ConeTile, 0));
+	FPMarchResult March = FP_MarchRayFrom(ReferenceOrbit, V, Dir, TStart);
 
 	// Background: the scene colour under the centre of this marched pixel.
 	uint2 PixelPos = DispatchThreadId.xy + (uint2)OutputOffset;

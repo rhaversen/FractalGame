@@ -10,6 +10,13 @@
 // Compiled as two pipelines: STATIC_POWER = 8 (the classic Mandelbulb, loops unrolled; the FP_STATIC_POWER_8 permutation)
 // and 0 (any power).
 override STATIC_POWER: i32 = 0;
+// Benchmark pipelines count the work per frame in Stats (distance estimates, executed and skipped iterations).
+override BENCH: bool = false;
+// Over-relaxed sphere tracing (Keinert et al. 2014): steps of RELAX times the distance while consecutive spheres overlap,
+// falling back to plain steps at the first miss. 1 = plain sphere tracing.
+override RELAX: f32 = 1.0;
+// Cone pre-pass: one ray per CONE_TILE x CONE_TILE marched pixels finds how far all of them can start (0 = off).
+override CONE_TILE: u32 = 0u;
 
 struct Params {
 	ray00: vec4<f32>,   // direction through pixel (0, 0), unnormalised (xyz); hit threshold per unit distance (w)
@@ -18,14 +25,21 @@ struct Params {
 	camOff: vec4<f32>,  // camera - C_ref (xyz); max ray distance (w)
 	refC: vec4<f32>,    // float(C_ref) (xyz); bounding radius (w)
 	sizeI: vec4<i32>,   // marched width, height, orbit length, max iterations
-	marchI: vec4<i32>,  // max ray steps, 0, 0, 0
-	misc: vec4<f32>,    // footprint above which plain float iteration is used (x); full-resolution pixels per marched pixel (zw)
+	marchI: vec4<i32>,  // max ray steps, haze base (iterations the camera's own orbit needs), 0, 0
+	misc: vec4<f32>,    // footprint above which plain float iteration is used (x); Jacobian scale (y); full-resolution pixels per marched pixel (zw)
 };
 
 @group(0) @binding(0) var<uniform> P: Params;
 @group(0) @binding(1) var<storage, read> Orbit: array<vec4<f32>>;
 @group(0) @binding(2) var Out: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(3) var<storage, read_write> Probe: array<f32>;
+@group(0) @binding(4) var<storage, read_write> Stats: array<atomic<u32>, 8>;
+@group(0) @binding(5) var ConeOut: texture_storage_2d<r32float, write>;
+@group(0) @binding(6) var ConeIn: texture_2d<f32>;
+
+var<private> gEstimates: u32 = 0u;
+var<private> gIterations: u32 = 0u;
+var<private> gSkipped: u32 = 0u;
 
 const FP_PI: f32 = 3.14159265358979;
 const FP_TWO_PI: f32 = 6.28318530717959;
@@ -176,8 +190,17 @@ fn FP_LoadPowerRef(base: i32) -> FPPowerRef {
 	return r;
 }
 
-// g_p(W) evaluated directly, |W| = rw, 1/|W| = invRw; .w = |W|^(p-1).
-fn FP_MandelbulbPower(w: vec3<f32>, rw: f32, invRw: f32, power: f32, powerInt: i32) -> vec4<f32> {
+// One power-map step: the value (g_p(W), or its difference to g_p(Z~)), |W|^(p-1), and the cos / sin of the multiplied
+// angles p theta and p phi at W (for the Jacobian).
+struct FPPowerStep {
+	Value: vec3<f32>,
+	RWPowM1: f32,
+	Angles: vec4<f32>, // cos(p theta), sin(p theta), cos(p phi), sin(p phi)
+}
+
+// g_p(W) evaluated directly, |W| = rw, 1/|W| = invRw.
+fn FP_MandelbulbPower(w: vec3<f32>, rw: f32, invRw: f32, power: f32, powerInt: i32) -> FPPowerStep {
+	var o: FPPowerStep;
 	if (powerInt > 0) {
 		let maxXY = max(abs(w.x), abs(w.y));
 		let xyScale = FP_Pow2Normalizer(maxXY);
@@ -191,7 +214,10 @@ fn FP_MandelbulbPower(w: vec3<f32>, rw: f32, invRw: f32, power: f32, powerInt: i
 		var rwPowM1 = 1.0;
 		if (powerInt > 1) { rwPowM1 = FP_ComplexPowInt(rw, 0.0, powerInt - 1).x; }
 		let rwPow = rwPowM1 * rw;
-		return vec4<f32>(rwPow * vec3<f32>(t.y * q.x, t.y * q.y, t.x), rwPowM1);
+		o.Value = rwPow * vec3<f32>(t.y * q.x, t.y * q.y, t.x);
+		o.RWPowM1 = rwPowM1;
+		o.Angles = vec4<f32>(t.x, t.y, q.x, q.y);
+		return o;
 	}
 	let rho = sqrt(w.x * w.x + w.y * w.y);
 	let theta = FP_Atan2(rho, w.z);
@@ -199,17 +225,21 @@ fn FP_MandelbulbPower(w: vec3<f32>, rw: f32, invRw: f32, power: f32, powerInt: i
 	let rwPow = select(0.0, exp2(power * log2(rw)), rw > 0.0);
 	let st = FP_SinCos(power * theta);
 	let sp = FP_SinCos(power * phi);
-	return vec4<f32>(rwPow * vec3<f32>(st.x * sp.y, st.x * sp.x, st.y), rwPow * invRw);
+	o.Value = rwPow * vec3<f32>(st.x * sp.y, st.x * sp.x, st.y);
+	o.RWPowM1 = rwPow * invRw;
+	o.Angles = vec4<f32>(st.y, st.x, sp.y, sp.x);
+	return o;
 }
 
-// g_p(Z~ + D) - g_p(Z~) for the reference point Ref, W = Z~ + D; .w = |W|^(p-1).
-fn FP_PerturbedPowerDelta(rf: FPPowerRef, d: vec3<f32>, w: vec3<f32>, rw: f32, invRw: f32, power: f32, powerInt: i32) -> vec4<f32> {
+// g_p(Z~ + D) - g_p(Z~) for the reference point Ref, W = Z~ + D.
+fn FP_PerturbedPowerDelta(rf: FPPowerRef, d: vec3<f32>, w: vec3<f32>, rw: f32, invRw: f32, power: f32, powerInt: i32) -> FPPowerStep {
 	// The reference is negligible next to the full point (after a rebase Ref = 0): evaluate directly.
 	if (rf.R <= 0.5 * rw) {
-		let gw = FP_MandelbulbPower(w, rw, invRw, power, powerInt);
-		let gref = rf.RPow * vec3<f32>(rf.SinPT * rf.CosPP, rf.SinPT * rf.SinPP, rf.CosPT);
-		return vec4<f32>(gw.xyz - gref, gw.w);
+		var gw = FP_MandelbulbPower(w, rw, invRw, power, powerInt);
+		gw.Value = gw.Value - rf.RPow * vec3<f32>(rf.SinPT * rf.CosPP, rf.SinPT * rf.SinPP, rf.CosPT);
+		return gw;
 	}
+	var o: FPPowerStep;
 
 	let zz = rf.Z.z;
 	// Radial factor u = (r/R)^p - 1 with s = dr/R, dr computed without cancellation.
@@ -281,7 +311,10 @@ fn FP_PerturbedPowerDelta(rf: FPPowerRef, d: vec3<f32>, w: vec3<f32>, rw: f32, i
 		let cosPW = rf.CosPP + dCosP;
 		let fwi = vec3<f32>(sinTW * cosPW, sinTW * sinPW, cosTW);
 		let dfi = vec3<f32>(dSinT * cosPW + rf.SinPT * dCosP, dSinT * sinPW + rf.SinPT * dSinP, dCosT);
-		return vec4<f32>(rf.RPow * (u * fwi + dfi), rf.RPow * onePlusU * invRw);
+		o.Value = rf.RPow * (u * fwi + dfi);
+		o.RWPowM1 = rf.RPow * onePlusU * invRw;
+		o.Angles = vec4<f32>(cosTW, sinTW, cosPW, sinPW);
+		return o;
 	}
 
 	var dPhi = FP_Atan2(crossP, dotP);
@@ -306,7 +339,10 @@ fn FP_PerturbedPowerDelta(rf: FPPowerRef, d: vec3<f32>, w: vec3<f32>, rw: f32, i
 	let cosPW = rf.CosPP + dCosP;
 	let fw = vec3<f32>(sinTW * cosPW, sinTW * sinPW, cosTW);
 	let df = vec3<f32>(dSinT * cosPW + rf.SinPT * dCosP, dSinT * sinPW + rf.SinPT * dSinP, dCosT);
-	return vec4<f32>(rf.RPow * (u * fw + df), rf.RPow * onePlusU * invRw);
+	o.Value = rf.RPow * (u * fw + df);
+	o.RWPowM1 = rf.RPow * onePlusU * invRw;
+	o.Angles = vec4<f32>(cosTW, sinTW, cosPW, sinPW);
+	return o;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -333,17 +369,70 @@ fn FP_SafeLength(w: vec3<f32>, rw2: f32, invRw: f32) -> f32 {
 	return rw2 * invRw;
 }
 
-fn FP_FinalDistance(escaped: bool, rw: f32, drs: f32) -> f32 {
-	return select(0.0, 0.5 * rw * log(max(rw, 1.0e-6)) / max(drs, 1.0e-37), escaped);
+// J = dz/dc as three rows, scaled by s = P.misc.y (about the camera's distance to the surface, so that the entries stay in
+// float range at any depth; the derivative grows like 1 / distance). J' = J_g(W) J + s I with
+//     J_g = p r^(p-1) [ e'_r e_r^T + e'_theta e_theta^T + (sin(p theta) / sin(theta)) e'_phi e_phi^T ]
+// (unit vectors at W and at the multiplied angles). The map stretches the azimuth by sin(p theta) / sin(theta) less (or more)
+// than the other directions; the scalar running derivative of the classic estimate ignores that, and over the hundreds of
+// iterations of an orbit next to the surface its error compounds into distances wrong by many orders of magnitude.
+struct FPJacobian {
+	R0: vec3<f32>,
+	R1: vec3<f32>,
+	R2: vec3<f32>,
 }
 
-fn FP_Result(n: i32, rw: f32, drs: f32, escaped: bool, skipped: i32) -> FPDEResult {
+fn FP_JacobianStep(j: FPJacobian, w: vec3<f32>, invRw: f32, g: FPPowerStep, power: f32) -> FPJacobian {
+	let s = P.misc.y;
+	let maxXY = max(abs(w.x), abs(w.y));
+	let xyScale = FP_Pow2Normalizer(maxXY);
+	let sx = w.x * xyScale;
+	let sy = w.y * xyScale;
+	let sRho2 = sx * sx + sy * sy;
+	let invSRho = select(0.0, inverseSqrt(sRho2), sRho2 > 0.0);
+	let cp = select(1.0, sx * invSRho, sRho2 > 0.0);
+	let sp = sy * invSRho;
+	let st = sRho2 * invSRho * FP_Pow2Denormalizer(maxXY) * invRw;
+	let ct = w.z * invRw;
+	let er = vec3<f32>(st * cp, st * sp, ct);
+	let et = vec3<f32>(ct * cp, ct * sp, -st);
+	let cpt = g.Angles.x;
+	let spt = g.Angles.y;
+	let cpp = g.Angles.z;
+	let spp = g.Angles.w;
+	let az = select(power * sign(ct), clamp(spt / st, -abs(power), abs(power)), st > 1.0e-30);
+	let k = power * g.RWPowM1;
+	let a = er.x * j.R0 + er.y * j.R1 + er.z * j.R2;
+	let b = et.x * j.R0 + et.y * j.R1 + et.z * j.R2;
+	let c = (-sp * j.R0 + cp * j.R1) * az;
+	var o: FPJacobian;
+	o.R0 = k * (spt * cpp * a + cpt * cpp * b - spp * c) + vec3<f32>(s, 0.0, 0.0);
+	o.R1 = k * (spt * spp * a + cpt * spp * b + cpp * c) + vec3<f32>(0.0, s, 0.0);
+	o.R2 = k * (cpt * a - spt * b) + vec3<f32>(0.0, 0.0, s);
+	return o;
+}
+
+// 0.5 r ln r / |grad r| with grad r = J^T W / r (fractal units; J is scaled by s).
+fn FP_FinalDistance(escaped: bool, w: vec3<f32>, rw: f32, j: FPJacobian) -> f32 {
+	let u = w / max(rw, 1.0e-30);
+	let grad = u.x * j.R0 + u.y * j.R1 + u.z * j.R2;
+	// |grad| without squaring (the squares of components above ~1e19 overflow float)
+	let m = max(max(abs(grad.x), abs(grad.y)), abs(grad.z));
+	let gradLength = m * length(grad / max(m, 1.0e-37));
+	return select(0.0, 0.5 * rw * log(max(rw, 1.0e-6)) * P.misc.y / max(gradLength, 1.0e-37), escaped);
+}
+
+fn FP_Result(n: i32, w: vec3<f32>, rw: f32, j: FPJacobian, escaped: bool, skipped: i32) -> FPDEResult {
+	if (BENCH) {
+		gEstimates = gEstimates + 1u;
+		gIterations = gIterations + u32(n - skipped);
+		gSkipped = gSkipped + u32(skipped);
+	}
 	var r: FPDEResult;
 	r.Iterations = n;
 	r.bEscaped = escaped;
 	r.Skipped = skipped;
 	r.Smooth = FP_SmoothIteration(n, rw, P.rayDY.w, P.rayDX.w, escaped);
-	r.Distance = FP_FinalDistance(escaped, rw, drs);
+	r.Distance = FP_FinalDistance(escaped, w, rw, j);
 	return r;
 }
 
@@ -355,7 +444,9 @@ fn FP_PerturbedDE(dc: vec3<f32>) -> FPDEResult {
 	let maxIterations = P.sizeI.w;
 	var d = dc;
 	var m = 1;
-	var drs = 1.0;
+	let s0 = P.misc.y;
+	var jac = FPJacobian(vec3<f32>(s0, 0.0, 0.0), vec3<f32>(0.0, s0, 0.0), vec3<f32>(0.0, 0.0, s0));
+	var lastW = vec3<f32>(0.0);
 	var rw = 0.0;
 	var escaped = false;
 	var n = 1;
@@ -378,7 +469,8 @@ fn FP_PerturbedDE(dc: vec3<f32>) -> FPDEResult {
 			let a1 = Orbit[row + 1];
 			let a2 = Orbit[row + 2];
 			d = vec3<f32>(dot(a0.xyz, dc), dot(a1.xyz, dc), dot(a2.xyz, dc));
-			drs = a1.w;
+			// the series matrix A_m is dz_m / dc
+			jac = FPJacobian(a0.xyz * s0, a1.xyz * s0, a2.xyz * s0);
 			m = lo;
 			n = lo;
 			skipped = lo - 1;
@@ -390,6 +482,7 @@ fn FP_PerturbedDE(dc: vec3<f32>) -> FPDEResult {
 		let base = FP_ORBIT_STRIDE * m;
 		let refZ = Orbit[base].xyz;
 		let w = refZ + d;
+		lastW = w;
 		let rw2 = dot(w, w);
 		let invRw = select(0.0, inverseSqrt(rw2), rw2 > 0.0);
 		rw = FP_SafeLength(w, rw2, invRw);
@@ -406,12 +499,12 @@ fn FP_PerturbedDE(dc: vec3<f32>) -> FPDEResult {
 			b = 0;
 		}
 		let g = FP_PerturbedPowerDelta(FP_LoadPowerRef(b), d, w, rw, invRw, power, powerInt);
-		drs = power * g.w * drs + 1.0;
-		d = g.xyz + dc;
+		jac = FP_JacobianStep(jac, w, invRw, g, power);
+		d = g.Value + dc;
 		m = m + 1;
 		n = n + 1;
 	}
-	return FP_Result(n, rw, drs, escaped, skipped);
+	return FP_Result(n, lastW, rw, jac, escaped, skipped);
 }
 
 // Plain float DE at an absolute position.
@@ -421,7 +514,8 @@ fn FP_DirectDE(c: vec3<f32>) -> FPDEResult {
 	let bailout2 = P.rayDY.w * P.rayDY.w;
 	let maxIterations = P.sizeI.w;
 	var z = c;
-	var drs = 1.0;
+	let s0 = P.misc.y;
+	var jac = FPJacobian(vec3<f32>(s0, 0.0, 0.0), vec3<f32>(0.0, s0, 0.0), vec3<f32>(0.0, 0.0, s0));
 	var rw = 0.0;
 	var escaped = false;
 	var n = 1;
@@ -435,11 +529,11 @@ fn FP_DirectDE(c: vec3<f32>) -> FPDEResult {
 			break;
 		}
 		let g = FP_MandelbulbPower(z, rw, invRw, power, powerInt);
-		drs = power * g.w * drs + 1.0;
-		z = g.xyz + c;
+		jac = FP_JacobianStep(jac, z, invRw, g, power);
+		z = g.Value + c;
 		n = n + 1;
 	}
-	return FP_Result(n, rw, drs, escaped, 0);
+	return FP_Result(n, z, rw, jac, escaped, 0);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -472,7 +566,7 @@ fn FP_PixelRayDirection(pixel: vec2<f32>) -> vec3<f32> {
 	return normalize(P.ray00.xyz + full.x * P.rayDX.xyz + full.y * P.rayDY.xyz);
 }
 
-fn FP_MarchRay(dir: vec3<f32>) -> FPMarchResult {
+fn FP_MarchRay(dir: vec3<f32>, tStart: f32) -> FPMarchResult {
 	var r: FPMarchResult;
 	r.Distance = 0.0;
 	r.Steps = 0;
@@ -501,6 +595,16 @@ fn FP_MarchRay(dir: vec3<f32>) -> FPMarchResult {
 			tEnd = min(tEnd, -b + root);
 		}
 	}
+	// the cone pre-pass proved that nothing is hit before tStart (negative: nothing is hit at all)
+	if (tStart < 0.0 || tStart >= tEnd) {
+		r.Status = 2;
+		r.Distance = tEnd;
+		return r;
+	}
+	t = max(t, tStart);
+	var omega = RELAX;
+	var prevRadius = 0.0;
+	var stepLength = 0.0;
 	loop {
 		if (r.Steps >= P.marchI.x) { break; }
 		if (t >= tEnd) { r.Status = 2; break; }
@@ -509,11 +613,20 @@ fn FP_MarchRay(dir: vec3<f32>) -> FPMarchResult {
 		let de = FP_DistanceEstimate(P.camOff.xyz + dir * t, pixelRadius);
 		r.TotalIterations = r.TotalIterations + de.Iterations;
 		r.TotalSkipped = r.TotalSkipped + de.Skipped;
-		r.LastIterations = de.Iterations;
-		r.LastSmooth = de.Smooth;
-		r.bLastEscaped = de.bEscaped;
-		if (de.Distance <= pixelRadius) { r.Status = 1; break; }
-		t = t + max(de.Distance, pixelRadius * 0.5);
+		let radius = de.Distance;
+		if (omega > 1.0 && radius + prevRadius < stepLength) {
+			// the relaxed step left the previous sphere: go back inside it and continue with plain steps
+			stepLength = stepLength - omega * stepLength;
+			omega = 1.0;
+		} else {
+			r.LastIterations = de.Iterations;
+			r.LastSmooth = de.Smooth;
+			r.bLastEscaped = de.bEscaped;
+			if (radius <= pixelRadius) { r.Status = 1; break; }
+			stepLength = max(radius, pixelRadius * 0.5) * omega;
+		}
+		prevRadius = radius;
+		t = t + stepLength;
 	}
 	r.Distance = t;
 	return r;
@@ -566,18 +679,77 @@ fn FP_Shade(r: FPMarchResult, dir: vec3<f32>, background: vec3<f32>) -> vec3<f32
 	if (r.Status == 3) { ao = ao * 0.6; }
 	let albedo = FP_Palette(log2(1.0 + r.LastSmooth) * 0.22);
 	var color = albedo * light * ao;
-	let used = select(1.0, r.LastSmooth / max(f32(P.sizeI.w), 1.0), r.bLastEscaped);
+	// Detail limit: the share of the iterations beyond the camera's own escape count (the haze base) a hit needed.
+	let hazeBase = f32(P.marchI.y);
+	let used = select(1.0, (r.LastSmooth - hazeBase) / max(f32(P.sizeI.w) - hazeBase, 1.0), r.bLastEscaped);
 	color = mix(color, FP_HazeColor(background), smoothstep(FP_HAZE_START, 1.0, used));
 	let fog = 1.0 - exp(-r.Distance * 0.25);
 	return mix(color, background, clamp(fog, 0.0, 1.0));
+}
+
+// Cone pre-pass: the ray through the centre of a tile of CONE_TILE x CONE_TILE marched pixels, widened to a cone of
+// half-angle c that contains all their rays. A fine ray is within t c of the cone axis at distance t, so while the
+// distance estimate D at the axis exceeds t c, a step of (D - t c) / (1 + c) keeps every fine ray inside the empty
+// sphere. Writes the distance all of them can start from, or -1 when the cone leaves the scene without meeting anything.
+fn FP_ConeMarch(dir: vec3<f32>, c: f32) -> f32 {
+	var t = 0.0;
+	var tEnd = P.camOff.w;
+	{
+		let o = P.refC.xyz + P.camOff.xyz;
+		let radius = P.refC.w * 1.001 + c * (length(o) + P.refC.w); // the sphere grown by the cone's width
+		let cc = dot(o, o) - radius * radius;
+		if (cc > 0.0) {
+			let b = dot(o, dir);
+			let disc = b * b - cc;
+			if (b >= 0.0 || disc < 0.0) { return -1.0; }
+			let root = sqrt(disc);
+			t = -b - root;
+			tEnd = min(tEnd, -b + root);
+		}
+	}
+	for (var i = 0; i < P.marchI.x; i = i + 1) {
+		if (t >= tEnd) { return -1.0; }
+		let de = FP_DistanceEstimate(P.camOff.xyz + dir * t, t * c);
+		if (de.Distance < 2.0 * t * c || de.Distance <= 0.0) { break; }
+		t = t + (de.Distance - t * c) / (1.0 + c);
+	}
+	return t;
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn cone(@builtin(global_invocation_id) id: vec3<u32>) {
+	let tile = max(CONE_TILE, 1u);
+	let tiles = (vec2<u32>(u32(P.sizeI.x), u32(P.sizeI.y)) + tile - 1u) / tile;
+	if (id.x >= tiles.x || id.y >= tiles.y) { return; }
+	let half = f32(CONE_TILE) * 0.5;
+	let dir = FP_PixelRayDirection(vec2<f32>(f32(id.x) * f32(CONE_TILE) + half - 0.5, f32(id.y) * f32(CONE_TILE) + half - 0.5));
+	// half-diagonal of the tile in direction space (marched pixel = PixelStep full-resolution pixels), plus margin
+	let hx = (half + 0.5) * length(P.rayDX.xyz) * P.misc.z;
+	let hy = (half + 0.5) * length(P.rayDY.xyz) * P.misc.w;
+	let c = sqrt(hx * hx + hy * hy) * 1.05;
+	textureStore(ConeOut, vec2<i32>(id.xy), vec4<f32>(FP_ConeMarch(dir, c), 0.0, 0.0, 0.0));
+	if (BENCH) {
+		atomicAdd(&Stats[6], gEstimates);
+		atomicAdd(&Stats[7], gIterations);
+	}
 }
 
 @compute @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 	if (id.x >= u32(P.sizeI.x) || id.y >= u32(P.sizeI.y)) { return; }
 	let dir = FP_PixelRayDirection(vec2<f32>(f32(id.x), f32(id.y)));
-	let r = FP_MarchRay(dir);
+	var tStart = 0.0;
+	if (CONE_TILE > 0u) { tStart = textureLoad(ConeIn, vec2<i32>(id.xy / max(CONE_TILE, 1u)), 0).x; }
+	let r = FP_MarchRay(dir, tStart);
 	textureStore(Out, vec2<i32>(id.xy), vec4<f32>(FP_Shade(r, dir, Background(dir)), 1.0));
+	if (BENCH) {
+		atomicAdd(&Stats[0], gEstimates);
+		atomicAdd(&Stats[1], gIterations);
+		atomicAdd(&Stats[2], gSkipped);
+		atomicAdd(&Stats[3], u32(r.Steps));
+		atomicAdd(&Stats[4], select(0u, 1u, r.Status == 1));
+		atomicAdd(&Stats[5], 1u);
+	}
 }
 
 // One thread: the distance at the camera (capped by the bounding sphere, FDistanceEstimate::SafeDistance) and a march
@@ -588,7 +760,7 @@ fn probe() {
 	let outside = length(P.refC.xyz + P.camOff.xyz) - P.refC.w;
 	let full = vec2<f32>(f32(P.sizeI.x), f32(P.sizeI.y)) * P.misc.zw * 0.5 - 0.5;
 	let dir = normalize(P.ray00.xyz + full.x * P.rayDX.xyz + full.y * P.rayDY.xyz);
-	let r = FP_MarchRay(dir);
+	let r = FP_MarchRay(dir, 0.0);
 	Probe[0] = select(de.Distance, min(de.Distance, outside), outside > 0.0);
 	Probe[1] = select(0.0, 1.0, de.bEscaped);
 	Probe[2] = select(-1.0, r.Distance, r.Status == 1);

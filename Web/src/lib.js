@@ -312,6 +312,47 @@ function makeLib() {
 		return p * (r > 0 ? Math.pow(r, p - 1) : 0) * dr + 1;
 	}
 
+	/**
+	 * Jacobian of g_p at w (double): with the unit vectors e_r, e_theta, e_phi at w and e'_r, e'_theta, e'_phi at the
+	 * multiplied angles (p theta, p phi),
+	 *     J = p r^(p-1) [ e'_r e_r^T + e'_theta e_theta^T + (sin(p theta) / sin(theta)) e'_phi e_phi^T ]
+	 * The map stretches the radial and polar directions by p r^(p-1) but the azimuth only by p r^(p-1) sin(p theta)/sin(theta);
+	 * the scalar running derivative (dr' = p r^(p-1) dr) assumes the full stretch in every direction, and over the hundreds
+	 * of iterations of an orbit next to the surface that overestimate compounds (the distance comes out 100-1e8 times too
+	 * small at depth). Returns [J (3 rows), ok].
+	 */
+	function powerMapJacobian(w, p) {
+		const rho = Math.sqrt(w[0] * w[0] + w[1] * w[1]);
+		const r = Math.sqrt(rho * rho + w[2] * w[2]);
+		if (!(r > 0)) return null;
+		const ct = w[2] / r, st = rho / r;
+		const cp = rho > 0 ? w[0] / rho : 1, sp = rho > 0 ? w[1] / rho : 0;
+		let cpt, spt, cpp, spp;
+		if (isIntegerPower(p)) {
+			// (cos t + i sin t)^p and (cos p + i sin p)^p
+			let aRe = ct, aIm = st, bRe = cp, bIm = sp, tRe = 1, tIm = 0, qRe = 1, qIm = 0;
+			for (let e = p; e > 0; e >>= 1) {
+				if (e & 1) {
+					const nt = tRe * aRe - tIm * aIm; tIm = tRe * aIm + tIm * aRe; tRe = nt;
+					const nq = qRe * bRe - qIm * bIm; qIm = qRe * bIm + qIm * bRe; qRe = nq;
+				}
+				const na = aRe * aRe - aIm * aIm; aIm = 2 * aRe * aIm; aRe = na;
+				const nb = bRe * bRe - bIm * bIm; bIm = 2 * bRe * bIm; bRe = nb;
+			}
+			cpt = tRe; spt = tIm; cpp = qRe; spp = qIm;
+		} else {
+			const theta = Math.atan2(rho, w[2]), phi = rho > 0 ? Math.atan2(w[1], w[0]) : 0;
+			cpt = Math.cos(p * theta); spt = Math.sin(p * theta); cpp = Math.cos(p * phi); spp = Math.sin(p * phi);
+		}
+		const k = p * Math.pow(r, p - 1);
+		const az = st > 1e-300 ? spt / st : p * (ct >= 0 ? 1 : (Math.round(p) % 2 === 0 ? -1 : 1));
+		const er = [st * cp, st * sp, ct], et = [ct * cp, ct * sp, -st], ep = [-sp, cp, 0];
+		const er2 = [spt * cpp, spt * spp, cpt], et2 = [cpt * cpp, cpt * spp, -spt], ep2 = [-spp, cpp, 0];
+		const J = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+		for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) J[i][j] = k * (er2[i] * er[j] + et2[i] * et[j] + az * ep2[i] * ep[j]);
+		return J;
+	}
+
 	const f32 = Math.fround;
 	function clampToFloatRange(v) { return f32(v > 1e30 ? 1e30 : (v < -1e30 ? -1e30 : v)); }
 
@@ -391,8 +432,8 @@ function makeLib() {
 	// ---------------------------------------------------------------------------------------------
 	const PAYLOAD_FLOAT4 = 3, STATE_DIM = 3;
 	const ORBIT_STRIDE = PAYLOAD_FLOAT4 + STATE_DIM;
-	const DEFAULT_SERIES_TOLERANCE = 1e-8;
-	const MAX_ITERATIONS = 1000;
+	const DEFAULT_SERIES_TOLERANCE = 1e-6;
+	const MAX_ITERATIONS = 3000; // MaxOrbitIterations
 
 	function makeSeriesState() {
 		return {
@@ -469,18 +510,29 @@ function makeLib() {
 	/**
 	 * Escape-time distance estimate at the double-double point c, plus `safe`: the estimate capped by the distance to
 	 * the bounding sphere (BoundedDistanceEstimate / SafeDistance). Hits are decided on `distance`.
+	 * The estimate is 0.5 r ln r / |grad r| with grad r = J^T z/r and J = dz/dc tracked as a 3x3 matrix
+	 * (J' = J_g(z) J + I), see powerMapJacobian.
 	 */
 	function distanceEstimate(c, p, bailout, maxIterations) {
 		const b2 = [bailout * bailout, 0];
-		let z = c, dr = 1, r = 0, escaped = false, n = 1;
+		let z = c, r = 0, escaped = false, n = 1;
+		let J = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
 		for (; n < maxIterations; n++) {
 			const r2 = v3Dot(z, z);
 			r = Math.sqrt(ddToDouble(r2));
 			if (r2[0] > b2[0] || (r2[0] === b2[0] && r2[1] > 0)) { escaped = true; break; }
-			dr = derivativeStep(v3ToDoubles(z), dr, p);
+			const G = powerMapJacobian(v3ToDoubles(z), p);
+			const next = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+			if (G) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) next[i][j] += G[i][0] * J[0][j] + G[i][1] * J[1][j] + G[i][2] * J[2][j];
+			J = next;
 			z = bulbStep(z, c, p);
 		}
-		const dist = escaped ? 0.5 * r * Math.log(r) / dr : 0;
+		let dist = 0;
+		if (escaped) {
+			const zd = v3ToDoubles(z);
+			const g = [0, 1, 2].map((j) => (zd[0] * J[0][j] + zd[1] * J[1][j] + zd[2] * J[2][j]) / r);
+			dist = 0.5 * r * Math.log(r) / Math.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]);
+		}
 		const cd = v3ToDoubles(c);
 		const outside = Math.sqrt(cd[0] * cd[0] + cd[1] * cd[1] + cd[2] * cd[2]) - boundingRadius(p);
 		return { distance: dist, safe: outside > 0 && outside < dist ? outside : dist, escaped, iterations: n };
@@ -496,6 +548,17 @@ function makeLib() {
 		let rounded = Math.ceil(capped / 50) * 50;
 		rounded = rounded < base ? base : rounded;
 		return rounded > 1000 ? 1000 : rounded;
+	}
+
+	/** ComputeOrbitIterationBudget (FractalFormulas.h): iterations sized from the camera's own orbit. */
+	const MAX_ORBIT_ITERATIONS = 3000;
+	function orbitIterationBudget(cameraIterations, cameraDistance, pixelRadiusPerUnitDistance) {
+		if (cameraIterations < 1 || !(cameraDistance > 0) || !(pixelRadiusPerUnitDistance > 0)) return 0;
+		const logGrowth = Math.log(Math.max(2 / cameraDistance, 2.718281828459045)) / cameraIterations;
+		const extra = Math.log(1 / pixelRadiusPerUnitDistance) / logGrowth;
+		const needed = Math.min(cameraIterations + 2 * extra + 20, MAX_ORBIT_ITERATIONS);
+		const rounded = Math.ceil(needed / 50) * 50;
+		return rounded < MAX_ORBIT_ITERATIONS ? rounded : MAX_ORBIT_ITERATIONS;
 	}
 
 	/** MarchReferenceRay: where to put the reference along origin + t * dir (fractal units; Scale = 1). */
@@ -594,15 +657,24 @@ function makeLib() {
 	 */
 	function buildReference(req) {
 		const origin = req.position, bailout = req.bailout, p = req.power;
+		// The camera's own orbit: lengthen it until it escapes (or the cap), then size the view's iterations from it.
+		let iterations = req.iterations;
+		let cam = distanceEstimate(origin, p, bailout, Math.max(iterations, 150));
+		for (let its = Math.max(iterations, 150); !cam.escaped && its < MAX_ITERATIONS;) {
+			its = Math.min(MAX_ITERATIONS, its * 2);
+			cam = distanceEstimate(origin, p, bailout, its);
+		}
+		if (cam.escaped) iterations = Math.max(iterations, orbitIterationBudget(cam.iterations, cam.safe, req.pixelRadiusPerUnitDistance));
 		const dirs = req.quick ? req.dirs.slice(0, REFERENCE_FAN_QUICK_COUNT) : req.dirs;
 		const march = marchReferenceFan(origin, dirs, {
-			power: p, bailout, iterations: req.iterations,
+			power: p, bailout, iterations,
 			maxSteps: req.maxSteps, maxDistance: req.maxDistance,
 			pixelRadiusPerUnitDistance: req.pixelRadiusPerUnitDistance,
 		});
 		const center = offsetDD(origin, dirs[march.dirIndex || 0], march.referenceDistance);
-		const orbit = generateReferenceOrbit(center, p, bailout, req.iterations);
-		return { center, orbit: orbit.floats, count: orbit.count, hit: march.hit, inside: march.inside, cameraDE: march.cameraDE };
+		const orbit = generateReferenceOrbit(center, p, bailout, iterations, req.seriesTolerance);
+		return { center, orbit: orbit.floats, count: orbit.count, hit: march.hit, inside: march.inside, iterations,
+			cameraDE: cam.escaped ? cam.safe : march.cameraDE, cameraIterations: cam.escaped ? cam.iterations : 0 };
 	}
 
 	/**
@@ -694,7 +766,7 @@ function makeLib() {
 		ddAdd, ddSub, ddMul, ddDiv, ddSqrt, ddAddD, ddMulD, ddToDouble, ddExp, ddLog, ddSinCos, ddAtan2, ddPow,
 		v3Add, v3Sub, v3Dot, v3AddDoubles, v3ToDoubles, offsetDD,
 		isIntegerPower, mandelbulbPowerDD, mandelbulbPowerD, bulbStep, distanceEstimate, boundingRadius, referenceEscapeRadius,
-		iterationBudget, generateReferenceOrbit, marchReferenceFan, buildReferenceFan, buildReference, surfaceCamera, formatDD,
+		powerMapJacobian, iterationBudget, orbitIterationBudget, generateReferenceOrbit, marchReferenceFan, buildReferenceFan, buildReference, surfaceCamera, formatDD,
 		ORBIT_STRIDE, MAX_ITERATIONS, REFERENCE_FAN_COUNT, REFERENCE_FAN_QUICK_COUNT,
 	};
 }

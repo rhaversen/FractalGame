@@ -20,6 +20,7 @@ void ProfileMain(uint3 Id : SV_DispatchThreadID)
 	int I = (int)Id.x;
 	if (I >= P.I.z) return;
 	FPViewParams V;
+	V.HazeBase = 0;
 	V.RayDir00 = 0; V.RayDirDX = 0; V.RayDirDY = 0;
 	V.PixelRadiusPerUnitDistance = 0;
 	V.CameraOffset = 0;

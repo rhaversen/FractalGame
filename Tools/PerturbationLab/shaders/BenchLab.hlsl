@@ -26,7 +26,8 @@ void BenchPerturbed(uint3 Id : SV_DispatchThreadID)
 		float InvRW = rsqrt(RW2);
 		float RW = RW2 * InvRW;
 		float RWPowM1;
-		float3 G = FP_PerturbedPowerDelta(Ref, D, W, RW, InvRW, Power, PowerInt, RWPowM1);
+		float4 Angles;
+		float3 G = FP_PerturbedPowerDelta(Ref, D, W, RW, InvRW, Power, PowerInt, RWPowM1, Angles);
 		D = G * P.Misc.y + DC;   // Misc.y keeps the chain bounded
 		Acc += RWPowM1;
 	}
@@ -49,7 +50,8 @@ void BenchDirect(uint3 Id : SV_DispatchThreadID)
 		float InvRW = rsqrt(RW2);
 		float RW = RW2 * InvRW;
 		float RWPowM1;
-		float3 G = FP_MandelbulbPower(Z, RW, InvRW, Power, PowerInt, RWPowM1);
+		float4 Angles;
+		float3 G = FP_MandelbulbPower(Z, RW, InvRW, Power, PowerInt, RWPowM1, Angles);
 		Z = normalize(G + C) * 0.9f;  // stay bounded
 		Acc += RWPowM1;
 	}

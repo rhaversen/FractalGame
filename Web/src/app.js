@@ -35,10 +35,18 @@ const PRESETS = [
 	{ label: '1e-18', depth: 1e-18, start: [-1.3, 1.2, -1.1], dir: [0.6, -0.55, 0.5] },
 ];
 
+// Renderer options (Web/bench overrides them through window.FRACTAL_OPTS to compare variants).
+// Defaults measured with Web/bench: over-relaxed sphere tracing (fewer steps where rays graze surfaces), the cone pre-pass on
+// 8 x 8 tiles (empty space traversed once per tile), and the series tolerance validated in Tools/PerturbationLab.
+const OPTS = Object.assign({ relax: 1.6, seriesTolerance: 1e-6, cone: 8, virtual: null }, window.FRACTAL_OPTS || {});
+// Benchmark only: OPTS.virtual = [W, H] renders the centre window of a W x H frame (the canvas size), so that pixel
+// footprints, hit thresholds and cone tiles are those of the full frame while only a few pixels are computed.
+function frameSize() { return OPTS.virtual ? OPTS.virtual : [canvas.width, canvas.height]; }
+
 const S = {
 	pos: null, right: null, up: null, fwd: null, vel: [0, 0, 0],
 	power: POWER_DEFAULT, powerVel: 0, rollVel: 0, speedPercent: 50, scale: USER_SCALE,
-	camDE: 2, camEscaped: true, lastGoodDE: 2, centerHit: -1, probeIters: 0, probeValid: false, rayIters: 0, raySkipped: 0,
+	camDE: 2, camEscaped: true, lastGoodDE: 2, centerHit: -1, probeIters: 0, probeLimit: 0, probeValid: false, rayIters: 0, raySkipped: 0,
 	ref: null, refPending: false, refId: 0, lastRequest: null, lastRequestTime: -1,
 	targetFps: 0, resolutionScale: 1, measuredMs: 0, sinceResolutionChange: 0,
 	nativeRes: false, keys: new Set(), mouse: new Set(), locked: false, dragging: false,
@@ -86,7 +94,7 @@ function dirAt(px, py, W, H) {
 	const x = (px / W) * 2 - 1, y = 1 - (py / H) * 2;
 	return [0, 1, 2].map((c) => S.fwd[c] + x * TAN_HALF_H * S.right[c] + y * tanV * S.up[c]);
 }
-function pixelRadiusPerUnitDistance() { return 0.5 * (2 * TAN_HALF_H * canvas.height / canvas.width) / canvas.height; }
+function pixelRadiusPerUnitDistance() { const [W] = frameSize(); return TAN_HALF_H / W; }
 
 // ---------------------------------------------------------------------------------------------
 // Controller (FractalPlayerController)
@@ -207,8 +215,8 @@ onmessage = (e) => {
 		if (m.type === 'reference') {
 			const t0 = performance.now();
 			const r = Lib.buildReference(m.req);
-			postMessage({ type: 'reference', id: m.id, power: m.req.power, iterations: m.req.iterations, center: r.center, orbit: r.orbit,
-				count: r.count, hit: r.hit, cameraDE: r.cameraDE, ms: performance.now() - t0 }, [r.orbit.buffer]);
+			postMessage({ type: 'reference', id: m.id, power: m.req.power, iterations: r.iterations, center: r.center, orbit: r.orbit,
+				count: r.count, hit: r.hit, cameraDE: r.cameraDE, cameraIterations: r.cameraIterations, ms: performance.now() - t0 }, [r.orbit.buffer]);
 		} else if (m.type === 'teleport') {
 			const pos = Lib.surfaceCamera(m.start, m.dir, m.depth, m.power, m.bailout, m.iterations);
 			postMessage({ type: 'teleport', id: m.id, pos, dir: m.dir, depth: m.depth });
@@ -224,7 +232,8 @@ worker.onmessage = (e) => {
 		S.refPending = false;
 		if (m.id !== S.refId || m.power !== S.power) return;
 		gpu.uploadOrbit(m.orbit, m.count);
-		S.ref = { center: m.center, count: m.count, iterations: m.iterations, power: m.power, hit: m.hit, cameraDE: m.cameraDE, ms: m.ms };
+		S.ref = { center: m.center, count: m.count, iterations: m.iterations, power: m.power, hit: m.hit, cameraDE: m.cameraDE,
+			cameraIterations: m.cameraIterations, ms: m.ms };
 		// Until the GPU probes the camera with this reference, the worker's double-double estimate is the trustworthy one.
 		if (!S.probeValid && m.cameraDE > 0) { S.camDE = m.cameraDE; S.lastGoodDE = m.cameraDE; S.camEscaped = true; }
 	} else if (m.type === 'teleport') {
@@ -248,10 +257,22 @@ function referenceOffset() {
 function surfaceDistance() { return Math.max(S.camDE, 1e-3 * S.scale, MIN_CAMERA_DISTANCE); }
 function referenceUsable() { return !!S.ref && S.ref.power === S.power && referenceOffset() / surfaceDistance() <= SYNC_RATIO; }
 
-// Iterations for the current view: the footprint budget of the desktop renderer (ComputeIterationBudget), sized from the
-// pixel footprint at the surface distance. Hits that need most of it fade into haze (the limit of detail).
+// Iterations for the current view: the footprint budget (ComputeIterationBudget), or, next to the surface, the budget
+// sized from the camera's own orbit (ComputeOrbitIterationBudget) when that is larger. A camera whose orbit does not
+// escape within the current count asks for twice as many.
+function cameraOrbit() {
+	if (S.probeValid) return S.camEscaped ? { n: S.probeIters, de: S.camDE } : null;
+	return S.ref && S.ref.cameraIterations ? { n: S.ref.cameraIterations, de: S.ref.cameraDE } : null;
+}
 function wantedIterations() {
-	return Lib.iterationBudget(S.power, BASE_ITERATIONS, BAILOUT, surfaceDistance() * pixelRadiusPerUnitDistance());
+	const formula = Lib.iterationBudget(S.power, BASE_ITERATIONS, BAILOUT, surfaceDistance() * pixelRadiusPerUnitDistance());
+	const current = S.ref ? S.ref.iterations : formula;
+	const cam = cameraOrbit();
+	// the camera did not escape within the limit its probe ran with: twice that limit
+	if (!cam) return S.probeValid ? Math.max(current, Math.min(Lib.MAX_ITERATIONS, 2 * S.probeLimit)) : current;
+	const wanted = Math.max(formula, Lib.orbitIterationBudget(cam.n, cam.de, pixelRadiusPerUnitDistance()));
+	// keep the current count unless it is too short, or much longer than needed (each rebuild costs a reference)
+	return wanted > current || wanted < 0.6 * current ? wanted : current;
 }
 
 // EvaluateNeed: sync (quick fan, the view waits on plain float) when there is no usable reference, async when the
@@ -272,11 +293,11 @@ function maintainReference(now) {
 	S.refId++;
 	S.lastRequestTime = now;
 	S.lastRequest = { pos: S.pos, fwd: S.fwd.slice() };
-	const W = canvas.width, H = canvas.height;
+	const [W, H] = frameSize();
 	worker.postMessage({ type: 'reference', id: S.refId, req: {
 		position: S.pos, dirs: Lib.buildReferenceFan((px, py) => dirAt(px, py, W, H), W, H), quick: need === 'sync',
 		power: S.power, bailout: BAILOUT, iterations, pixelRadiusPerUnitDistance: pixelRadiusPerUnitDistance(),
-		maxSteps: MAX_RAY_STEPS, maxDistance: MAX_RAY_DISTANCE,
+		maxSteps: MAX_RAY_STEPS, maxDistance: MAX_RAY_DISTANCE, seriesTolerance: OPTS.seriesTolerance,
 	} });
 }
 
@@ -306,9 +327,11 @@ const gpu = {
 		const errors = info.messages.filter((m) => m.type === 'error');
 		if (errors.length) throw new Error('Shader compile error:\n' + errors.map((m) => `line ${m.lineNum}: ${m.message}`).join('\n'));
 		// Two permutations, as in Unreal: power 8 as a constant, and any power.
+		this.bench = !!window.FRACTAL_BENCH;
 		for (const [name, power] of [['p8', 8], ['any', 0]]) {
-			const constants = { STATIC_POWER: power };
+			const constants = { STATIC_POWER: power, BENCH: this.bench ? 1 : 0, RELAX: OPTS.relax, CONE_TILE: OPTS.cone };
 			this.pipes[name] = {
+				cone: OPTS.cone > 0 ? await device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'cone', constants } }) : null,
 				main: await device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'main', constants } }),
 				probe: await device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'probe', constants } }),
 			};
@@ -322,6 +345,7 @@ const gpu = {
 		this.orbit = device.createBuffer({ size: (Lib.MAX_ITERATIONS + 2) * Lib.ORBIT_STRIDE * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
 		this.probe = device.createBuffer({ size: 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
 		this.readback = device.createBuffer({ size: 32, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+		this.stats = device.createBuffer({ size: 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
 		this.sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 		for (const name of Object.keys(this.pipes)) {
 			this.bg[name] = { probe: device.createBindGroup({ layout: this.pipes[name].probe.getBindGroupLayout(0), entries: [
@@ -345,9 +369,20 @@ const gpu = {
 		if (this.tex) this.tex.destroy();
 		this.tex = this.device.createTexture({ size: [w, h], format: 'rgba8unorm', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC });
 		const view = this.tex.createView();
+		// cone pre-pass output: one start distance per tile of marched pixels (1 x 1 when the pre-pass is off)
+		if (this.coneTex) this.coneTex.destroy();
+		this.tiles = OPTS.cone > 0 ? [Math.ceil(w / OPTS.cone), Math.ceil(h / OPTS.cone)] : [1, 1];
+		this.coneTex = this.device.createTexture({ size: this.tiles, format: 'r32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
+		const coneView = this.coneTex.createView();
 		for (const name of Object.keys(this.pipes)) {
 			this.bg[name].main = this.device.createBindGroup({ layout: this.pipes[name].main.getBindGroupLayout(0), entries: [
-				{ binding: 0, resource: { buffer: this.uniform } }, { binding: 1, resource: { buffer: this.orbit } }, { binding: 2, resource: view }] });
+				{ binding: 0, resource: { buffer: this.uniform } }, { binding: 1, resource: { buffer: this.orbit } }, { binding: 2, resource: view },
+				{ binding: 4, resource: { buffer: this.stats } }, { binding: 6, resource: coneView }] });
+			if (this.pipes[name].cone) {
+				const entries = [{ binding: 0, resource: { buffer: this.uniform } }, { binding: 1, resource: { buffer: this.orbit } }, { binding: 5, resource: coneView }];
+				if (this.bench) entries.push({ binding: 4, resource: { buffer: this.stats } });
+				this.bg[name].cone = this.device.createBindGroup({ layout: this.pipes[name].cone.getBindGroupLayout(0), entries });
+			}
 		}
 		this.bgPresent = this.device.createBindGroup({ layout: this.pipePresent.getBindGroupLayout(0), entries: [
 			{ binding: 0, resource: view }, { binding: 1, resource: this.sampler }] });
@@ -355,8 +390,10 @@ const gpu = {
 
 	writeUniforms() {
 		const f = this.uf, i = this.ui;
-		const W = canvas.width, H = canvas.height;
-		const d00 = dirAt(0.5, 0.5, W, H), d10 = dirAt(1.5, 0.5, W, H), d01 = dirAt(0.5, 1.5, W, H);
+		const [W, H] = frameSize();
+		// pixel (0, 0) of the canvas; a virtual frame shows its centre window
+		const ox = OPTS.virtual ? (W - canvas.width) / 2 : 0, oy = OPTS.virtual ? (H - canvas.height) / 2 : 0;
+		const d00 = dirAt(ox + 0.5, oy + 0.5, W, H), d10 = dirAt(ox + 1.5, oy + 0.5, W, H), d01 = dirAt(ox + 0.5, oy + 1.5, W, H);
 		const usable = referenceUsable();
 		const center = usable ? S.ref.center : S.pos;
 		const off = Lib.v3ToDoubles(Lib.v3Sub(S.pos, center));
@@ -370,9 +407,12 @@ const gpu = {
 		if (!isFinite(f[19])) f[19] = 1e30;
 		const iterations = usable ? S.ref.iterations : BASE_ITERATIONS;
 		i[20] = this.w; i[21] = this.h; i[22] = usable ? S.ref.count : 0; i[23] = iterations;
-		i[24] = MAX_RAY_STEPS; i[25] = 0; i[26] = 0; i[27] = 0;
-		f[28] = window.FRACTAL_DEBUG && window.FRACTAL_DEBUG.forceDirect ? 1e30 : DIRECT_FOOTPRINT; f[29] = 0;
-		f[30] = W / this.w; f[31] = H / this.h;
+		// haze is measured from the camera's own escape count: only detail finer than the pixels fades
+		const cam = cameraOrbit();
+		i[24] = MAX_RAY_STEPS; i[25] = usable && cam && cam.n < iterations ? Math.floor(cam.n) : 0; i[26] = 0; i[27] = 0;
+		f[28] = window.FRACTAL_DEBUG && window.FRACTAL_DEBUG.forceDirect ? 1e30 : DIRECT_FOOTPRINT;
+		f[29] = Math.min(1, Math.max(S.camDE > 0 ? S.camDE : S.lastGoodDE, 1e-36)); // Jacobian scale: dz/dc grows like 1 / distance
+		f[30] = canvas.width / this.w; f[31] = canvas.height / this.h;
 		this.device.queue.writeBuffer(this.uniform, 0, this.uf);
 		S.mode = usable ? (S.ref.hit ? 'perturbation' : 'perturbation, camera reference') : 'plain float, building reference';
 		S.iterations = iterations;
@@ -383,9 +423,14 @@ const gpu = {
 		const device = this.device;
 		this.resize();
 		const usable = this.writeUniforms();
+		const probeLimit = S.iterations;
 		const pipe = S.power === 8 ? 'p8' : 'any';
 		const enc = device.createCommandEncoder();
 		const cp = enc.beginComputePass();
+		if (this.pipes[pipe].cone) {
+			cp.setPipeline(this.pipes[pipe].cone); cp.setBindGroup(0, this.bg[pipe].cone);
+			cp.dispatchWorkgroups(Math.ceil(this.tiles[0] / 8), Math.ceil(this.tiles[1] / 8));
+		}
 		cp.setPipeline(this.pipes[pipe].main); cp.setBindGroup(0, this.bg[pipe].main);
 		cp.dispatchWorkgroups(Math.ceil(this.w / 8), Math.ceil(this.h / 8));
 		const wantProbe = !this.readbackBusy;
@@ -402,9 +447,11 @@ const gpu = {
 				this.readback.unmap();
 				this.readbackBusy = false;
 				// A probe taken without a usable reference is plain float: only trusted where the surface is far.
-				S.probeValid = usable;
-				if (usable || (v[1] > 0.5 && v[0] > 1e-4)) {
-					S.camDE = v[0]; S.camEscaped = v[1] > 0.5; S.centerHit = v[2]; S.probeIters = v[4];
+				// A probe run with an older, shorter orbit than the current one says nothing about it.
+				S.probeValid = usable && (!S.ref || probeLimit >= S.ref.iterations);
+				S.probeLimit = probeLimit;
+				if (S.probeValid || (v[1] > 0.5 && v[0] > 1e-4)) {
+					S.camDE = v[0]; S.camEscaped = v[1] > 0.5; S.centerHit = v[2]; S.probeSteps = v[3]; S.probeIters = v[4];
 					S.rayIters = v[6]; S.raySkipped = v[7];
 					if (S.camEscaped && v[0] > 0) S.lastGoodDE = v[0];
 				}
@@ -589,7 +636,7 @@ async function main() {
 		$('go').hidden = true;
 		return;
 	}
-	window.__fractal = { S, gpu, Lib }; // for tests
+	window.__fractal = { S, gpu, Lib, lookAlong, wantedIterations, referenceUsable }; // for tests and Web/bench
 	requestAnimationFrame(loop);
 }
 main();

@@ -107,8 +107,11 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 	FRenderSettings RS;
 	RS.Params.Power = getenv("LAB_POWER") ? std::atof(getenv("LAB_POWER")) : Lab.Power;
 	const int Index = static_cast<int>(F::Type);
-	FVkKernel KPert(Ctx, LabSpv("RenderMain_T" + std::to_string(Index)), "RenderMain", {true, false, false, false, false, false});
-	FVkKernel KNaive(Ctx, LabSpv("RenderNaive_T" + std::to_string(Index)), "RenderMain", {true, false, false, false, false, false});
+	FVkKernel KPert(Ctx, LabSpv("RenderMain_T" + std::to_string(Index)), "RenderMain", {true, false, false, false, false, false, false});
+	FVkKernel KNaive(Ctx, LabSpv("RenderNaive_T" + std::to_string(Index)), "RenderMain", {true, false, false, false, false, false, false});
+	FVkKernel KCone(Ctx, LabSpv("ConeMain_T" + std::to_string(Index)), "ConeMain", {true, false, false, false, false, false, false});
+	// LAB_CONE: tile size of the cone pre-pass the plugin runs before the march (8; 0 = without it)
+	const int ConeTile = getenv("LAB_CONE") ? std::atoi(getenv("LAB_CONE")) : 8;
 	const std::string ImageDir = std::string(LAB_OUT_DIR) + "/images/" + GetFractalName(F::Type);
 	mkdir(ImageDir.c_str(), 0755);
 	std::printf("\n##### %s (power/scale %g) #####\n", GetFractalName(F::Type), RS.Params.Power);
@@ -206,7 +209,7 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 		P->Misc[0] = (float)RS.MaxRayDistance;
 		P->Misc[1] = (float)DirectFootprint;
 		P->Misc[2] = P->Misc[3] = 1.0f;
-		P->IParams[0] = RS.Params.MaxIterations; P->IParams[1] = 0; P->IParams[2] = RS.MaxRaySteps; P->IParams[3] = OrbitLen;
+		P->IParams[0] = RS.Params.MaxIterations; P->IParams[1] = ConeTile; P->IParams[2] = RS.MaxRaySteps; P->IParams[3] = OrbitLen;
 		P->IParams2[0] = W; P->IParams2[1] = H;
 
 		auto Grab = [&](std::vector<FPixel>& Img) {
@@ -220,8 +223,16 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 		auto SumIter = [&](const std::vector<FPixel>& Img) { double T = 0; for (const FPixel& X : Img) T += X.TotalIter; return T; };
 		auto SumSteps = [&](const std::vector<FPixel>& Img) { double T = 0; for (const FPixel& X : Img) T += X.Steps; return T; };
 		auto SumSkipped = [&](const std::vector<FPixel>& Img) { double T = 0; for (const FPixel& X : Img) T += X.Skipped; return T; };
-		KPert.Dispatch({&CB, &Orb, &OC, &OD, &OS, &OE}, (W + 7) / 8, (H + 7) / 8, 1); // warm-up (JIT)
-		double PertMs = KPert.Dispatch({&CB, &Orb, &OC, &OD, &OS, &OE}, (W + 7) / 8, (H + 7) / 8, 1);
+		// cone pre-pass, then the march (as the plugin does); the timing includes both
+		const int Tiles = ConeTile > 0 ? ConeTile : 1;
+		FVkBuffer OCone = Ctx.CreateBuffer((size_t)((W + Tiles - 1) / Tiles + 1) * ((H + Tiles - 1) / Tiles + 1) * 16);
+		auto RenderPert = [&](FVkBuffer& C1, FVkBuffer& D1, FVkBuffer& S1, FVkBuffer& E1, int RW, int RH) {
+			double Ms = 0.0;
+			if (ConeTile > 0) Ms += KCone.Dispatch({&CB, &Orb, &C1, &D1, &S1, &E1, &OCone}, ((RW + Tiles - 1) / Tiles + 7) / 8, ((RH + Tiles - 1) / Tiles + 7) / 8, 1);
+			return Ms + KPert.Dispatch({&CB, &Orb, &C1, &D1, &S1, &E1, &OCone}, (RW + 7) / 8, (RH + 7) / 8, 1);
+		};
+		RenderPert(OC, OD, OS, OE, W, H); // warm-up (JIT)
+		double PertMs = RenderPert(OC, OD, OS, OE, W, H);
 		Grab(ImgP);
 		std::vector<FPixel> ImgS((size_t)W * H);
 		for (int I = 0; I < W * H; I++) { const float* C = OS.As<float>() + 4 * I; ImgS[I] = {C[0], C[1], C[2], 0, 0, 0, 0}; }
@@ -233,9 +244,10 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 			FVkBuffer OC2 = Ctx.CreateBuffer((size_t)WL * HL * 16), OD2 = Ctx.CreateBuffer((size_t)WL * HL * 16), OS2 = Ctx.CreateBuffer((size_t)WL * HL * 16), OE2 = Ctx.CreateBuffer((size_t)WL * HL * 16);
 			P->IParams2[0] = WL; P->IParams2[1] = HL;
 			P->Misc[2] = (float)W / WL; P->Misc[3] = (float)H / HL;
-			KPert.Dispatch({&CB, &Orb, &OC2, &OD2, &OS2, &OE2}, (WL + 7) / 8, (HL + 7) / 8, 1);
+			if (WL * HL > 0) OCone = Ctx.CreateBuffer((size_t)((WL + Tiles - 1) / Tiles + 1) * ((HL + Tiles - 1) / Tiles + 1) * 16);
+			RenderPert(OC2, OD2, OS2, OE2, WL, HL);
 			double LowMs = 1e30;
-			for (int Rep = 0; Rep < 3; Rep++) LowMs = std::min(LowMs, KPert.Dispatch({&CB, &Orb, &OC2, &OD2, &OS2, &OE2}, (WL + 7) / 8, (HL + 7) / 8, 1));
+			for (int Rep = 0; Rep < 3; Rep++) LowMs = std::min(LowMs, RenderPert(OC2, OD2, OS2, OE2, WL, HL));
 			std::vector<FPixel> ImgU((size_t)W * H);
 			const float* Lo = OS2.As<float>();
 			for (int Y = 0; Y < H; Y++)
@@ -280,8 +292,10 @@ static void RenderFormula(FVkContext& Ctx, const FFormulaLab& Lab, int W, int H,
 			WritePPM(ImageDir + "/" + Sc.Name + "_ends.ppm", ImgE, W, H);
 			std::printf("          ray ends: hit %.1f%% (orbit at iteration limit %.2f%%), step limit %.2f%%, left the scene %.1f%%, hazed (past 55%% of the limit or at it) %.2f%%\n", 100.0 * (Esc + Cap) / (W * H), 100.0 * Cap / (W * H), 100.0 * StepMiss / (W * H), 100.0 * DistMiss / (W * H), 100.0 * (NearLimit + Cap) / (W * H));
 		}
-		KNaive.Dispatch({&CB, &Orb, &OC, &OD, &OS, &OE}, (W + 7) / 8, (H + 7) / 8, 1);
-		double NaiveMs = KNaive.Dispatch({&CB, &Orb, &OC, &OD, &OS, &OE}, (W + 7) / 8, (H + 7) / 8, 1);
+		P->IParams[1] = 0; // plain float comparison without the cone pre-pass
+		KNaive.Dispatch({&CB, &Orb, &OC, &OD, &OS, &OE, &OCone}, (W + 7) / 8, (H + 7) / 8, 1);
+		double NaiveMs = KNaive.Dispatch({&CB, &Orb, &OC, &OD, &OS, &OE, &OCone}, (W + 7) / 8, (H + 7) / 8, 1);
+		P->IParams[1] = ConeTile;
 		Grab(ImgN);
 		for (FVkBuffer* B : {&CB, &Orb, &OC, &OD, &OS, &OE}) Ctx.DestroyBuffer(*B);
 

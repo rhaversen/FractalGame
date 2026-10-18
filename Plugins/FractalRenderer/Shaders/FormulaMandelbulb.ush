@@ -20,21 +20,27 @@ FP_STATE FP_FormulaLoadState(StructuredBuffer<float4> Orbit, int Base)
 	return Orbit[Base].xyz;
 }
 
+// dz/dc is tracked as a matrix (FPJacobian, see FP_PowerMapJacobianStep): the scalar running derivative overestimates it by
+// orders of magnitude next to the surface at depth, which made the distance estimate far too small there.
+#define FP_FORMULA_JACOBIAN 1
+
 void FP_FormulaPerturbedStep(StructuredBuffer<float4> Orbit, int Base, inout FP_STATE D, FP_STATE W, float RW, float InvRW,
-	float3 DC, inout float DRS, FPFormulaArgs Args)
+	float3 DC, inout FPJacobian J, FPFormulaArgs Args)
 {
 	FPPowerRef Ref = FP_LoadPowerRef(Orbit, Base);
 	float RWPowM1;
-	float3 G = FP_PerturbedPowerDelta(Ref, D, W, RW, InvRW, Args.Power, Args.PowerInt, RWPowM1);
-	DRS = Args.Power * RWPowM1 * DRS + Args.Scale;
+	float4 Angles;
+	float3 G = FP_PerturbedPowerDelta(Ref, D, W, RW, InvRW, Args.Power, Args.PowerInt, RWPowM1, Angles);
+	J = FP_PowerMapJacobianStep(J, W, InvRW, Angles, Args.Power * RWPowM1, Args.Power, Args.Scale);
 	D = G + DC;
 }
 
-void FP_FormulaDirectStep(inout FP_STATE Z, float RW, float InvRW, float3 C, inout float DRS, FPFormulaArgs Args)
+void FP_FormulaDirectStep(inout FP_STATE Z, float RW, float InvRW, float3 C, inout FPJacobian J, FPFormulaArgs Args)
 {
 	float RWPowM1;
-	float3 G = FP_MandelbulbPower(Z, RW, InvRW, Args.Power, Args.PowerInt, RWPowM1);
-	DRS = Args.Power * RWPowM1 * DRS + Args.Scale;
+	float4 Angles;
+	float3 G = FP_MandelbulbPower(Z, RW, InvRW, Args.Power, Args.PowerInt, RWPowM1, Angles);
+	J = FP_PowerMapJacobianStep(J, Z, InvRW, Angles, Args.Power * RWPowM1, Args.Power, Args.Scale);
 	Z = G + C;
 }
 

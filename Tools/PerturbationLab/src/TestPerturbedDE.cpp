@@ -202,8 +202,8 @@ static void RunFormula(FVkContext& Ctx, const FFormulaLab& Lab, int NSamples)
 		// (quad resolves positions of magnitude ~3 to ~5e-34, so the surface is located to 3e-33)
 		if (!QMarchToSurface<F>(Start, D, 3e-33Q, Surface))
 		{
-			std::printf("\n%s: march failed\n", L.Name);
-			Failures++;
+			std::printf("\n%s: march failed%s\n", L.Name, L.bChaotic ? " (not scored)" : "");
+			Failures += L.bChaotic ? 0 : 1;
 			continue;
 		}
 		for (int RefMode = 0; RefMode < 2; RefMode++)

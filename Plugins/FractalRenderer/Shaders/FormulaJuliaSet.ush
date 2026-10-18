@@ -29,14 +29,16 @@ void FP_FormulaPerturbedStep(StructuredBuffer<float4> Orbit, int Base, inout FP_
 {
 	FPPowerRef Ref = FP_LoadPowerRef(Orbit, Base);
 	float RWPowM1;
-	D = FP_PerturbedPowerDelta(Ref, D, W, RW, InvRW, Args.Power, Args.PowerInt, RWPowM1);
+	float4 Angles;
+	D = FP_PerturbedPowerDelta(Ref, D, W, RW, InvRW, Args.Power, Args.PowerInt, RWPowM1, Angles);
 	DRS = Args.Power * RWPowM1 * DRS;
 }
 
 void FP_FormulaDirectStep(inout FP_STATE Z, float RW, float InvRW, float3 C, inout float DRS, FPFormulaArgs Args)
 {
 	float RWPowM1;
-	float3 G = FP_MandelbulbPower(Z, RW, InvRW, Args.Power, Args.PowerInt, RWPowM1);
+	float4 Angles;
+	float3 G = FP_MandelbulbPower(Z, RW, InvRW, Args.Power, Args.PowerInt, RWPowM1, Angles);
 	DRS = Args.Power * RWPowM1 * DRS;
 	Z = G + FP_JULIA_C;
 }

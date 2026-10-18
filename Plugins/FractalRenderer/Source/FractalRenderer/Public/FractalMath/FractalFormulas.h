@@ -120,4 +120,29 @@ inline int ComputeIterationBudget(EFractalFormula Formula, double Power, int Bas
 	return Rounded > 1000 ? 1000 : Rounded;
 }
 
+/** Upper limit of ComputeOrbitIterationBudget (and so of the reference orbit length). */
+constexpr int MaxOrbitIterations = 3000;
+
+/**
+ * Iterations a deep view needs, sized from the camera's own orbit: the camera escapes after CameraIterations with
+ * distance estimate CameraDistance (fractal units), so its orbit grows by about (2 / CameraDistance)^(1 / CameraIterations)
+ * per iteration. Pixels on the surface are about 1 / PixelRadiusPerUnitDistance times closer to it than the camera and
+ * need ln(1 / PixelRadiusPerUnitDistance) / ln(growth) more iterations; twice that is budgeted (orbits vary), plus 20,
+ * rounded up to a multiple of 50. Next to the surface orbits grow far slower than the power (1.05-1.4x per iteration
+ * instead of ~8x, which ComputeIterationBudget assumes), so without this the detail ends between 1e-15 and 1e-20.
+ * Escape-time formulas only; the caller takes the larger of the two budgets.
+ */
+inline int ComputeOrbitIterationBudget(int CameraIterations, double CameraDistance, double PixelRadiusPerUnitDistance)
+{
+	if (CameraIterations < 1 || !(CameraDistance > 0.0) || !(PixelRadiusPerUnitDistance > 0.0))
+	{
+		return 0;
+	}
+	const double LogGrowth = std::log(std::fmax(2.0 / CameraDistance, 2.718281828459045)) / CameraIterations;
+	const double Extra = std::log(1.0 / PixelRadiusPerUnitDistance) / LogGrowth;
+	const double Needed = std::fmin(CameraIterations + 2.0 * Extra + 20.0, static_cast<double>(MaxOrbitIterations));
+	const int Rounded = static_cast<int>(std::ceil(Needed / 50.0)) * 50;
+	return Rounded < MaxOrbitIterations ? Rounded : MaxOrbitIterations;
+}
+
 } // namespace FractalMath

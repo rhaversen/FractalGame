@@ -34,6 +34,7 @@ struct FPViewParams
 	float Power;          // exponent or folding scale
 	float Bailout;
 	int MaxIterations;
+	int HazeBase;         // iterations the camera's own orbit needs: the haze measures the share of the iterations beyond it
 	int MaxRaySteps;
 	float MaxRayDistance; // world units
 	int OrbitLength;
@@ -53,12 +54,17 @@ struct FPMarchResult
 	bool bLastEscaped;    // the last distance estimate saw its orbit escape (false: it ran into the iteration limit)
 };
 
-// Direction through the centre of marched pixel Pixel. The ray basis is expressed in full-resolution pixels (its origin
-// is the centre of pixel 0), so a marched pixel covers PixelStep of them.
+// Direction through marched pixel coordinates Pixel (pixel centres are integers). The ray basis is expressed in
+// full-resolution pixels (its origin is the centre of pixel 0), so a marched pixel covers PixelStep of them.
+float3 FP_PixelRayDirectionAt(FPViewParams V, float2 Pixel)
+{
+	float2 Full = (Pixel + 0.5f) * V.PixelStep - 0.5f;
+	return normalize(V.RayDir00 + Full.x * V.RayDirDX + Full.y * V.RayDirDY);
+}
+
 float3 FP_PixelRayDirection(FPViewParams V, uint2 Pixel)
 {
-	float2 Full = ((float2)Pixel + 0.5f) * V.PixelStep - 0.5f;
-	return normalize(V.RayDir00 + Full.x * V.RayDirDX + Full.y * V.RayDirDY);
+	return FP_PixelRayDirectionAt(V, (float2)Pixel);
 }
 
 FPDEResult FP_DistanceEstimate(StructuredBuffer<float4> Orbit, FPViewParams V, FPFormulaArgs Args, float3 DC, float PixelRadius)
@@ -81,7 +87,15 @@ FPDEResult FP_DistanceEstimate(StructuredBuffer<float4> Orbit, FPViewParams V, F
 	return DE;
 }
 
-FPMarchResult FP_MarchRay(StructuredBuffer<float4> Orbit, FPViewParams V, float3 Dir)
+// Over-relaxed sphere tracing (Keinert et al. 2014): steps of FP_RELAX times the distance while consecutive spheres overlap,
+// back inside the previous sphere and plain steps from the first miss. Fewer steps where rays run along a surface.
+#ifndef FP_RELAX
+#define FP_RELAX 1.6f
+#endif
+
+// Marches Dir from the camera, starting at TStart (world units; nothing is hit before it, see FP_ConeMarch). A negative
+// TStart means the ray hits nothing.
+FPMarchResult FP_MarchRayFrom(StructuredBuffer<float4> Orbit, FPViewParams V, float3 Dir, float TStart)
 {
 	FPMarchResult Result;
 	Result.Distance = 0.0f;
@@ -119,6 +133,16 @@ FPMarchResult FP_MarchRay(StructuredBuffer<float4> Orbit, FPViewParams V, float3
 		}
 	}
 #endif
+	if (TStart < 0.0f || TStart >= TEnd)
+	{
+		Result.Status = FP_MISS_DISTANCE;
+		Result.Distance = TEnd;
+		return Result;
+	}
+	T = max(T, TStart);
+	float Omega = FP_RELAX;
+	float PrevRadius = 0.0f;
+	float StepLength = 0.0f;
 	[loop]
 	while (Result.Steps < V.MaxRaySteps)
 	{
@@ -133,18 +157,92 @@ FPMarchResult FP_MarchRay(StructuredBuffer<float4> Orbit, FPViewParams V, float3
 		FPDEResult DE = FP_DistanceEstimate(Orbit, V, Args, DC, PixelRadius);
 		Result.TotalIterations += DE.Iterations;
 		Result.TotalSkipped += DE.Skipped;
-		Result.LastIterations = DE.Iterations;
-		Result.LastSmooth = DE.Smooth;
-		Result.bLastEscaped = DE.bEscaped;
-		if (DE.Distance <= PixelRadius)
+		float Radius = DE.Distance;
+		if (Omega > 1.0f && Radius + PrevRadius < StepLength)
 		{
-			Result.Status = FP_HIT_SURFACE;
-			break;
+			// the relaxed step left the previous sphere: go back inside it and continue with plain steps
+			StepLength -= Omega * StepLength;
+			Omega = 1.0f;
 		}
-		T += max(DE.Distance, PixelRadius * 0.5f);
+		else
+		{
+			Result.LastIterations = DE.Iterations;
+			Result.LastSmooth = DE.Smooth;
+			Result.bLastEscaped = DE.bEscaped;
+			if (Radius <= PixelRadius)
+			{
+				Result.Status = FP_HIT_SURFACE;
+				break;
+			}
+			StepLength = max(Radius, PixelRadius * 0.5f) * Omega;
+		}
+		PrevRadius = Radius;
+		T += StepLength;
 	}
 	Result.Distance = T;
 	return Result;
+}
+
+FPMarchResult FP_MarchRay(StructuredBuffer<float4> Orbit, FPViewParams V, float3 Dir)
+{
+	return FP_MarchRayFrom(Orbit, V, Dir, 0.0f);
+}
+
+// Cone pre-pass: the ray through the centre of a tile of marched pixels, widened to a cone of half-angle C (per unit
+// distance) that contains all their rays. A pixel's ray is within T C of the cone axis at distance T, so while the
+// distance estimate D at the axis exceeds T C, a step of (D - T C) / (1 + C) keeps every one of them inside the empty
+// sphere. Returns the distance (world units) all of them can start from, or -1 when the cone leaves the scene without
+// meeting anything.
+float FP_ConeMarch(StructuredBuffer<float4> Orbit, FPViewParams V, float3 Dir, float C)
+{
+	FPFormulaArgs Args = FP_MakeFormulaArgs(V.Power, V.Scale);
+	float T = 0.0f;
+	float TEnd = V.MaxRayDistance;
+#if FP_HAS_BOUND
+	{
+		float3 O = V.ReferenceCenter + V.Scale * V.CameraOffset;
+		// the bounding sphere grown by the cone's width where it can reach it
+		float R = FP_FormulaBoundingRadius(V.Power) * 1.001f + C * (length(O) + FP_FormulaBoundingRadius(V.Power));
+		float CC = dot(O, O) - R * R;
+		if (CC > 0.0f)
+		{
+			float B = dot(O, Dir);
+			float Disc = B * B - CC;
+			if (B >= 0.0f || Disc < 0.0f)
+			{
+				return -1.0f;
+			}
+			float Root = sqrt(Disc);
+			T = (-B - Root) / V.Scale;
+			TEnd = min(TEnd, (-B + Root) / V.Scale);
+		}
+	}
+#endif
+	[loop]
+	for (int Step = 0; Step < V.MaxRaySteps; ++Step)
+	{
+		if (T >= TEnd)
+		{
+			return -1.0f;
+		}
+		float3 DC = V.Scale * (V.CameraOffset + Dir * T);
+		FPDEResult DE = FP_DistanceEstimate(Orbit, V, Args, DC, T * C);
+		if (DE.Distance < 2.0f * T * C || DE.Distance <= 0.0f)
+		{
+			break;
+		}
+		T += (DE.Distance - T * C) / (1.0f + C);
+	}
+	return T;
+}
+
+// Half-angle (per unit distance) of the cone around the centre ray of a Tile x Tile block of marched pixels.
+float FP_ConeAngle(FPViewParams V, int Tile)
+{
+	float Half = 0.5f * (float)Tile + 0.5f;
+	float HX = Half * length(V.RayDirDX) * V.PixelStep.x;
+	float HY = Half * length(V.RayDirDY) * V.PixelStep.y;
+	return sqrt(HX * HX + HY * HY) * 1.05f;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -222,7 +320,7 @@ float3 FP_Shade(StructuredBuffer<float4> Orbit, FPViewParams V, FPMarchResult R,
 	float3 Color = Albedo * Light * AO;
 
 	// Detail limit: fade towards haze as the orbit uses up the iteration limit (an orbit that never escaped has).
-	float Used = R.bLastEscaped ? R.LastSmooth / max((float)V.MaxIterations, 1.0f) : 1.0f;
+	float Used = R.bLastEscaped ? (R.LastSmooth - (float)V.HazeBase) / max((float)(V.MaxIterations - V.HazeBase), 1.0f) : 1.0f;
 	float Haze = smoothstep(FP_HAZE_START, 1.0f, Used);
 	Color = lerp(Color, FP_HazeColor(Background), Haze);
 

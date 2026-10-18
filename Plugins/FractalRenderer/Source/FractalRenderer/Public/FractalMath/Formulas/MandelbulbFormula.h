@@ -31,6 +31,33 @@ struct FMandelbulbFormula
 		return PowerMapDerivative(Z, DR, Params.Power) + 1.0;
 	}
 
+	/** dz/dc: J' = J_g(Z) J + I (the distance estimate uses this instead of the scalar DerivativeStep, see PowerMapJacobian). */
+	static void JacobianStep(const TState<double>& Z, double J[3][3], const FFormulaParams& Params)
+	{
+		double G[3][3];
+		const bool bValid = PowerMapJacobian(Z, Params.Power, G);
+		double Next[3][3];
+		for (int Row = 0; Row < 3; ++Row)
+		{
+			for (int Col = 0; Col < 3; ++Col)
+			{
+				double Sum = Row == Col ? 1.0 : 0.0;
+				if (bValid)
+				{
+					Sum += G[Row][0] * J[0][Col] + G[Row][1] * J[1][Col] + G[Row][2] * J[2][Col];
+				}
+				Next[Row][Col] = Sum;
+			}
+		}
+		for (int Row = 0; Row < 3; ++Row)
+		{
+			for (int Col = 0; Col < 3; ++Col)
+			{
+				J[Row][Col] = Next[Row][Col];
+			}
+		}
+	}
+
 	template <typename T>
 	static void Pack(const TState<T>& Z, const FFormulaParams& Params, float* Out)
 	{

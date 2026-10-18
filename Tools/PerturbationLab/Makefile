@@ -11,7 +11,7 @@ DXCFLAGS := -T cs_6_0 -spirv -fspv-target-env=vulkan1.1 -Zpr -HV 2021 -O3 -I $(P
 TYPES := 0 1 2 3 4 5 6 7
 KERNELS := FuncsMain StepMain
 SPV := $(addprefix $(OUT)/,$(addsuffix .spv,$(KERNELS))) $(OUT)/MatrixMain.spv \
-	$(foreach T,$(TYPES),$(OUT)/ProfileMain_T$(T).spv $(OUT)/DEMain_T$(T).spv $(OUT)/RenderMain_T$(T).spv $(OUT)/RenderNaive_T$(T).spv)
+	$(foreach T,$(TYPES),$(OUT)/ProfileMain_T$(T).spv $(OUT)/DEMain_T$(T).spv $(OUT)/RenderMain_T$(T).spv $(OUT)/RenderNaive_T$(T).spv $(OUT)/ConeMain_T$(T).spv)
 BENCH_SPV := $(OUT)/BenchPerturbed.spv $(OUT)/BenchPerturbed8.spv $(OUT)/BenchDirect.spv $(OUT)/BenchDirect8.spv $(OUT)/BenchOldHW.spv
 HEADERS := $(wildcard src/*.h) $(wildcard src/scenes/*.inc) $(wildcard $(PLUGIN)/Source/FractalRenderer/Public/FractalMath/Formulas/*.h) $(wildcard $(PLUGIN)/Source/FractalRenderer/Public/FractalMath/*.h)
 SHADERS := $(wildcard shaders/*.hlsl) $(wildcard $(PLUGIN)/Shaders/*.ush)
@@ -30,6 +30,9 @@ $(OUT)/DEMain_T%.spv: $(SHADERS) | $(OUT)
 
 $(OUT)/RenderMain_T%.spv: $(SHADERS) | $(OUT)
 	LD_LIBRARY_PATH=$(DXC_LIB) $(DXC) $(DXCFLAGS) -D FP_FRACTAL_TYPE=$* -E RenderMain shaders/RenderLab.hlsl -Fo $@
+
+$(OUT)/ConeMain_T%.spv: $(SHADERS) | $(OUT)
+	LD_LIBRARY_PATH=$(DXC_LIB) $(DXC) $(DXCFLAGS) -D FP_FRACTAL_TYPE=$* -E ConeMain shaders/RenderLab.hlsl -Fo $@
 
 $(OUT)/RenderNaive_T%.spv: $(SHADERS) | $(OUT)
 	LD_LIBRARY_PATH=$(DXC_LIB) $(DXC) $(DXCFLAGS) -D FP_FRACTAL_TYPE=$* -D FP_FORCE_NAIVE=1 -E RenderMain shaders/RenderLab.hlsl -Fo $@
@@ -75,13 +78,15 @@ ue-shader-check: | $(OUT)
 			-D THREADS_X=8 -D THREADS_Y=8 -D THREADS_Z=1 -D FP_FRACTAL_TYPE=$$1 -D FP_STATIC_POWER_8=$$2 $(OUT)/PerturbationShader.check.hlsl -Fo $(OUT)/ue_$$1_$$2_$$HV.dxil || exit 1; \
 		LD_LIBRARY_PATH=$(DXC_LIB) $(DXC) -T cs_6_0 -E PerturbationShader -Zpr -O3 -HV $$HV -spirv -I $(PLUGIN)/Shaders \
 			-D THREADS_X=8 -D THREADS_Y=8 -D THREADS_Z=1 -D FP_FRACTAL_TYPE=$$1 -D FP_STATIC_POWER_8=$$2 $(OUT)/PerturbationShader.check.hlsl -Fo $(OUT)/ue_$$1_$$2_$$HV.spv || exit 1; \
+		LD_LIBRARY_PATH=$(DXC_LIB) $(DXC) -T cs_6_0 -E FractalCone -Zpr -O3 -HV $$HV -I $(PLUGIN)/Shaders \
+			-D THREADS_X=8 -D THREADS_Y=8 -D THREADS_Z=1 -D FP_FRACTAL_TYPE=$$1 -D FP_STATIC_POWER_8=$$2 $(OUT)/PerturbationShader.check.hlsl -Fo $(OUT)/ue_cone_$$1_$$2_$$HV.dxil || exit 1; \
 	done; done
 	sed 's|#include "/Engine/Public/Platform.ush"||' $(PLUGIN)/Shaders/FractalUpscale.usf > $(OUT)/FractalUpscale.check.hlsl
 	for HV in 2018 2021; do \
 		LD_LIBRARY_PATH=$(DXC_LIB) $(DXC) -T cs_6_0 -E FractalUpscale -Zpr -O3 -HV $$HV -D THREADS_X=8 -D THREADS_Y=8 -D THREADS_Z=1 $(OUT)/FractalUpscale.check.hlsl -Fo $(OUT)/ue_upscale_$$HV.dxil || exit 1; \
 		LD_LIBRARY_PATH=$(DXC_LIB) $(DXC) -T cs_6_0 -E FractalUpscale -Zpr -O3 -HV $$HV -spirv -D THREADS_X=8 -D THREADS_Y=8 -D THREADS_Z=1 $(OUT)/FractalUpscale.check.hlsl -Fo $(OUT)/ue_upscale_$$HV.spv || exit 1; \
 	done
-	@echo "PerturbationShader.usf compiles (DXIL + SPIR-V, HLSL 2018/2021, all permutations)"
+	@echo "PerturbationShader.usf compiles (both entry points; DXIL + SPIR-V, HLSL 2018/2021, all permutations)"
 
 # The reference is placed from rays across the view; with the view turned away from the surface the centre ray alone
 # would put it hopelessly far from the nearby geometry (Burning Ship keeps ~1.5% float-chaos samples).

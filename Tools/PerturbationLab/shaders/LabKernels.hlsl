@@ -41,11 +41,13 @@ void StepMain(uint3 Id : SV_DispatchThreadID)
 	float3 W = Ref.Z + D;
 	float RW = length(W);
 	float RWPow;
-	float3 G = FP_PerturbedPowerDelta(Ref, D, W, RW, 1.0f / RW, P.Params0.x, FP_IntegerPower(P.Params0.x), RWPow);
+	float4 Angles;
+	float3 G = FP_PerturbedPowerDelta(Ref, D, W, RW, 1.0f / RW, P.Params0.x, FP_IntegerPower(P.Params0.x), RWPow, Angles);
 	OutA[I] = float4(G, RWPow);
 	// naive: g(W) - g(Ref) both evaluated directly in float
 	float RPowDummy;
-	float3 GN = FP_MandelbulbPower(W, RW, 1.0f / RW, P.Params0.x, FP_IntegerPower(P.Params0.x), RPowDummy) - FP_MandelbulbPower(Ref.Z, length(Ref.Z), 1.0f / length(Ref.Z), P.Params0.x, FP_IntegerPower(P.Params0.x), RPowDummy);
+	float4 AnglesDummy;
+	float3 GN = FP_MandelbulbPower(W, RW, 1.0f / RW, P.Params0.x, FP_IntegerPower(P.Params0.x), RPowDummy, AnglesDummy) - FP_MandelbulbPower(Ref.Z, length(Ref.Z), 1.0f / length(Ref.Z), P.Params0.x, FP_IntegerPower(P.Params0.x), RPowDummy, AnglesDummy);
 	OutB[I] = float4(GN, 0.0f);
 }
 

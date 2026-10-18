@@ -56,9 +56,10 @@ FPPowerRef FP_LoadPowerRef(StructuredBuffer<float4> Orbit, int Base)
 }
 
 
-// g_p(W) evaluated directly, |W| = RW and 1/|W| = InvRW given. Returns |W|^(p-1) in OutRWPowM1.
+// g_p(W) evaluated directly, |W| = RW and 1/|W| = InvRW given. Returns |W|^(p-1) in OutRWPowM1 and the cos / sin of the
+// multiplied angles (cos p theta, sin p theta, cos p phi, sin p phi) in OutAngles (for the Jacobian).
 // Integer powers use (z + i rho)^p and (x + i y)^p (no transcendental functions), others use trig.
-float3 FP_MandelbulbPower(float3 W, float RW, float InvRW, float Power, int PowerInt, out float OutRWPowM1)
+float3 FP_MandelbulbPower(float3 W, float RW, float InvRW, float Power, int PowerInt, out float OutRWPowM1, out float4 OutAngles)
 {
 	if (PowerInt > 0)
 	{
@@ -79,6 +80,7 @@ float3 FP_MandelbulbPower(float3 W, float RW, float InvRW, float Power, int Powe
 			FP_ComplexPowInt(RW, 0.0f, PowerInt - 1, RWPowM1, Dummy);
 		}
 		OutRWPowM1 = RWPowM1;
+		OutAngles = float4(CT, ST, CP, SP);
 		float RWPow = RWPowM1 * RW;
 		return RWPow * float3(ST * CP, ST * SP, CT);
 	}
@@ -91,18 +93,20 @@ float3 FP_MandelbulbPower(float3 W, float RW, float InvRW, float Power, int Powe
 	float ST, CT, SP, CP;
 	FP_SinCos(Power * Theta, ST, CT);
 	FP_SinCos(Power * Phi, SP, CP);
+	OutAngles = float4(CT, ST, CP, SP);
 	return RWPow * float3(ST * CP, ST * SP, CT);
 }
 
 // g_p(Z~ + D) - g_p(Z~) for the reference point Ref, with W = Z~ + D, RW = |W|, InvRW = 1/|W|.
-// PowerInt is FP_IntegerPower(Power). Returns |W|^(p-1) in OutRWPowM1 (for the running derivative).
-float3 FP_PerturbedPowerDelta(FPPowerRef Ref, float3 D, float3 W, float RW, float InvRW, float Power, int PowerInt, out float OutRWPowM1)
+// PowerInt is FP_IntegerPower(Power). Returns |W|^(p-1) in OutRWPowM1 (for the running derivative) and the multiplied
+// angles at W in OutAngles (see FP_MandelbulbPower).
+float3 FP_PerturbedPowerDelta(FPPowerRef Ref, float3 D, float3 W, float RW, float InvRW, float Power, int PowerInt, out float OutRWPowM1, out float4 OutAngles)
 {
 	// The reference is negligible next to the full point (after a rebase Ref = 0): evaluate directly.
 	// Here |g(W)| dominates |g(Z~)|, so the plain difference has no cancellation.
 	if (Ref.R <= 0.5f * RW)
 	{
-		float3 GW = FP_MandelbulbPower(W, RW, InvRW, Power, PowerInt, OutRWPowM1);
+		float3 GW = FP_MandelbulbPower(W, RW, InvRW, Power, PowerInt, OutRWPowM1, OutAngles);
 		float3 GRef = Ref.RPow * float3(Ref.SinPT * Ref.CosPP, Ref.SinPT * Ref.SinPP, Ref.CosPT);
 		return GW - GRef;
 	}
@@ -200,6 +204,7 @@ float3 FP_PerturbedPowerDelta(FPPowerRef Ref, float3 D, float3 W, float RW, floa
 		float3 FWI = float3(SinTW * CosPW, SinTW * SinPW, CosTW);
 		float3 DFI = float3(DSinT * CosPW + Ref.SinPT * DCosP, DSinT * SinPW + Ref.SinPT * DSinP, DCosT);
 		OutRWPowM1 = Ref.RPow * OnePlusU * InvRW;
+		OutAngles = float4(CosTW, SinTW, CosPW, SinPW);
 		return Ref.RPow * (U * FWI + DFI);
 	}
 
@@ -238,6 +243,54 @@ float3 FP_PerturbedPowerDelta(FPPowerRef Ref, float3 D, float3 W, float RW, floa
 	float3 FW = float3(SinTW * CosPW, SinTW * SinPW, CosTW);
 	float3 DF = float3(DSinT * CosPW + Ref.SinPT * DCosP, DSinT * SinPW + Ref.SinPT * DSinP, DCosT);
 	OutRWPowM1 = Ref.RPow * OnePlusU * InvRW;
+	OutAngles = float4(CosTW, SinTW, CosPW, SinPW);
 	return Ref.RPow * (U * FW + DF);
+}
+
+// dz/dc of a power-map formula as three rows, scaled by Scale (the derivative grows like 1 / distance; the scale keeps it in
+// float range at any depth, as the scalar DRS = dr * Scale does).
+struct FPJacobian
+{
+	float3 R0;
+	float3 R1;
+	float3 R2;
+};
+
+FPJacobian FP_JacobianDiagonal(float S)
+{
+	FPJacobian J;
+	J.R0 = float3(S, 0.0f, 0.0f);
+	J.R1 = float3(0.0f, S, 0.0f);
+	J.R2 = float3(0.0f, 0.0f, S);
+	return J;
+}
+
+// J' = J_g(W) J + AddScale I with (unit vectors at W and at the multiplied angles, see FractalMath::PowerMapJacobian)
+//     J_g = p r^(p-1) [ e'_r e_r^T + e'_theta e_theta^T + (sin(p theta) / sin(theta)) e'_phi e_phi^T ]
+// K = p |W|^(p-1), Angles = (cos p theta, sin p theta, cos p phi, sin p phi) at W.
+FPJacobian FP_PowerMapJacobianStep(FPJacobian J, float3 W, float InvRW, float4 Angles, float K, float Power, float AddScale)
+{
+	float MaxXY = max(abs(W.x), abs(W.y));
+	float XYScale = FP_Pow2Normalizer(MaxXY);
+	float SX = W.x * XYScale;
+	float SY = W.y * XYScale;
+	float SRho2 = SX * SX + SY * SY;
+	float InvSRho = (SRho2 > 0.0f) ? rsqrt(SRho2) : 0.0f;
+	float CP = (SRho2 > 0.0f) ? SX * InvSRho : 1.0f;
+	float SP = SY * InvSRho;
+	float ST = SRho2 * InvSRho * FP_Pow2Denormalizer(MaxXY) * InvRW;
+	float CT = W.z * InvRW;
+	float3 Er = float3(ST * CP, ST * SP, CT);
+	float3 Et = float3(CT * CP, CT * SP, -ST);
+	float CPT = Angles.x, SPT = Angles.y, CPP = Angles.z, SPP = Angles.w;
+	float Az = (ST > 1.0e-30f) ? clamp(SPT / ST, -abs(Power), abs(Power)) : Power * ((CT >= 0.0f) ? 1.0f : -1.0f);
+	float3 A = Er.x * J.R0 + Er.y * J.R1 + Er.z * J.R2;
+	float3 B = Et.x * J.R0 + Et.y * J.R1 + Et.z * J.R2;
+	float3 C = (-SP * J.R0 + CP * J.R1) * Az;
+	FPJacobian O;
+	O.R0 = K * (SPT * CPP * A + CPT * CPP * B - SPP * C) + float3(AddScale, 0.0f, 0.0f);
+	O.R1 = K * (SPT * SPP * A + CPT * SPP * B + CPP * C) + float3(0.0f, AddScale, 0.0f);
+	O.R2 = K * (CPT * A - SPT * B) + float3(0.0f, 0.0f, AddScale);
+	return O;
 }
 

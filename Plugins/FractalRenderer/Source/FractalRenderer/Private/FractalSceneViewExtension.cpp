@@ -141,17 +141,33 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 	Request.Params.Bailout = Params.BailoutRadius;
 	Request.MaxRaySteps = Params.MaxRaySteps;
 	Request.MaxRayDistance = MaxRayDistanceWorld;
+	int32 HazeBase = 0;
 	{
-		// Distance to the surface (CPU estimate of the formula being drawn): decides when the reference is stale and,
-		// for folding fractals, how many iterations a pixel footprint at that distance needs.
+		// Distance to the surface (CPU estimate of the formula being drawn): decides when the reference is stale and how
+		// many iterations the view needs. For escape-time formulas the camera's orbit may run long before it escapes
+		// next to the surface (the estimate stops at the escape, so the cap costs nothing for a camera outside the set).
+		const bool bEscapeTime = FractalMath::FormulaFamily(Formula) == FractalMath::EFractalFamily::EscapeTime;
 		FractalMath::FFormulaParams EstimateParams;
 		EstimateParams.Power = Params.FractalPower;
 		EstimateParams.Bailout = Params.BailoutRadius;
-		EstimateParams.MaxIterations = FMath::Max(Params.MaxIterations, 2);
-		Request.CameraDistanceWorld = FractalMath::DistanceEstimateAtScale(Formula, CameraFractal, Mapping.Scale, EstimateParams).SafeDistance() / Mapping.Scale;
+		EstimateParams.MaxIterations = bEscapeTime ? FractalMath::MaxOrbitIterations : FMath::Max(Params.MaxIterations, 2);
+		const FractalMath::FDistanceEstimate CameraDE = FractalMath::DistanceEstimateAtScale(Formula, CameraFractal, Mapping.Scale, EstimateParams);
+		Request.CameraDistanceWorld = CameraDE.SafeDistance() / Mapping.Scale;
 		const double SurfaceDistanceFractal = FMath::Max(Request.CameraDistanceWorld * Mapping.Scale, Mapping.Scale);
-		Request.Params.MaxIterations = FractalMath::ComputeIterationBudget(Formula, Params.FractalPower, Params.MaxIterations, Params.BailoutRadius,
+		int32 Iterations = FractalMath::ComputeIterationBudget(Formula, Params.FractalPower, Params.MaxIterations, Params.BailoutRadius,
 			SurfaceDistanceFractal * Basis.PixelRadiusPerUnitDistance);
+		if (bEscapeTime && CameraDE.bEscaped)
+		{
+			// Next to the surface: size the view from the camera's own orbit (its pixels need more iterations than it)
+			// and measure the haze from its escape count, so only detail finer than the pixels fades.
+			const int32 OrbitBudget = FractalMath::ComputeOrbitIterationBudget(CameraDE.Iterations, CameraDE.SafeDistance(), Basis.PixelRadiusPerUnitDistance);
+			if (OrbitBudget > Iterations)
+			{
+				Iterations = OrbitBudget;
+				HazeBase = CameraDE.Iterations;
+			}
+		}
+		Request.Params.MaxIterations = Iterations;
 	}
 	{
 		double Fan[FractalMath::ReferenceFanCount][3];
@@ -217,40 +233,66 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 		MarchTexture = GraphBuilder.CreateTexture(MarchDesc, TEXT("FractalMarchOutput"));
 	}
 
+	// Marched pixels per cone tile side (measured in Web/bench: 8 traverses the empty space once per 64 pixels).
+	constexpr int32 ConeTile = 8;
+
+	// Parameters shared by the cone pre-pass and the march.
+	FFractalViewParameters ViewParameters;
+	ViewParameters.OutputSize = MarchExtent;
+	ViewParameters.PixelStep = FVector2f(static_cast<float>(OutputExtent.X) / MarchExtent.X, static_cast<float>(OutputExtent.Y) / MarchExtent.Y);
+	ViewParameters.RayDir00 = ToVector3f(Basis.DirPixel00);
+	ViewParameters.RayDirDX = ToVector3f(Basis.DirDX);
+	ViewParameters.RayDirDY = ToVector3f(Basis.DirDY);
+	ViewParameters.PixelRadiusPerUnitDistance = static_cast<float>(Basis.PixelRadiusPerUnitDistance);
+	ViewParameters.CameraOffset = CameraOffset;
+	ViewParameters.FractalScale = static_cast<float>(Mapping.Scale);
+	ViewParameters.ReferenceCenter = ReferenceCenter;
+	ViewParameters.DirectFootprint = Params.DirectEvaluationFootprint;
+	ViewParameters.OrbitLength = OrbitLength;
+	ViewParameters.MaxRaySteps = Params.MaxRaySteps;
+	ViewParameters.MaxIterations = Request.Params.MaxIterations;
+	ViewParameters.HazeBase = HazeBase;
+	ViewParameters.MaxRayDistance = static_cast<float>(MaxRayDistanceWorld);
+	ViewParameters.FractalPower = Params.FractalPower;
+	ViewParameters.BailoutRadius = Params.BailoutRadius;
+	ViewParameters.ConeTile = ConeTile;
+	ViewParameters.ReferenceOrbit = GraphBuilder.CreateSRV(FRDGBufferSRVDesc(OrbitBuffer));
+
+	FFractalPermutationDomain Permutation;
+	Permutation.Set<FFractalTypeDim>(static_cast<int32>(Params.FractalType));
+	Permutation.Set<FFractalStaticPower8>(Params.FractalType == EFractalType::Mandelbulb && Params.FractalPower == 8.0f);
+	TShaderMapRef<FPerturbationComputeShader> ComputeShader(GetGlobalShaderMap(View.GetFeatureLevel()), Permutation);
+	TShaderMapRef<FFractalConeShader> ConeShader(GetGlobalShaderMap(View.GetFeatureLevel()), Permutation);
+	if (!ComputeShader.IsValid() || !ConeShader.IsValid())
+	{
+		UE_LOG(LogFractalViewExtension, Error, TEXT("Fractal compute shaders are not valid"));
+		return SceneColor;
+	}
+
+	// Cone pre-pass: where each tile of ConeTile x ConeTile marched pixels can start marching.
+	const FIntPoint ConeExtent(FMath::DivideAndRoundUp(MarchExtent.X, ConeTile), FMath::DivideAndRoundUp(MarchExtent.Y, ConeTile));
+	FRDGTextureRef ConeTexture = GraphBuilder.CreateTexture(
+		FRDGTextureDesc::Create2D(ConeExtent, PF_R32_FLOAT, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV), TEXT("FractalConeStart"));
+	{
+		FFractalConeShader::FParameters* ConeParameters = GraphBuilder.AllocParameters<FFractalConeShader::FParameters>();
+		ConeParameters->View = ViewParameters;
+		ConeParameters->ConeOutput = GraphBuilder.CreateUAV(ConeTexture);
+		const FIntVector ConeGroups(
+			FMath::DivideAndRoundUp(ConeExtent.X, NUM_THREADS_PerturbationShader_X),
+			FMath::DivideAndRoundUp(ConeExtent.Y, NUM_THREADS_PerturbationShader_Y),
+			1);
+		FComputeShaderUtils::AddPass(GraphBuilder, RDG_EVENT_NAME("FractalCone %dx%d", ConeExtent.X, ConeExtent.Y), ConeShader, ConeParameters, ConeGroups);
+	}
+
 	FPerturbationComputeShader::FParameters* PassParameters = GraphBuilder.AllocParameters<FPerturbationComputeShader::FParameters>();
-	PassParameters->OutputSize = MarchExtent;
+	PassParameters->View = ViewParameters;
 	PassParameters->OutputOffset = bReducedResolution ? FIntPoint::ZeroValue : ViewRect.Min;
 	PassParameters->ViewOffset = ViewRect.Min;
-	PassParameters->PixelStep = FVector2f(static_cast<float>(OutputExtent.X) / MarchExtent.X, static_cast<float>(OutputExtent.Y) / MarchExtent.Y);
-	PassParameters->RayDir00 = ToVector3f(Basis.DirPixel00);
-	PassParameters->RayDirDX = ToVector3f(Basis.DirDX);
-	PassParameters->RayDirDY = ToVector3f(Basis.DirDY);
-	PassParameters->PixelRadiusPerUnitDistance = static_cast<float>(Basis.PixelRadiusPerUnitDistance);
-	PassParameters->CameraOffset = CameraOffset;
-	PassParameters->FractalScale = static_cast<float>(Mapping.Scale);
-	PassParameters->ReferenceCenter = ReferenceCenter;
-	PassParameters->DirectFootprint = Params.DirectEvaluationFootprint;
-	PassParameters->OrbitLength = OrbitLength;
-	PassParameters->MaxRaySteps = Params.MaxRaySteps;
-	PassParameters->MaxIterations = Request.Params.MaxIterations;
-	PassParameters->MaxRayDistance = static_cast<float>(MaxRayDistanceWorld);
-	PassParameters->FractalPower = Params.FractalPower;
-	PassParameters->BailoutRadius = Params.BailoutRadius;
 	PassParameters->BackgroundInvExtent = FVector2f(1.0f / TextureExtent.X, 1.0f / TextureExtent.Y);
 	PassParameters->BackgroundTexture = SceneColor.Texture;
 	PassParameters->BackgroundSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-	PassParameters->ReferenceOrbit = GraphBuilder.CreateSRV(FRDGBufferSRVDesc(OrbitBuffer));
+	PassParameters->ConeStart = ConeTexture;
 	PassParameters->OutputTexture = GraphBuilder.CreateUAV(MarchTexture);
-
-	FPerturbationComputeShader::FPermutationDomain Permutation;
-	Permutation.Set<FPerturbationComputeShader::FFractalTypeDim>(static_cast<int32>(Params.FractalType));
-	Permutation.Set<FPerturbationComputeShader::FStaticPower8>(Params.FractalType == EFractalType::Mandelbulb && Params.FractalPower == 8.0f);
-	TShaderMapRef<FPerturbationComputeShader> ComputeShader(GetGlobalShaderMap(View.GetFeatureLevel()), Permutation);
-	if (!ComputeShader.IsValid())
-	{
-		UE_LOG(LogFractalViewExtension, Error, TEXT("FPerturbationComputeShader is not valid"));
-		return SceneColor;
-	}
 
 	const FIntVector GroupCount(
 		FMath::DivideAndRoundUp(MarchExtent.X, NUM_THREADS_PerturbationShader_X),

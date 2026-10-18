@@ -13,12 +13,12 @@ The Mandelbulb renderer of FractalGame in WebGPU. It is a 1:1 port of the deskto
 
 Since the port, both renderers share these improvements (see `PERTURBATION_IMPLEMENTATION_NOTES.md` §12): the Jacobian
 distance estimate (the scalar running derivative made deep zooms render a smooth shell in front of the fractal), the
-iteration budget sized from the camera's own orbit, series tolerance 1e-6, over-relaxed sphere tracing and the cone
-pre-pass.
+iteration budget sized from the camera's own orbit, series tolerance 1e-6, over-relaxed sphere tracing, the cone
+pre-pass and the analytic surface normal.
 
 `bench/` is the benchmark: `node bench/bench.js <page url> <out dir> [W H frames]` renders the fixed views of
 `bench/views.json` in headless Chromium (software WebGPU) with work counters; `BENCH_OPTS` overrides the renderer
-options (`relax`, `seriesTolerance`, `cone`, `virtual` = [W, H] for full-frame pixel sizes), `bench/compare.py` compares
+options (`relax`, `seriesTolerance`, `cone`, `coneSafety`, `normalMode` (0 = finite differences), `normals: false`, `virtual` = [W, H] for full-frame pixel sizes), `bench/compare.py` compares
 the images of two runs.
 
 Not ported: the other seven fractals, the fractal scale (thumb buttons; it only changes the world size of the fractal),

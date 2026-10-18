@@ -384,8 +384,7 @@ count model for GPUs, where MUFU/division are relatively more expensive):
 * **Non-integer powers** work (general path) but are slower and inherit the formula's seams.
 * **Multiple views** share one reference manager, so the pass only runs on the player's view (not on reflection /
   planar / scene captures). Split screen with very different views would thrash it.
-* **Further speed:** a full BLA table (merged linear segments, usable after rebases), analytic normals
-  for shading. Views that look through dust-like regions of the set (filaments everywhere, each thinner
+* **Further speed:** a full BLA table (merged linear segments, usable after rebases). Views that look through dust-like regions of the set (filaments everywhere, each thinner
   than a pixel) stay expensive: the distance to the nearest filament never drops below a pixel radius
   until the ray has travelled ~1/pixel-angle times that distance, so such rays end at the step limit.
 * **Not yet compiled inside Unreal.** The engine-free parts are compiled and tested; the `.usf`
@@ -457,7 +456,7 @@ the GPU draws (`UFractalControlSubsystem::GetDistanceAtWorld`).
   the step and iteration counts (more work = brighter, tinted towards white-teal) and rays that never hit were blended
   from that bright colour back to the sky with `pow(steps / max, 0.1)` (≈ 1). That was the wrong reading: the tint
   (`IterFactor > 0.9`) was the fade where the iteration limit runs out. `FP_Shade` now lights hits (headlight + fixed
-  light, normal from the distance estimate's gradient, 4 extra estimates per hit), darkens by step count (ambient
+  light, normal from the gradient of the escape potential, see §12.6), darkens by step count (ambient
   occlusion, never brightens), colours by the smooth escape iteration, and fades each hit towards the haze colour
   between 55% and 100% of the iteration limit (`smoothstep`, `FP_HAZE_START`); an orbit that never escaped is fully
   hazed, so the end of the resolvable detail is a soft transition instead of a solid fill or a hole. Misses show the
@@ -594,3 +593,39 @@ hit thresholds and cone tiles are those of full HD. Shipping configuration at vi
 | 1e-22 | 9 | 250 | |
 | 1e-26 | 12.8 | 3,500 | |
 
+### 12.6 Where the work goes: analytic normals, cone safety
+
+Per-phase profile of the shipping configuration (iterations per pixel, virtual full HD, before this change):
+
+| view | march | normals | cone | normals share |
+|---|---|---|---|---|
+| start | 60 | 27 | 0.4 | 31% |
+| 1e-6 | 1,990 | 180 | 45 | 8% |
+| 1e-14 | 1,120 | 350 | 14 | 24% |
+| 1e-18 | 775 | 480 | 15 | 38% |
+| 1e-22 | 171 | 80 | 4 | 31% |
+| 1e-26 | 2,360 | 1,130 | 7 | 32% |
+
+The four finite-difference taps of the normal cost a quarter to a third of the frame: they sit at the hit point, whose
+orbits are the longest of the ray (a normal estimate cost 1.5x a march estimate). The cone pre-pass costs 0.3-2% and
+saves 20-90% of the march; relaxation saves up to 60% (grazing views) and costs up to 10% elsewhere.
+
+* **Analytic normal.** With the Jacobian derivative the last estimate of the march already has `grad r = J^T z / r`,
+  the gradient of the escape potential, whose direction is the surface normal. `FPDEResult.Gradient` carries it (0 for
+  formulas with the scalar derivative, which keep the finite differences), `FP_Shade` uses it. Images differ by
+  0.6-4% mean colour (the finite-difference speckle disappears).
+* **Cone safety.** The lab's 1e-18 view showed 8×8 tile artifacts from the cone: the estimate overestimates the distance
+  to thin strands by a small factor, which a pixel's own march absorbs but which moves a whole tile's start. The cone
+  now trusts `FP_CONE_SAFETY` = 0.7 of the estimate. Agreement with the dd truth on that view: 95.4% without the cone,
+  96.3% with it (depth 85.5% / 86.4%).
+
+Result (iterations per pixel, all phases):
+
+| view | before | after | |
+|---|---|---|---|
+| start | 87 | 64 | -26% |
+| 1e-6 | 2,210 | 2,230 | +1% |
+| 1e-14 | 1,480 | 1,210 | -19% |
+| 1e-18 | 1,270 | 1,030 | -19% |
+| 1e-22 | 256 | 196 | -23% |
+| 1e-26 | 3,500 | 1,390 | -60% |

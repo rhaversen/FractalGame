@@ -36,15 +36,15 @@ fs.mkdirSync(outDir, { recursive: true });
 			const F = __fractal, g = F.gpu, d = g.device;
 			await new Promise((res) => setTimeout(res, 300)); await d.queue.onSubmittedWorkDone();
 			g.frame(); await d.queue.onSubmittedWorkDone(); // warm-up
-			d.queue.writeBuffer(g.stats, 0, new Uint32Array(8));
+			d.queue.writeBuffer(g.stats, 0, new Uint32Array(16));
 			const t0 = performance.now();
 			for (let i = 0; i < FRAMES; i++) { g.frame(); await d.queue.onSubmittedWorkDone(); }
 			const ms = (performance.now() - t0) / FRAMES;
-			const rb = d.createBuffer({ size: 32, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+			const rb = d.createBuffer({ size: 64, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
 			const bpr = Math.ceil(g.w * 4 / 256) * 256;
 			const img = d.createBuffer({ size: bpr * g.h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
 			const enc = d.createCommandEncoder();
-			enc.copyBufferToBuffer(g.stats, 0, rb, 0, 32);
+			enc.copyBufferToBuffer(g.stats, 0, rb, 0, 64);
 			enc.copyTextureToBuffer({ texture: g.tex }, { buffer: img, bytesPerRow: bpr }, [g.w, g.h]);
 			d.queue.submit([enc.finish()]);
 			await rb.mapAsync(GPUMapMode.READ); await img.mapAsync(GPUMapMode.READ);
@@ -60,7 +60,8 @@ fs.mkdirSync(outDir, { recursive: true });
 			view: view.name, msPerFrame: +r.ms.toFixed(1), iterations: r.iterations, orbit: r.orbit, de: r.de,
 			estimatesPerPixel: +(r.stats[0] / FRAMES / pixels).toFixed(2), stepsPerPixel: +(r.stats[3] / FRAMES / pixels).toFixed(2),
 			itersPerPixel: +(r.stats[1] / FRAMES / pixels).toFixed(1), coneItersPerPixel: +(r.stats[7] / FRAMES / pixels).toFixed(1),
-			totalItersPerPixel: +((r.stats[1] + r.stats[7]) / FRAMES / pixels).toFixed(1), skippedPerPixel: +(r.stats[2] / FRAMES / pixels).toFixed(1),
+			normalItersPerPixel: +(r.stats[9] / FRAMES / pixels).toFixed(1), normalEstimatesPerPixel: +(r.stats[8] / FRAMES / pixels).toFixed(2),
+			totalItersPerPixel: +((r.stats[1] + r.stats[7] + r.stats[9]) / FRAMES / pixels).toFixed(1), skippedPerPixel: +(r.stats[2] / FRAMES / pixels).toFixed(1),
 			hitShare: +(r.stats[4] / FRAMES / pixels).toFixed(3),
 		};
 		console.log(JSON.stringify(res));

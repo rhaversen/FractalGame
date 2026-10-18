@@ -17,6 +17,13 @@ override BENCH: bool = false;
 override RELAX: f32 = 1.0;
 // Cone pre-pass: one ray per CONE_TILE x CONE_TILE marched pixels finds how far all of them can start (0 = off).
 override CONE_TILE: u32 = 0u;
+// Profiling only: false shades without the surface normal (four distance estimates per hit).
+override NORMALS: bool = true;
+// Surface normal: 0 = finite differences of the distance estimate (4 extra estimates per hit), 1 = the gradient of the
+// escape potential the last estimate of the march already computed (J^T z / r).
+override NORMAL_MODE: u32 = 1u;
+// Share of the distance estimate the cone pre-pass trusts (it can overestimate the distance to thin strands).
+override CONE_SAFETY: f32 = 0.7;
 
 struct Params {
 	ray00: vec4<f32>,   // direction through pixel (0, 0), unnormalised (xyz); hit threshold per unit distance (w)
@@ -33,7 +40,7 @@ struct Params {
 @group(0) @binding(1) var<storage, read> Orbit: array<vec4<f32>>;
 @group(0) @binding(2) var Out: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(3) var<storage, read_write> Probe: array<f32>;
-@group(0) @binding(4) var<storage, read_write> Stats: array<atomic<u32>, 8>;
+@group(0) @binding(4) var<storage, read_write> Stats: array<atomic<u32>, 16>;
 @group(0) @binding(5) var ConeOut: texture_storage_2d<r32float, write>;
 @group(0) @binding(6) var ConeIn: texture_2d<f32>;
 
@@ -355,6 +362,7 @@ struct FPDEResult {
 	bEscaped: bool,
 	Skipped: i32,
 	Smooth: f32,
+	Gradient: vec3<f32>, // direction of grad r = J^T z / r (outward surface normal), scaled to a maximum component of 1
 }
 
 fn FP_SmoothIteration(n: i32, rw: f32, bailout: f32, power: f32, escaped: bool) -> f32 {
@@ -412,9 +420,12 @@ fn FP_JacobianStep(j: FPJacobian, w: vec3<f32>, invRw: f32, g: FPPowerStep, powe
 }
 
 // 0.5 r ln r / |grad r| with grad r = J^T W / r (fractal units; J is scaled by s).
-fn FP_FinalDistance(escaped: bool, w: vec3<f32>, rw: f32, j: FPJacobian) -> f32 {
+fn FP_Gradient(w: vec3<f32>, rw: f32, j: FPJacobian) -> vec3<f32> {
 	let u = w / max(rw, 1.0e-30);
-	let grad = u.x * j.R0 + u.y * j.R1 + u.z * j.R2;
+	return u.x * j.R0 + u.y * j.R1 + u.z * j.R2;
+}
+
+fn FP_FinalDistance(escaped: bool, rw: f32, grad: vec3<f32>) -> f32 {
 	// |grad| without squaring (the squares of components above ~1e19 overflow float)
 	let m = max(max(abs(grad.x), abs(grad.y)), abs(grad.z));
 	let gradLength = m * length(grad / max(m, 1.0e-37));
@@ -432,7 +443,10 @@ fn FP_Result(n: i32, w: vec3<f32>, rw: f32, j: FPJacobian, escaped: bool, skippe
 	r.bEscaped = escaped;
 	r.Skipped = skipped;
 	r.Smooth = FP_SmoothIteration(n, rw, P.rayDY.w, P.rayDX.w, escaped);
-	r.Distance = FP_FinalDistance(escaped, w, rw, j);
+	let grad = FP_Gradient(w, rw, j);
+	let m = max(max(abs(grad.x), abs(grad.y)), abs(grad.z));
+	r.Gradient = grad / max(m, 1.0e-37);
+	r.Distance = FP_FinalDistance(escaped, rw, grad);
 	return r;
 }
 
@@ -558,6 +572,7 @@ struct FPMarchResult {
 	LastIterations: i32,
 	LastSmooth: f32,
 	bLastEscaped: bool,
+	LastGradient: vec3<f32>,
 }
 
 // Direction through the centre of the marched pixel; the basis is in full-resolution pixels.
@@ -576,6 +591,7 @@ fn FP_MarchRay(dir: vec3<f32>, tStart: f32) -> FPMarchResult {
 	r.LastIterations = 0;
 	r.LastSmooth = 0.0;
 	r.bLastEscaped = false;
+	r.LastGradient = vec3<f32>(0.0);
 	var t = 0.0;
 	var tEnd = P.camOff.w;
 	// Bounding sphere of the set: a ray that misses it hits nothing, one that crosses it is marched from where it enters.
@@ -621,6 +637,7 @@ fn FP_MarchRay(dir: vec3<f32>, tStart: f32) -> FPMarchResult {
 		} else {
 			r.LastIterations = de.Iterations;
 			r.LastSmooth = de.Smooth;
+			r.LastGradient = de.Gradient;
 			r.bLastEscaped = de.bEscaped;
 			if (radius <= pixelRadius) { r.Status = 1; break; }
 			stepLength = max(radius, pixelRadius * 0.5) * omega;
@@ -670,7 +687,13 @@ fn FP_Shade(r: FPMarchResult, dir: vec3<f32>, background: vec3<f32>) -> vec3<f32
 		return mix(background, vec3<f32>(0.35, 0.55, 0.85), 0.25 * stepFactor * stepFactor);
 	}
 	let pixelRadius = r.Distance * P.ray00.w;
-	var n = FP_SurfaceNormal(dir, r.Distance, pixelRadius);
+	var n = -dir;
+	if (NORMAL_MODE == 1u) {
+		let g2 = dot(r.LastGradient, r.LastGradient);
+		n = select(-dir, r.LastGradient * inverseSqrt(g2), g2 > 0.0);
+	} else if (NORMALS) {
+		n = FP_SurfaceNormal(dir, r.Distance, pixelRadius);
+	}
 	n = select(n, -n, dot(n, dir) > 0.0);
 	let headlight = clamp(dot(n, -dir), 0.0, 1.0);
 	let key = clamp(dot(n, normalize(vec3<f32>(0.5, 0.7, 0.4))), 0.0, 1.0);
@@ -709,9 +732,11 @@ fn FP_ConeMarch(dir: vec3<f32>, c: f32) -> f32 {
 	}
 	for (var i = 0; i < P.marchI.x; i = i + 1) {
 		if (t >= tEnd) { return -1.0; }
-		let de = FP_DistanceEstimate(P.camOff.xyz + dir * t, t * c);
-		if (de.Distance < 2.0 * t * c || de.Distance <= 0.0) { break; }
-		t = t + (de.Distance - t * c) / (1.0 + c);
+		// the estimate is trusted to CONE_SAFETY of its value (it can overestimate the distance to thin strands,
+		// which a pixel's own march absorbs but which would let a whole tile start behind the strand)
+		let d = CONE_SAFETY * FP_DistanceEstimate(P.camOff.xyz + dir * t, t * c).Distance;
+		if (d < 2.0 * t * c || d <= 0.0) { break; }
+		t = t + (d - t * c) / (1.0 + c);
 	}
 	return t;
 }
@@ -741,10 +766,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 	var tStart = 0.0;
 	if (CONE_TILE > 0u) { tStart = textureLoad(ConeIn, vec2<i32>(id.xy / max(CONE_TILE, 1u)), 0).x; }
 	let r = FP_MarchRay(dir, tStart);
+	let marchEstimates = gEstimates;
+	let marchIterations = gIterations;
 	textureStore(Out, vec2<i32>(id.xy), vec4<f32>(FP_Shade(r, dir, Background(dir)), 1.0));
 	if (BENCH) {
-		atomicAdd(&Stats[0], gEstimates);
-		atomicAdd(&Stats[1], gIterations);
+		// [0, 1] march, [8, 9] surface normal (the rest of the shading), [6, 7] cone pre-pass
+		atomicAdd(&Stats[0], marchEstimates);
+		atomicAdd(&Stats[1], marchIterations);
+		atomicAdd(&Stats[8], gEstimates - marchEstimates);
+		atomicAdd(&Stats[9], gIterations - marchIterations);
 		atomicAdd(&Stats[2], gSkipped);
 		atomicAdd(&Stats[3], u32(r.Steps));
 		atomicAdd(&Stats[4], select(0u, 1u, r.Status == 1));

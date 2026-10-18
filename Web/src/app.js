@@ -39,7 +39,7 @@ const PRESETS = [
 // Renderer options (Web/bench overrides them through window.FRACTAL_OPTS to compare variants).
 // Defaults measured with Web/bench: over-relaxed sphere tracing (fewer steps where rays graze surfaces), the cone pre-pass on
 // 8 x 8 tiles (empty space traversed once per tile), and the series tolerance validated in Tools/PerturbationLab.
-const OPTS = Object.assign({ relax: 1.6, seriesTolerance: 1e-6, cone: 8, virtual: null }, window.FRACTAL_OPTS || {});
+const OPTS = Object.assign({ relax: 1.6, seriesTolerance: 1e-6, cone: 8, coneSafety: 0.7, normalMode: 1, virtual: null }, window.FRACTAL_OPTS || {});
 // Benchmark only: OPTS.virtual = [W, H] renders the centre window of a W x H frame (the canvas size), so that pixel
 // footprints, hit thresholds and cone tiles are those of the full frame while only a few pixels are computed.
 function frameSize() { return OPTS.virtual ? OPTS.virtual : [canvas.width, canvas.height]; }
@@ -346,7 +346,7 @@ const gpu = {
 		this.layouts = { main: mainLayout, cone: coneLayout, probe: probeLayout };
 		const pipelineLayout = (l) => device.createPipelineLayout({ bindGroupLayouts: [l] });
 		for (const [name, power] of [['p8', 8], ['any', 0]]) {
-			const constants = { STATIC_POWER: power, BENCH: this.bench ? 1 : 0, RELAX: OPTS.relax, CONE_TILE: OPTS.cone };
+			const constants = { STATIC_POWER: power, BENCH: this.bench ? 1 : 0, RELAX: OPTS.relax, CONE_TILE: OPTS.cone, NORMALS: OPTS.normals === false ? 0 : 1, NORMAL_MODE: OPTS.normalMode, CONE_SAFETY: OPTS.coneSafety };
 			this.pipes[name] = {
 				cone: OPTS.cone > 0 ? await device.createComputePipelineAsync({ layout: pipelineLayout(coneLayout), compute: { module, entryPoint: 'cone', constants } }) : null,
 				main: await device.createComputePipelineAsync({ layout: pipelineLayout(mainLayout), compute: { module, entryPoint: 'main', constants } }),
@@ -362,7 +362,7 @@ const gpu = {
 		this.orbit = device.createBuffer({ size: (Lib.MAX_ITERATIONS + 2) * Lib.ORBIT_STRIDE * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
 		this.probe = device.createBuffer({ size: 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
 		this.readback = device.createBuffer({ size: 32, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-		this.stats = device.createBuffer({ size: 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+		this.stats = device.createBuffer({ size: 64, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
 		this.sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 		for (const name of Object.keys(this.pipes)) {
 			this.bg[name] = { probe: device.createBindGroup({ layout: this.layouts.probe, entries: [

@@ -52,6 +52,7 @@ struct FPMarchResult
 	int LastIterations;   // iterations of the last distance estimate
 	float LastSmooth;     // its continuous escape iteration (the colour of a hit)
 	bool bLastEscaped;    // the last distance estimate saw its orbit escape (false: it ran into the iteration limit)
+	float3 LastGradient;  // its gradient direction (the analytic surface normal of a hit; 0 if the formula has none)
 };
 
 // Direction through marched pixel coordinates Pixel (pixel centres are integers). The ray basis is expressed in
@@ -106,6 +107,7 @@ FPMarchResult FP_MarchRayFrom(StructuredBuffer<float4> Orbit, FPViewParams V, fl
 	Result.LastIterations = 0;
 	Result.LastSmooth = 0.0f;
 	Result.bLastEscaped = false;
+	Result.LastGradient = 0.0f;
 
 	FPFormulaArgs Args = FP_MakeFormulaArgs(V.Power, V.Scale);
 	float T = 0.0f;
@@ -169,6 +171,7 @@ FPMarchResult FP_MarchRayFrom(StructuredBuffer<float4> Orbit, FPViewParams V, fl
 			Result.LastIterations = DE.Iterations;
 			Result.LastSmooth = DE.Smooth;
 			Result.bLastEscaped = DE.bEscaped;
+			Result.LastGradient = DE.Gradient;
 			if (Radius <= PixelRadius)
 			{
 				Result.Status = FP_HIT_SURFACE;
@@ -192,7 +195,12 @@ FPMarchResult FP_MarchRay(StructuredBuffer<float4> Orbit, FPViewParams V, float3
 // distance) that contains all their rays. A pixel's ray is within T C of the cone axis at distance T, so while the
 // distance estimate D at the axis exceeds T C, a step of (D - T C) / (1 + C) keeps every one of them inside the empty
 // sphere. Returns the distance (world units) all of them can start from, or -1 when the cone leaves the scene without
-// meeting anything.
+// meeting anything. The estimate is only trusted to FP_CONE_SAFETY of its value: it can overestimate the distance to
+// thin geometry (strands, dust) by a small factor, which a pixel's own march absorbs near the surface but which would
+// let a whole tile start behind such a strand.
+#ifndef FP_CONE_SAFETY
+#define FP_CONE_SAFETY 0.7f
+#endif
 float FP_ConeMarch(StructuredBuffer<float4> Orbit, FPViewParams V, float3 Dir, float C)
 {
 	FPFormulaArgs Args = FP_MakeFormulaArgs(V.Power, V.Scale);
@@ -226,12 +234,12 @@ float FP_ConeMarch(StructuredBuffer<float4> Orbit, FPViewParams V, float3 Dir, f
 			return -1.0f;
 		}
 		float3 DC = V.Scale * (V.CameraOffset + Dir * T);
-		FPDEResult DE = FP_DistanceEstimate(Orbit, V, Args, DC, T * C);
-		if (DE.Distance < 2.0f * T * C || DE.Distance <= 0.0f)
+		float D = FP_CONE_SAFETY * FP_DistanceEstimate(Orbit, V, Args, DC, T * C).Distance;
+		if (D < 2.0f * T * C || D <= 0.0f)
 		{
 			break;
 		}
-		T += (DE.Distance - T * C) / (1.0f + C);
+		T += (D - T * C) / (1.0f + C);
 	}
 	return T;
 }
@@ -302,7 +310,10 @@ float3 FP_Shade(StructuredBuffer<float4> Orbit, FPViewParams V, FPMarchResult R,
 
 	FPFormulaArgs Args = FP_MakeFormulaArgs(V.Power, V.Scale);
 	float PixelRadius = R.Distance * V.PixelRadiusPerUnitDistance;
-	float3 N = FP_SurfaceNormal(Orbit, V, Args, Dir, R.Distance, PixelRadius);
+	// Formulas with a Jacobian derivative give the normal for free (grad |z| at the hit, the gradient of the
+	// distance estimate up to a factor); the others take 4 more distance estimates.
+	float G2 = dot(R.LastGradient, R.LastGradient);
+	float3 N = (G2 > 0.0f) ? R.LastGradient * rsqrt(G2) : FP_SurfaceNormal(Orbit, V, Args, Dir, R.Distance, PixelRadius);
 	N = (dot(N, Dir) > 0.0f) ? -N : N; // face the viewer
 
 	float Headlight = saturate(dot(N, -Dir));

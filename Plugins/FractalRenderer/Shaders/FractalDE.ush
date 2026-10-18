@@ -31,6 +31,7 @@ struct FPDEResult
 	int Rebases;      // rebases / switches to plain iteration
 	int Skipped;      // iterations replaced by the linear series skip
 	float Smooth;     // continuous escape iteration (== Iterations when the orbit did not escape)
+	float3 Gradient;  // direction of grad |z| (the surface normal) for Jacobian formulas, 0 otherwise
 };
 
 // Continuous escape iteration: N + 1 - ln(ln|z| / ln Bailout) / ln(growth), with growth = the exponent (power
@@ -77,15 +78,34 @@ FPJacobian FP_DerivFromSeries(float4 A0, float4 A1, float4 A2, float Scale)
 	return J;
 }
 
-// 0.5 r ln r / |grad r| with grad r = J^T W / r (world units).
-float FP_FinalDistance(bool bEscaped, FP_STATE W, float RW, FPJacobian J, float Scale)
+// grad r = J^T W / r (world units).
+float3 FP_DerivGradient(FP_STATE W, float RW, FPJacobian J)
 {
 	float3 U = W / max(RW, 1.0e-30f);
-	float3 Grad = U.x * J.R0 + U.y * J.R1 + U.z * J.R2;
+	return U.x * J.R0 + U.y * J.R1 + U.z * J.R2;
+}
+
+// 0.5 r ln r / |grad r|.
+float FP_FinalDistance(bool bEscaped, float RW, float3 Grad)
+{
 	// |Grad| without squaring (the squares of components above ~1e19 overflow float)
 	float M = max(max(abs(Grad.x), abs(Grad.y)), abs(Grad.z));
 	float GradLength = M * length(Grad / max(M, 1.0e-37f));
 	return bEscaped ? 0.5f * RW * log(max(RW, 1.0e-6f)) / max(GradLength, 1.0e-37f) : 0.0f;
+}
+
+// The gradient rescaled to O(1) (its direction is the surface normal; the shading normalises it).
+float3 FP_GradientDirection(float3 Grad)
+{
+	float M = max(max(abs(Grad.x), abs(Grad.y)), abs(Grad.z));
+	return Grad / max(M, 1.0e-37f);
+}
+
+void FP_FinishDistance(inout FPDEResult Result, FP_STATE W, float RW, FPJacobian J, float Scale)
+{
+	float3 Grad = FP_DerivGradient(W, RW, J);
+	Result.Distance = FP_FinalDistance(Result.bEscaped, RW, Grad);
+	Result.Gradient = FP_GradientDirection(Grad);
 }
 #else
 #define FP_DERIV float
@@ -95,13 +115,20 @@ float FP_DerivInit(float Scale) { return Scale; }
 float FP_DerivFromSeries(float4 A0, float4 A1, float4 A2, float Scale) { return A1.w * Scale; }
 
 // Distance from |z| and the running derivative DRS = dr * Scale (world units).
-float FP_FinalDistance(bool bEscaped, FP_STATE W, float RW, float DRS, float Scale)
+float FP_FinalDistance(bool bEscaped, float RW, float DRS, float Scale)
 {
 #if FP_FORMULA_FOLDING
 	return RW / max(DRS, 1.0e-6f * Scale);
 #else
 	return bEscaped ? 0.5f * RW * log(max(RW, 1.0e-6f)) / max(DRS, 1.0e-37f) : 0.0f;
 #endif
+}
+
+// No analytic gradient: the shading falls back to finite differences.
+void FP_FinishDistance(inout FPDEResult Result, FP_STATE W, float RW, float DRS, float Scale)
+{
+	Result.Distance = FP_FinalDistance(Result.bEscaped, RW, DRS, Scale);
+	Result.Gradient = 0.0f;
 }
 #endif
 
@@ -230,7 +257,7 @@ FPDEResult FP_PerturbedDE(StructuredBuffer<float4> Orbit, int OrbitLength, float
 	Result.Rebases = Rebases;
 	Result.Skipped = Skipped;
 	Result.Smooth = FP_SmoothIteration(N, RW, Bailout, Args.Power, bEscaped);
-	Result.Distance = FP_FinalDistance(bEscaped, LastW, RW, DRS, Args.Scale);
+	FP_FinishDistance(Result, LastW, RW, DRS, Args.Scale);
 	return Result;
 }
 
@@ -269,6 +296,6 @@ FPDEResult FP_DirectDE(float3 C, FPFormulaArgs Args, int MaxIterations, float Ba
 	Result.Rebases = 0;
 	Result.Skipped = 0;
 	Result.Smooth = FP_SmoothIteration(N, RW, Bailout, Args.Power, bEscaped);
-	Result.Distance = FP_FinalDistance(bEscaped, Z, RW, DRS, Args.Scale);
+	FP_FinishDistance(Result, Z, RW, DRS, Args.Scale);
 	return Result;
 }

@@ -61,7 +61,9 @@ button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink
 .power { font: 500 13px var(--font-mono); min-width: 2.2em; text-align: center; }
 .gauge { height: 34px; position: relative; padding: 6px 12px 0; }
 .gauge svg { width: 100%; height: 100%; display: block; overflow: visible; }
-.gauge text { font: 400 9.5px var(--font-mono); fill: var(--dim); }
+.gauge-label { position: absolute; top: 18px; font: 400 9.5px var(--font-mono); color: var(--dim); }
+.check { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); font: 500 12px var(--font-ui); pointer-events: auto; }
+#help { position: fixed; z-index: 4; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(460px, calc(100vw - 32px)); }
 .cross { position: fixed; z-index: 1; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; }
 .cross::before, .cross::after { content: ""; position: absolute; background: rgba(219, 230, 245, 0.55); }
 .cross::before { left: -7px; top: -0.5px; width: 14px; height: 1px; }
@@ -94,26 +96,31 @@ button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink
 		<h1>Mandelbulb<small>Perturbation rendering in WebGPU</small></h1>
 	</div>
 	<div class="panel">
-		<div class="label">Camera</div>
+		<div class="label">Navigation</div>
 		<dl class="rows">
+			<dt>Speed limit</dt><dd id="r-speed">-</dd>
 			<dt>Surface distance</dt><dd id="r-de">-</dd>
 			<dt>Magnification</dt><dd id="r-mag">-</dd>
 			<dt>Ahead</dt><dd id="r-ahead">-</dd>
-			<dt>Speed</dt><dd id="r-speed">-</dd>
 		</dl>
-		<div class="coord" id="r-pos" aria-label="Position"></div>
-		<div class="coord" id="r-face" aria-label="Facing"></div>
 	</div>
 	<div class="panel hide-narrow">
-		<div class="label">Renderer</div>
+		<div class="label">Telemetry</div>
 		<dl class="rows">
 			<dt>Mode</dt><dd id="r-mode">-</dd>
 			<dt>Iterations</dt><dd id="r-iter">-</dd>
+			<dt>Series skip</dt><dd id="r-skip">-</dd>
 			<dt>Orbit points</dt><dd id="r-orbit">-</dd>
 			<dt>Reference offset</dt><dd id="r-ref">-</dd>
 			<dt>Resolution</dt><dd id="r-res">-</dd>
+			<dt>Frame rate target</dt><dd id="r-target">-</dd>
 			<dt>Frame</dt><dd id="r-fps">-</dd>
 		</dl>
+	</div>
+	<div class="panel hide-narrow">
+		<div class="label">View</div>
+		<div class="coord" id="r-pos" aria-label="Position"></div>
+		<div class="coord" id="r-face" aria-label="Facing and up vectors"></div>
 	</div>
 </section>
 
@@ -122,19 +129,19 @@ button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink
 		<div class="label">Power</div>
 		<div class="row" style="margin-top:6px">
 			<button id="pow-down" aria-label="Lower power">-</button>
-			<span class="power" id="pow">8</span>
+			<span class="power" id="pow">8.00</span>
 			<button id="pow-up" aria-label="Raise power">+</button>
 			<button id="autofly" aria-pressed="false" title="Fly forward at the speed limit (F)">Auto-fly</button>
 		</div>
 		<div class="label" style="margin-top:10px">Jump to depth</div>
 		<div class="row" style="margin-top:6px" id="presets"></div>
-		<div class="label" style="margin-top:10px">Render resolution</div>
+		<div class="label" style="margin-top:10px">Frame rate target</div>
 		<div class="row" style="margin-top:6px">
-			<select id="res" aria-label="Render resolution">
-				<option value="1" selected>Native</option>
-				<option value="0.75">75%</option>
-				<option value="0.5">50%</option>
-			</select>
+			<button id="fps-down" aria-label="Lower frame rate target">-</button>
+			<button id="fps-up" aria-label="Raise frame rate target">+</button>
+			<label class="check"><input type="checkbox" id="native"> Native pixels</label>
+		</div>
+		<div class="row" style="margin-top:8px">
 			<button id="help-btn">Controls</button>
 		</div>
 	</div>
@@ -147,17 +154,32 @@ button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink
 </div>
 <div id="hint" class="panel state-wait" hidden></div>
 
+<div id="help" class="panel" hidden>
+	<div class="label">Controls</div>
+	<dl class="keys" style="margin-top:8px">
+		<dt>W A S D</dt><dd>Move. Space rises, Shift sinks.</dd>
+		<dt>Mouse</dt><dd>Look.</dd>
+		<dt>Q / E</dt><dd>Roll.</dd>
+		<dt>Wheel</dt><dd>Speed limit (share of the time to the surface).</dd>
+		<dt>Right / left button</dt><dd>Hold to raise / lower the power.</dd>
+		<dt>Page Up / Down</dt><dd>Frame rate target (off, 30 to 144); lowers the internal resolution to hold it.</dd>
+		<dt>F</dt><dd>Auto-fly forward.</dd>
+		<dt>R</dt><dd>Reset.</dd>
+	</dl>
+</div>
+
 <div id="start">
 	<div class="card">
 		<h1>Mandelbulb<small>Deep zoom, computed in your browser</small></h1>
-		<p>Fly into the Mandelbulb until single pixels are a trillionth of the original object. A 32-bit GPU cannot do that on its own: it runs out of precision near 1e-5. This page keeps one reference orbit in double-double arithmetic on the CPU and lets the GPU follow every pixel as a small offset from it.</p>
+		<p>The Mandelbulb renderer of FractalGame, ported to WebGPU: a reference orbit in double-double arithmetic on the CPU, every pixel followed as a 32-bit offset from it on the GPU, with the linear series skip, rebasing and the bounding-sphere clip. Fly in until the magnification passes 1e24.</p>
 		<dl class="keys">
 			<dt>W A S D</dt><dd>Move. Space rises, Shift sinks.</dd>
-			<dt>Mouse</dt><dd>Look (click the view first; drag if the pointer is not captured).</dd>
+			<dt>Mouse</dt><dd>Look (click the view to capture the pointer; drag if it cannot be captured).</dd>
 			<dt>Q / E</dt><dd>Roll.</dd>
-			<dt>Wheel</dt><dd>Speed limit, as a share of the distance to the surface per second.</dd>
-			<dt>Z / X</dt><dd>Lower / raise the power (integer, 2 to 16).</dd>
-			<dt>F</dt><dd>Auto-fly forward. R resets. H shows this list.</dd>
+			<dt>Wheel</dt><dd>Speed limit, from standing still to 0.01 s to the surface.</dd>
+			<dt>Right / left button</dt><dd>Hold to raise / lower the power (1 to 16) while the pointer is captured.</dd>
+			<dt>Page Up / Down</dt><dd>Frame rate target. Off by default: every frame at full resolution.</dd>
+			<dt>F, R, H</dt><dd>Auto-fly, reset, hold for this list.</dd>
 		</dl>
 		<p id="fail" hidden></p>
 		<button id="go">Start flying</button>

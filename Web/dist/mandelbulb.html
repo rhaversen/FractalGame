@@ -61,7 +61,9 @@ button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink
 .power { font: 500 13px var(--font-mono); min-width: 2.2em; text-align: center; }
 .gauge { height: 34px; position: relative; padding: 6px 12px 0; }
 .gauge svg { width: 100%; height: 100%; display: block; overflow: visible; }
-.gauge text { font: 400 9.5px var(--font-mono); fill: var(--dim); }
+.gauge-label { position: absolute; top: 18px; font: 400 9.5px var(--font-mono); color: var(--dim); }
+.check { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); font: 500 12px var(--font-ui); pointer-events: auto; }
+#help { position: fixed; z-index: 4; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(460px, calc(100vw - 32px)); }
 .cross { position: fixed; z-index: 1; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; }
 .cross::before, .cross::after { content: ""; position: absolute; background: rgba(219, 230, 245, 0.55); }
 .cross::before { left: -7px; top: -0.5px; width: 14px; height: 1px; }
@@ -94,26 +96,31 @@ button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink
 		<h1>Mandelbulb<small>Perturbation rendering in WebGPU</small></h1>
 	</div>
 	<div class="panel">
-		<div class="label">Camera</div>
+		<div class="label">Navigation</div>
 		<dl class="rows">
+			<dt>Speed limit</dt><dd id="r-speed">-</dd>
 			<dt>Surface distance</dt><dd id="r-de">-</dd>
 			<dt>Magnification</dt><dd id="r-mag">-</dd>
 			<dt>Ahead</dt><dd id="r-ahead">-</dd>
-			<dt>Speed</dt><dd id="r-speed">-</dd>
 		</dl>
-		<div class="coord" id="r-pos" aria-label="Position"></div>
-		<div class="coord" id="r-face" aria-label="Facing"></div>
 	</div>
 	<div class="panel hide-narrow">
-		<div class="label">Renderer</div>
+		<div class="label">Telemetry</div>
 		<dl class="rows">
 			<dt>Mode</dt><dd id="r-mode">-</dd>
 			<dt>Iterations</dt><dd id="r-iter">-</dd>
+			<dt>Series skip</dt><dd id="r-skip">-</dd>
 			<dt>Orbit points</dt><dd id="r-orbit">-</dd>
 			<dt>Reference offset</dt><dd id="r-ref">-</dd>
 			<dt>Resolution</dt><dd id="r-res">-</dd>
+			<dt>Frame rate target</dt><dd id="r-target">-</dd>
 			<dt>Frame</dt><dd id="r-fps">-</dd>
 		</dl>
+	</div>
+	<div class="panel hide-narrow">
+		<div class="label">View</div>
+		<div class="coord" id="r-pos" aria-label="Position"></div>
+		<div class="coord" id="r-face" aria-label="Facing and up vectors"></div>
 	</div>
 </section>
 
@@ -122,19 +129,19 @@ button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink
 		<div class="label">Power</div>
 		<div class="row" style="margin-top:6px">
 			<button id="pow-down" aria-label="Lower power">-</button>
-			<span class="power" id="pow">8</span>
+			<span class="power" id="pow">8.00</span>
 			<button id="pow-up" aria-label="Raise power">+</button>
 			<button id="autofly" aria-pressed="false" title="Fly forward at the speed limit (F)">Auto-fly</button>
 		</div>
 		<div class="label" style="margin-top:10px">Jump to depth</div>
 		<div class="row" style="margin-top:6px" id="presets"></div>
-		<div class="label" style="margin-top:10px">Render resolution</div>
+		<div class="label" style="margin-top:10px">Frame rate target</div>
 		<div class="row" style="margin-top:6px">
-			<select id="res" aria-label="Render resolution">
-				<option value="1" selected>Native</option>
-				<option value="0.75">75%</option>
-				<option value="0.5">50%</option>
-			</select>
+			<button id="fps-down" aria-label="Lower frame rate target">-</button>
+			<button id="fps-up" aria-label="Raise frame rate target">+</button>
+			<label class="check"><input type="checkbox" id="native"> Native pixels</label>
+		</div>
+		<div class="row" style="margin-top:8px">
 			<button id="help-btn">Controls</button>
 		</div>
 	</div>
@@ -147,17 +154,32 @@ button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink
 </div>
 <div id="hint" class="panel state-wait" hidden></div>
 
+<div id="help" class="panel" hidden>
+	<div class="label">Controls</div>
+	<dl class="keys" style="margin-top:8px">
+		<dt>W A S D</dt><dd>Move. Space rises, Shift sinks.</dd>
+		<dt>Mouse</dt><dd>Look.</dd>
+		<dt>Q / E</dt><dd>Roll.</dd>
+		<dt>Wheel</dt><dd>Speed limit (share of the time to the surface).</dd>
+		<dt>Right / left button</dt><dd>Hold to raise / lower the power.</dd>
+		<dt>Page Up / Down</dt><dd>Frame rate target (off, 30 to 144); lowers the internal resolution to hold it.</dd>
+		<dt>F</dt><dd>Auto-fly forward.</dd>
+		<dt>R</dt><dd>Reset.</dd>
+	</dl>
+</div>
+
 <div id="start">
 	<div class="card">
 		<h1>Mandelbulb<small>Deep zoom, computed in your browser</small></h1>
-		<p>Fly into the Mandelbulb until single pixels are a trillionth of the original object. A 32-bit GPU cannot do that on its own: it runs out of precision near 1e-5. This page keeps one reference orbit in double-double arithmetic on the CPU and lets the GPU follow every pixel as a small offset from it.</p>
+		<p>The Mandelbulb renderer of FractalGame, ported to WebGPU: a reference orbit in double-double arithmetic on the CPU, every pixel followed as a 32-bit offset from it on the GPU, with the linear series skip, rebasing and the bounding-sphere clip. Fly in until the magnification passes 1e24.</p>
 		<dl class="keys">
 			<dt>W A S D</dt><dd>Move. Space rises, Shift sinks.</dd>
-			<dt>Mouse</dt><dd>Look (click the view first; drag if the pointer is not captured).</dd>
+			<dt>Mouse</dt><dd>Look (click the view to capture the pointer; drag if it cannot be captured).</dd>
 			<dt>Q / E</dt><dd>Roll.</dd>
-			<dt>Wheel</dt><dd>Speed limit, as a share of the distance to the surface per second.</dd>
-			<dt>Z / X</dt><dd>Lower / raise the power (integer, 2 to 16).</dd>
-			<dt>F</dt><dd>Auto-fly forward. R resets. H shows this list.</dd>
+			<dt>Wheel</dt><dd>Speed limit, from standing still to 0.01 s to the surface.</dd>
+			<dt>Right / left button</dt><dd>Hold to raise / lower the power (1 to 16) while the pointer is captured.</dd>
+			<dt>Page Up / Down</dt><dd>Frame rate target. Off by default: every frame at full resolution.</dd>
+			<dt>F, R, H</dt><dd>Auto-fly, reset, hold for this list.</dd>
 		</dl>
 		<p id="fail" hidden></p>
 		<button id="go">Start flying</button>
@@ -165,28 +187,38 @@ button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink
 </div>
 
 <script>
-// CPU side of the browser renderer: double-double arithmetic, the Mandelbulb in double-double, the reference orbit,
-// the reference-ray march and the iteration budget. A port of Plugins/FractalRenderer/Source/FractalRenderer/Public/FractalMath
-// (integer powers only). Written as one factory function so the page can run it on the main thread and, through
-// Function.prototype.toString, in a Web Worker.
+// CPU side of the browser renderer, a port of Plugins/FractalRenderer/Source/FractalRenderer/Public/FractalMath for the
+// Mandelbulb: double-double arithmetic (DoubleDouble.h), the power map (PowerMap.h), the reference orbit with the linear
+// series skip and the reference-ray march (FractalReferenceOrbit.h), the reference fan (FractalCamera.h) and the
+// iteration budget (FractalFormulas.h). Written as one factory function so the page can run it on the main thread and,
+// through Function.prototype.toString, in a Web Worker.
 function makeLib() {
 	'use strict';
 
 	// ---------------------------------------------------------------------------------------------
-	// Double-double: a number is [hi, lo] with |lo| <= ulp(hi)/2, about 32 significant digits.
+	// Double-double (DoubleDouble.h): a number is [hi, lo], ~106 bits.
 	// ---------------------------------------------------------------------------------------------
 	const SPLITTER = 134217729; // 2^27 + 1
+	const SPLIT_THRESHOLD = 6.69692879491417e+299;
+	const DD_EPS = 4.93038065763132e-32; // 2^-104
+	const DD_HUGE = 1.7976931348623157e308;
 
 	function twoSum(a, b) {
 		const s = a + b;
-		const v = s - a;
-		return [s, (a - (s - v)) + (b - v)];
+		const bb = s - a;
+		return [s, (a - (s - bb)) + (b - bb)];
 	}
 	function quickTwoSum(a, b) {
 		const s = a + b;
 		return [s, b - (s - a)];
 	}
 	function split(a) {
+		if (a > SPLIT_THRESHOLD || a < -SPLIT_THRESHOLD) {
+			const scaled = a * 3.7252902984619140625e-09;
+			const t = SPLITTER * scaled;
+			const hi = t - (t - scaled);
+			return [hi * 268435456.0, (scaled - hi) * 268435456.0];
+		}
 		const t = SPLITTER * a;
 		const hi = t - (t - a);
 		return [hi, a - hi];
@@ -197,21 +229,24 @@ function makeLib() {
 		const [bh, bl] = split(b);
 		return [p, ((ah * bh - p) + ah * bl + al * bh) + al * bl];
 	}
+	function twoSqr(a) {
+		const p = a * a;
+		const [ah, al] = split(a);
+		return [p, ((ah * ah - p) + 2.0 * ah * al) + al * al];
+	}
 
 	function ddAdd(x, y) {
-		const s = twoSum(x[0], y[0]);
+		let s = twoSum(x[0], y[0]);
 		const t = twoSum(x[1], y[1]);
-		let lo = s[1] + t[0];
-		const u = quickTwoSum(s[0], lo);
-		lo = u[1] + t[1];
-		return quickTwoSum(u[0], lo);
+		s = quickTwoSum(s[0], s[1] + t[0]);
+		return quickTwoSum(s[0], s[1] + t[1]);
 	}
-	function ddNeg(x) { return [-x[0], -x[1]]; }
-	function ddSub(x, y) { return ddAdd(x, [-y[0], -y[1]]); }
 	function ddAddD(x, d) {
 		const s = twoSum(x[0], d);
 		return quickTwoSum(s[0], s[1] + x[1]);
 	}
+	function ddNeg(x) { return [-x[0], -x[1]]; }
+	function ddSub(x, y) { return ddAdd(x, [-y[0], -y[1]]); }
 	function ddMul(x, y) {
 		const p = twoProd(x[0], y[0]);
 		return quickTwoSum(p[0], p[1] + (x[0] * y[1] + x[1] * y[0]));
@@ -220,23 +255,144 @@ function makeLib() {
 		const p = twoProd(x[0], d);
 		return quickTwoSum(p[0], p[1] + x[1] * d);
 	}
+	function ddSqr(x) {
+		const p = twoSqr(x[0]);
+		return quickTwoSum(p[0], p[1] + 2.0 * x[0] * x[1] + x[1] * x[1]);
+	}
+	function ddMulPow2(x, b) { return [x[0] * b, x[1] * b]; }
+	function ddDivD(x, b) {
+		const q1 = x[0] / b;
+		const p = twoProd(q1, b);
+		const s = twoSum(x[0], -p[0]);
+		const lo = s[1] - p[1] + x[1];
+		const q2 = (s[0] + lo) / b;
+		return quickTwoSum(q1, q2);
+	}
 	function ddDiv(x, y) {
 		const q1 = x[0] / y[0];
 		let r = ddSub(x, ddMulD(y, q1));
 		const q2 = r[0] / y[0];
 		r = ddSub(r, ddMulD(y, q2));
 		const q3 = r[0] / y[0];
-		const q = quickTwoSum(q1, q2);
-		return ddAddD(q, q3);
+		return ddAddD(quickTwoSum(q1, q2), q3);
 	}
 	function ddSqrt(x) {
 		if (x[0] <= 0) return [0, 0];
 		const g = 1 / Math.sqrt(x[0]);
 		const ax = x[0] * g;
-		const d = ddSub(x, twoProd(ax, ax));
-		return twoSum(ax, d[0] * (g * 0.5));
+		return twoSum(ax, ddSub(x, twoSqr(ax))[0] * (g * 0.5));
+	}
+	function ddLdexp(x, e) { const f = Math.pow(2, e); return [x[0] * f, x[1] * f]; }
+	function ddNint(x) {
+		let hiInt = Math.floor(x[0] + 0.5);
+		if (hiInt === x[0]) return quickTwoSum(hiInt, Math.floor(x[1] + 0.5));
+		if (Math.abs(hiInt - x[0]) === 0.5 && x[1] < 0) hiInt -= 1;
+		return [hiInt, 0];
 	}
 	function ddToDouble(x) { return x[0] + x[1]; }
+
+	const DD_PI = [3.141592653589793116e+00, 1.224646799147353207e-16];
+	const DD_TWO_PI = [6.283185307179586232e+00, 2.449293598294706414e-16];
+	const DD_HALF_PI = [1.570796326794896558e+00, 6.123233995736766036e-17];
+	const DD_QUARTER_PI = [7.853981633974482790e-01, 3.061616997868383018e-17];
+	const DD_THREE_QUARTER_PI = [2.356194490192344837e+00, 9.1848509936051484375e-17];
+	const DD_LN2 = [6.931471805599452862e-01, 2.319046813846299558e-17];
+
+	function ddExp(a) {
+		const invK = 1 / 512;
+		if (a[0] <= -709) return [0, 0];
+		if (a[0] >= 709) return [DD_HUGE, 0];
+		if (a[0] === 0 && a[1] === 0) return [1, 0];
+		const m = Math.floor(a[0] / DD_LN2[0] + 0.5);
+		const r = ddMulPow2(ddSub(a, ddMulD(DD_LN2, m)), invK);
+		let p = ddSqr(r);
+		let s = ddAdd(r, ddMulPow2(p, 0.5));
+		p = ddMul(p, r);
+		let factorial = 6;
+		let t = ddDivD(p, factorial);
+		let index = 3;
+		do {
+			s = ddAdd(s, t);
+			p = ddMul(p, r);
+			index++;
+			factorial *= index;
+			t = ddDivD(p, factorial);
+		} while (Math.abs(t[0]) > invK * DD_EPS && index < 12);
+		s = ddAdd(s, t);
+		for (let i = 0; i < 9; i++) s = ddAdd(ddMulPow2(s, 2), ddSqr(s));
+		s = ddAddD(s, 1);
+		return ddLdexp(s, m);
+	}
+	function ddLog(a) {
+		if (a[0] <= 0) return [-DD_HUGE, 0];
+		if (a[0] === 1 && a[1] === 0) return [0, 0];
+		const x = [Math.log(a[0]), 0];
+		return ddAddD(ddAdd(x, ddMul(a, ddExp(ddNeg(x)))), -1);
+	}
+	function sinCosTaylor(t) {
+		if (t[0] === 0 && t[1] === 0) return [[0, 0], [1, 0]];
+		const x2 = ddNeg(ddSqr(t));
+		const threshold = 0.5 * Math.abs(t[0]) * DD_EPS;
+		let sum = t, term = t, n = 1;
+		for (let i = 0; i < 30; i++) {
+			term = ddDivD(ddMul(term, x2), (n + 1) * (n + 2));
+			n += 2;
+			sum = ddAdd(sum, term);
+			if (Math.abs(term[0]) <= threshold) break;
+		}
+		const sin = sum;
+		sum = [1, 0]; term = [1, 0]; n = 0;
+		for (let i = 0; i < 30; i++) {
+			term = ddDivD(ddMul(term, x2), (n + 1) * (n + 2));
+			n += 2;
+			sum = ddAdd(sum, term);
+			if (Math.abs(term[0]) <= 0.5 * DD_EPS) break;
+		}
+		return [sin, sum];
+	}
+	function ddSinCos(a) {
+		if (a[0] === 0 && a[1] === 0) return [[0, 0], [1, 0]];
+		const z = ddNint(ddDiv(a, DD_TWO_PI));
+		const r = ddSub(a, ddMul(DD_TWO_PI, z));
+		const q = Math.floor(r[0] / DD_HALF_PI[0] + 0.5);
+		const t = ddSub(r, ddMulD(DD_HALF_PI, q));
+		const [s, c] = sinCosTaylor(t);
+		switch (((q % 4) + 4) % 4) {
+			case 0: return [s, c];
+			case 1: return [c, ddNeg(s)];
+			case 2: return [ddNeg(s), ddNeg(c)];
+			default: return [ddNeg(c), s];
+		}
+	}
+	function ddAtan2(y, x) {
+		if (x[0] === 0) {
+			if (y[0] === 0) return [0, 0];
+			return y[0] > 0 ? DD_HALF_PI : ddNeg(DD_HALF_PI);
+		}
+		if (y[0] === 0) return x[0] > 0 ? [0, 0] : DD_PI;
+		if (x[0] === y[0] && x[1] === y[1]) return y[0] > 0 ? DD_QUARTER_PI : ddNeg(DD_THREE_QUARTER_PI);
+		if (x[0] === -y[0] && x[1] === -y[1]) return y[0] > 0 ? DD_THREE_QUARTER_PI : ddNeg(DD_QUARTER_PI);
+		const r = ddSqrt(ddAdd(ddSqr(x), ddSqr(y)));
+		const xx = ddDiv(x, r), yy = ddDiv(y, r);
+		let z = [Math.atan2(ddToDouble(y), ddToDouble(x)), 0];
+		const [sinZ, cosZ] = ddSinCos(z);
+		if (Math.abs(xx[0]) > Math.abs(yy[0])) z = ddAdd(z, ddDiv(ddSub(yy, sinZ), cosZ));
+		else z = ddSub(z, ddDiv(ddSub(xx, cosZ), sinZ));
+		return z;
+	}
+	function ddPow(a, p) {
+		if (a[0] <= 0) return [0, 0];
+		return ddExp(ddMulD(ddLog(a), p));
+	}
+	function ddPowInt(a, n) {
+		let result = [1, 0], base = a;
+		for (let e = n; e > 0;) {
+			if (e & 1) result = ddMul(result, base);
+			e >>= 1;
+			if (e > 0) base = ddSqr(base);
+		}
+		return result;
+	}
 
 	// 3-vectors of double-double
 	function v3Add(a, b) { return [ddAdd(a[0], b[0]), ddAdd(a[1], b[1]), ddAdd(a[2], b[2])]; }
@@ -244,125 +400,124 @@ function makeLib() {
 	function v3AddDoubles(a, d) { return [ddAddD(a[0], d[0]), ddAddD(a[1], d[1]), ddAddD(a[2], d[2])]; }
 	function v3Dot(a, b) { return ddAdd(ddAdd(ddMul(a[0], b[0]), ddMul(a[1], b[1])), ddMul(a[2], b[2])); }
 	function v3ToDoubles(a) { return [a[0][0] + a[0][1], a[1][0] + a[1][1], a[2][0] + a[2][1]]; }
-	// P + Dir * Dist, Dir a double vector, Dist a double
+	/** Base + Dir * Distance (FractalScalar.h OffsetDD). */
 	function offsetDD(p, dir, dist) {
 		return [ddAddD(p[0], dir[0] * dist), ddAddD(p[1], dir[1] * dist), ddAddD(p[2], dir[2] * dist)];
 	}
 
 	// ---------------------------------------------------------------------------------------------
-	// Mandelbulb in double-double (integer power p >= 2): z -> g_p(z) + c with
-	// g_p(z) = r^p (sin(p theta) cos(p phi), sin(p theta) sin(p phi), cos(p theta)). The rotations are formed as complex
-	// powers of (cos, sin) pairs, so no trigonometric function is ever needed.
+	// Power map (PowerMap.h)
 	// ---------------------------------------------------------------------------------------------
-	const DD_ONE = [1, 0];
-	const DD_ZERO = [0, 0];
+	/** Integer powers 2..64 use exact trig-free complex formulations. */
+	function isIntegerPower(p) { return p >= 2 && p <= 64 && p === Math.floor(p); }
 
-	function cMul(a, b) { // (a.re + i a.im)(b.re + i b.im), each part a dd
-		return [ddSub(ddMul(a[0], b[0]), ddMul(a[1], b[1])), ddAdd(ddMul(a[0], b[1]), ddMul(a[1], b[0]))];
-	}
-	function cPow(a, p) {
-		let result = [DD_ONE, DD_ZERO];
-		let base = a;
-		for (let e = p; e > 0; e >>= 1) {
-			if (e & 1) result = cMul(result, base);
-			if (e > 1) base = cMul(base, base);
-		}
-		return result;
-	}
-	function ddPow(x, p) {
-		let result = DD_ONE;
-		let base = x;
-		for (let e = p; e > 0; e >>= 1) {
-			if (e & 1) result = ddMul(result, base);
-			if (e > 1) base = ddMul(base, base);
-		}
-		return result;
-	}
-
-	function bulbPower(z, p) {
-		const rho2 = ddAdd(ddMul(z[0], z[0]), ddMul(z[1], z[1]));
-		const r2 = ddAdd(rho2, ddMul(z[2], z[2]));
-		if (!(r2[0] > 0)) return [DD_ZERO, DD_ZERO, DD_ZERO];
+	/** g_p(W) in double-double. */
+	function mandelbulbPowerDD(w, p) {
+		const rho2 = ddAdd(ddMul(w[0], w[0]), ddMul(w[1], w[1]));
+		const r2 = ddAdd(rho2, ddMul(w[2], w[2]));
+		if (ddToDouble(r2) <= 0) return [[0, 0], [0, 0], [0, 0]];
 		const rho = ddSqrt(rho2);
 		const r = ddSqrt(r2);
-		const a = [ddDiv(z[2], r), ddDiv(rho, r)]; // cos theta, sin theta
-		const b = rho[0] > 0 ? [ddDiv(z[0], rho), ddDiv(z[1], rho)] : [DD_ONE, DD_ZERO];
-		const t = cPow(a, p);
-		const q = cPow(b, p);
-		const rp = ddPow(r, p);
-		const st = ddMul(rp, t[1]);
-		return [ddMul(st, q[0]), ddMul(st, q[1]), ddMul(rp, t[0])];
+		let sinPT, cosPT, sinPP, cosPP, rPow;
+		if (isIntegerPower(p)) {
+			let aRe = ddDiv(w[2], r), aIm = ddDiv(rho, r);
+			let bRe = [1, 0], bIm = [0, 0];
+			if (ddToDouble(rho) > 0) { bRe = ddDiv(w[0], rho); bIm = ddDiv(w[1], rho); }
+			let tRe = [1, 0], tIm = [0, 0], pRe = [1, 0], pIm = [0, 0];
+			for (let e = p; e > 0; e >>= 1) {
+				if (e & 1) {
+					const nt = ddSub(ddMul(tRe, aRe), ddMul(tIm, aIm));
+					tIm = ddAdd(ddMul(tRe, aIm), ddMul(tIm, aRe)); tRe = nt;
+					const np = ddSub(ddMul(pRe, bRe), ddMul(pIm, bIm));
+					pIm = ddAdd(ddMul(pRe, bIm), ddMul(pIm, bRe)); pRe = np;
+				}
+				if (e > 1) {
+					const na = ddSub(ddMul(aRe, aRe), ddMul(aIm, aIm));
+					aIm = ddMulD(ddMul(aRe, aIm), 2); aRe = na;
+					const nb = ddSub(ddMul(bRe, bRe), ddMul(bIm, bIm));
+					bIm = ddMulD(ddMul(bRe, bIm), 2); bRe = nb;
+				}
+			}
+			cosPT = tRe; sinPT = tIm; cosPP = pRe; sinPP = pIm;
+			// RPowInt (FractalScalar.h): binary powering with plain products
+			rPow = [1, 0];
+			let base = r;
+			for (let e = p; e > 0;) { if (e & 1) rPow = ddMul(rPow, base); e >>= 1; if (e > 0) base = ddMul(base, base); }
+		} else {
+			const theta = ddAtan2(rho, w[2]);
+			const phi = ddToDouble(rho) > 0 ? ddAtan2(w[1], w[0]) : [0, 0];
+			[sinPT, cosPT] = ddSinCos(ddMulD(theta, p));
+			[sinPP, cosPP] = ddSinCos(ddMulD(phi, p));
+			rPow = ddPow(r, p);
+		}
+		const radial = ddMul(rPow, sinPT);
+		return [ddMul(radial, cosPP), ddMul(radial, sinPP), ddMul(rPow, cosPT)];
 	}
+
+	/** g_p(W) in double (the same template instantiated for double). */
+	function mandelbulbPowerD(w, p) {
+		const rho2 = w[0] * w[0] + w[1] * w[1];
+		const r2 = rho2 + w[2] * w[2];
+		if (r2 <= 0) return [0, 0, 0];
+		const rho = Math.sqrt(rho2), r = Math.sqrt(r2);
+		let sinPT, cosPT, sinPP, cosPP, rPow;
+		if (isIntegerPower(p)) {
+			let aRe = w[2] / r, aIm = rho / r, bRe = 1, bIm = 0;
+			if (rho > 0) { bRe = w[0] / rho; bIm = w[1] / rho; }
+			let tRe = 1, tIm = 0, pRe = 1, pIm = 0;
+			for (let e = p; e > 0; e >>= 1) {
+				if (e & 1) {
+					const nt = tRe * aRe - tIm * aIm; tIm = tRe * aIm + tIm * aRe; tRe = nt;
+					const np = pRe * bRe - pIm * bIm; pIm = pRe * bIm + pIm * bRe; pRe = np;
+				}
+				if (e > 1) {
+					const na = aRe * aRe - aIm * aIm; aIm = (aRe * aIm) * 2; aRe = na;
+					const nb = bRe * bRe - bIm * bIm; bIm = (bRe * bIm) * 2; bRe = nb;
+				}
+			}
+			cosPT = tRe; sinPT = tIm; cosPP = pRe; sinPP = pIm;
+			rPow = 1;
+			let base = r;
+			for (let e = p; e > 0;) { if (e & 1) rPow *= base; e >>= 1; if (e > 0) base *= base; }
+		} else {
+			const theta = Math.atan2(rho, w[2]);
+			const phi = rho > 0 ? Math.atan2(w[1], w[0]) : 0;
+			sinPT = Math.sin(theta * p); cosPT = Math.cos(theta * p);
+			sinPP = Math.sin(phi * p); cosPP = Math.cos(phi * p);
+			rPow = r > 0 ? Math.pow(r, p) : 0;
+		}
+		const radial = rPow * sinPT;
+		return [radial * cosPP, radial * sinPP, rPow * cosPT];
+	}
+
+	/** Mandelbulb step z -> g_p(z) + c in double-double (FMandelbulbFormula::Step). */
 	function bulbStep(z, c, p) {
-		const g = bulbPower(z, p);
+		const g = mandelbulbPowerDD(z, p);
 		return [ddAdd(g[0], c[0]), ddAdd(g[1], c[1]), ddAdd(g[2], c[2])];
 	}
-
-	/** Radius of a sphere around the origin that contains the whole set (see FractalMath::PowerMapBoundingRadius). */
-	function boundingRadius(p) {
-		if (p < 1.05) return Infinity;
-		return Math.max(1, Math.pow(2, 1 / (p - 1)));
+	/** dr' = p r^(p-1) dr + 1 (FMandelbulbFormula::DerivativeStep). */
+	function derivativeStep(zd, dr, p) {
+		const r = Math.sqrt(zd[0] * zd[0] + zd[1] * zd[1] + zd[2] * zd[2]);
+		return p * (r > 0 ? Math.pow(r, p - 1) : 0) * dr + 1;
 	}
 
-	/** Reference escape radius of the orbit (FractalMath::PowerMapReferenceEscapeRadius). */
-	function referenceEscapeRadius(bailout, p) {
-		const wanted = 4 * bailout;
-		const floatSafe = Math.pow(10, 28 / Math.max(p, 1));
-		return wanted < floatSafe ? wanted : Math.max(floatSafe, 2 * bailout);
-	}
-
-	/** Escape-time distance estimate at the double-double point c (fractal units), limited by the bounding sphere. */
-	function distanceEstimate(c, p, bailout, maxIterations) {
-		const b2 = bailout * bailout;
-		let z = c;
-		let dr = 1;
-		let r = 0;
-		let escaped = false;
-		let n = 1;
-		for (; n < maxIterations; n++) {
-			const r2 = v3Dot(z, z);
-			r = Math.sqrt(r2[0]);
-			if (r2[0] + r2[1] > b2) { escaped = true; break; }
-			dr = p * Math.pow(r, p - 1) * dr + 1;
-			z = bulbStep(z, c, p);
-		}
-		const dist = escaped ? 0.5 * r * Math.log(r) / dr : 0;
-		// The estimate overshoots far from the set; the set cannot be closer than its bounding sphere. `safe` is the
-		// estimate capped by that (used for speed and placement); hits are decided on `distance`.
-		const cd = v3ToDoubles(c);
-		const outside = Math.hypot(cd[0], cd[1], cd[2]) - boundingRadius(p);
-		return { distance: dist, safe: outside > 0 && outside < dist ? outside : dist, escaped, iterations: n };
-	}
-
-	/** Iterations a pixel footprint (fractal units) needs; FractalMath::ComputeIterationBudget. */
-	function iterationBudget(p, base, bailout, footprint) {
-		base = Math.max(base, 2);
-		if (!(footprint > 0)) return base;
-		const growth = Math.max(Math.abs(p), 1.5);
-		const needed = 2 * Math.log(Math.max(bailout, 1) / footprint) / Math.log(growth) + 20;
-		const capped = Math.min(Math.max(needed, 0), 1000);
-		return Math.min(Math.max(Math.ceil(capped / 50) * 50, base), 1000);
-	}
-
-	// ---------------------------------------------------------------------------------------------
-	// Reference orbit in the GPU layout: per point m four float4:
-	//   [0] Zx Zy Zz |Z|   [1] rho |Z|^p phi 1/|Z|   [2] sin(p theta) cos(p theta) sin(p phi) cos(p phi)
-	//   [3] Bailout^2 - |Z|^2 (exact margin of the escape test), 0, 0, 0
-	// with Z rounded to float first. Point 0 is the zero state, the rebase target. See FractalMath::PackPowerRef.
-	// ---------------------------------------------------------------------------------------------
-	const ORBIT_STRIDE = 4;
-	const MAX_ITERATIONS = 1000;
 	const f32 = Math.fround;
+	function clampToFloatRange(v) { return f32(v > 1e30 ? 1e30 : (v < -1e30 ? -1e30 : v)); }
 
-	function packPoint(out, base, z, bailout, p, margin) {
-		const X = f32(z[0][0]), Y = f32(z[1][0]), Z = f32(z[2][0]);
+	/** GPU reference block for g_p at Z (12 floats, PackPowerRef). */
+	function packPowerRef(z, p, out, o) {
+		const FX = clampToFloatRange(ddToDouble(z[0])), FY = clampToFloatRange(ddToDouble(z[1])), FZ = clampToFloatRange(ddToDouble(z[2]));
+		const X = FX, Y = FY, ZZ = FZ;
 		const rho = Math.sqrt(X * X + Y * Y);
-		const r = Math.sqrt(X * X + Y * Y + Z * Z);
+		const r = Math.sqrt(X * X + Y * Y + ZZ * ZZ);
+		const theta = Math.atan2(rho, ZZ);
 		const phi = rho > 0 ? Math.atan2(Y, X) : 0;
-		let cosT = 1, sinT = 0, cosP = 1, sinP = 0;
-		if (r > 0) {
-			let aRe = Z / r, aIm = rho / r, bRe = rho > 0 ? X / rho : 1, bIm = rho > 0 ? Y / rho : 0;
-			let tRe = 1, tIm = 0, pRe = 1, pIm = 0;
+		let sinPT, cosPT, sinPP, cosPP;
+		if (isIntegerPower(p) && r > 0) {
+			let aRe = ZZ / r, aIm = rho / r;
+			let tRe = 1, tIm = 0;
+			let bRe = rho > 0 ? X / rho : 1, bIm = rho > 0 ? Y / rho : 0;
+			let pRe = 1, pIm = 0;
 			for (let e = p; e > 0; e >>= 1) {
 				if (e & 1) {
 					const nt = tRe * aRe - tIm * aIm; tIm = tRe * aIm + tIm * aRe; tRe = nt;
@@ -371,58 +526,195 @@ function makeLib() {
 				const na = aRe * aRe - aIm * aIm; aIm = 2 * aRe * aIm; aRe = na;
 				const nb = bRe * bRe - bIm * bIm; bIm = 2 * bRe * bIm; bRe = nb;
 			}
-			cosT = tRe; sinT = tIm; cosP = pRe; sinP = pIm;
+			cosPT = tRe; sinPT = tIm; cosPP = pRe; sinPP = pIm;
+		} else {
+			sinPT = Math.sin(p * theta); cosPT = Math.cos(p * theta);
+			sinPP = Math.sin(p * phi); cosPP = Math.cos(p * phi);
 		}
-		const o = base * ORBIT_STRIDE * 4;
-		out[o] = X; out[o + 1] = Y; out[o + 2] = Z; out[o + 3] = r;
-		out[o + 4] = rho; out[o + 5] = r > 0 ? Math.pow(r, p) : 0; out[o + 6] = phi; out[o + 7] = r > 0 ? 1 / r : 0;
-		out[o + 8] = sinT; out[o + 9] = cosT; out[o + 10] = sinP; out[o + 11] = cosP;
-		out[o + 12] = margin;
+		out[o] = FX; out[o + 1] = FY; out[o + 2] = FZ; out[o + 3] = clampToFloatRange(r);
+		out[o + 4] = clampToFloatRange(rho); out[o + 5] = clampToFloatRange(r > 0 ? Math.pow(r, p) : 0);
+		out[o + 6] = f32(phi); out[o + 7] = r > 0 ? clampToFloatRange(1 / r) : 0;
+		out[o + 8] = f32(sinPT); out[o + 9] = f32(cosPT); out[o + 10] = f32(sinPP); out[o + 11] = f32(cosPP);
 	}
 
-	/** Orbit of the reference point c; returns { floats, count }. */
-	function generateReferenceOrbit(c, p, bailout, maxIterations) {
-		const out = new Float32Array((maxIterations + 1) * ORBIT_STRIDE * 4);
+	/**
+	 * Series step of g_p at Z (PowerMapSeriesStep): Jacobian by central differences and the linear validity limit
+	 * |d| <= Tolerance * min(|Z|, rho) (and < |y| next to the branch cut of non-integer powers).
+	 */
+	function powerMapSeriesStep(z, p, tolerance, J) {
+		const r = Math.sqrt(z[0] * z[0] + z[1] * z[1] + z[2] * z[2]);
+		const rho = Math.sqrt(z[0] * z[0] + z[1] * z[1]);
+		if (!(rho > 0)) return 0;
+		const smooth = r < rho ? r : rho;
+		const toBranchCut = (!isIntegerPower(p) && z[0] < 0) ? Math.abs(z[1]) : 1e300;
+		if (!(toBranchCut > 0)) return 0;
+		const h = 1e-6 * (smooth < toBranchCut ? smooth : toBranchCut);
+		for (let col = 0; col < 3; col++) {
+			const plus = z.slice(), minus = z.slice();
+			plus[col] += h; minus[col] -= h;
+			const gp = mandelbulbPowerD(plus, p), gm = mandelbulbPowerD(minus, p);
+			for (let row = 0; row < 3; row++) J[row][col] = (gp[row] - gm[row]) / (2 * h);
+		}
+		const linear = tolerance * smooth;
+		return linear < toBranchCut ? linear : toBranchCut;
+	}
+
+	/** Radius of a sphere around the origin that contains the whole set (PowerMapBoundingRadius, Mandelbrot type). */
+	function boundingRadius(p) {
+		if (p < 1.05) return Infinity;
+		return Math.max(1, Math.pow(2, 1 / (p - 1)));
+	}
+	/** PowerMapReferenceEscapeRadius. */
+	function referenceEscapeRadius(bailout, p) {
+		const wanted = 4 * bailout;
+		const floatSafe = Math.pow(10, 28 / (p > 1 ? p : 1));
+		return wanted < floatSafe ? wanted : (floatSafe > 2 * bailout ? floatSafe : 2 * bailout);
+	}
+
+	// ---------------------------------------------------------------------------------------------
+	// Reference orbit with the linear series skip (FractalReferenceOrbit.h). GPU layout per point m, 6 float4:
+	//   [0..2]  reference block (packPowerRef)
+	//   [3..5]  series rows i: (A_m[i][0], A_m[i][1], A_m[i][2], extra_i), extra_0 = skip radius,
+	//           extra_1 = reference running derivative dr_m, extra_2 = Bailout^2 - |Z_m|^2
+	// Point 0 is the zero state (the rebase target); the orbit proper starts at m = 1.
+	// ---------------------------------------------------------------------------------------------
+	const PAYLOAD_FLOAT4 = 3, STATE_DIM = 3;
+	const ORBIT_STRIDE = PAYLOAD_FLOAT4 + STATE_DIM;
+	const DEFAULT_SERIES_TOLERANCE = 1e-8;
+	const MAX_ITERATIONS = 1000;
+
+	function makeSeriesState() {
+		return {
+			A: [[1, 0, 0], [0, 1, 0], [0, 0, 1]], // Start() is the identity for the Mandelbulb, A_1 = E
+			derivative: 1, radius: 1e30, stopped: false,
+		};
+	}
+	function seriesStore(s, out, o) {
+		for (let row = 0; row < 3; row++) {
+			for (let col = 0; col < 3; col++) out[o + 4 * row + col] = clampToFloatRange(s.A[row][col]);
+			out[o + 4 * row + 3] = 0;
+		}
+		out[o + 3] = s.stopped ? 0 : clampToFloatRange(s.radius);
+		out[o + 7] = clampToFloatRange(s.derivative);
+	}
+	function seriesAdvance(s, z, p, bailout, tolerance) {
+		if (s.stopped) return;
+		if (!(tolerance > 0) || !(z[0] * z[0] + z[1] * z[1] + z[2] * z[2] <= bailout * bailout)) { s.stopped = true; return; }
+		const J = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+		let limit = powerMapSeriesStep(z, p, tolerance, J);
+		const toBailout = 0.5 * (bailout - Math.sqrt(z[0] * z[0] + z[1] * z[1] + z[2] * z[2]));
+		limit = limit < toBailout ? limit : toBailout;
+		let normA2 = 0;
+		for (let row = 0; row < 3; row++) for (let col = 0; col < 3; col++) normA2 += s.A[row][col] * s.A[row][col];
+		if (!(limit > 0) || !(normA2 > 0)) { s.stopped = true; return; }
+		const radiusHere = limit / Math.sqrt(normA2);
+		s.radius = radiusHere < s.radius ? radiusHere : s.radius;
+		const E = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+		const next = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+		for (let row = 0; row < 3; row++) {
+			for (let col = 0; col < 3; col++) {
+				let sum = E[row][col]; // the Mandelbulb adds c every step
+				for (let k = 0; k < 3; k++) sum += J[row][k] * s.A[k][col];
+				next[row][col] = sum;
+			}
+		}
+		s.A = next;
+		s.derivative = derivativeStep(z, s.derivative, p);
+	}
+
+	/** Orbit of the reference point c (GenerateReferenceOrbit): { floats, count }. */
+	function generateReferenceOrbit(c, p, bailout, maxIterations, tolerance) {
+		if (tolerance === undefined) tolerance = DEFAULT_SERIES_TOLERANCE;
+		maxIterations = Math.max(maxIterations, 1);
+		const floatsPerPoint = 4 * ORBIT_STRIDE;
+		const out = new Float32Array((maxIterations + 1) * floatsPerPoint);
 		const escape = referenceEscapeRadius(bailout, p);
-		const b2 = bailout * bailout;
-		packPoint(out, 0, [DD_ZERO, DD_ZERO, DD_ZERO], bailout, p, f32(b2));
+		const b2 = [bailout * bailout, 0];
+		const series = makeSeriesState();
+		const write = (index, z, withSeries) => {
+			const o = index * floatsPerPoint;
+			packPowerRef(z, p, out, o);
+			const rows = o + 4 * PAYLOAD_FLOAT4;
+			if (withSeries) seriesStore(series, out, rows);
+			else for (let i = 0; i < 4 * STATE_DIM; i++) out[rows + i] = 0;
+			out[rows + 4 * 2 + 3] = clampToFloatRange(ddToDouble(ddSub(b2, v3Dot(z, z))));
+		};
+		write(0, [[0, 0], [0, 0], [0, 0]], false);
 		let z = c;
 		let count = 1;
 		for (let m = 1; m <= maxIterations; m++) {
-			const r2 = v3Dot(z, z);
-			packPoint(out, m, z, bailout, p, f32(ddSub([b2, 0], r2)[0]));
+			write(m, z, true);
 			count++;
-			if (r2[0] > escape * escape || m === maxIterations) break;
+			if (ddToDouble(v3Dot(z, z)) > escape * escape || m === maxIterations) break;
+			seriesAdvance(series, v3ToDoubles(z), p, bailout, tolerance);
 			z = bulbStep(z, c, p);
 		}
 		return { floats: out, count };
 	}
 
 	// ---------------------------------------------------------------------------------------------
-	// Reference placement: march rays from the camera with the double-double estimator (FractalMath::MarchReferenceFan).
+	// Distance estimate and reference march (FractalReferenceOrbit.h)
 	// ---------------------------------------------------------------------------------------------
+	/**
+	 * Escape-time distance estimate at the double-double point c, plus `safe`: the estimate capped by the distance to
+	 * the bounding sphere (BoundedDistanceEstimate / SafeDistance). Hits are decided on `distance`.
+	 */
+	function distanceEstimate(c, p, bailout, maxIterations) {
+		const b2 = [bailout * bailout, 0];
+		let z = c, dr = 1, r = 0, escaped = false, n = 1;
+		for (; n < maxIterations; n++) {
+			const r2 = v3Dot(z, z);
+			r = Math.sqrt(ddToDouble(r2));
+			if (r2[0] > b2[0] || (r2[0] === b2[0] && r2[1] > 0)) { escaped = true; break; }
+			dr = derivativeStep(v3ToDoubles(z), dr, p);
+			z = bulbStep(z, c, p);
+		}
+		const dist = escaped ? 0.5 * r * Math.log(r) / dr : 0;
+		const cd = v3ToDoubles(c);
+		const outside = Math.sqrt(cd[0] * cd[0] + cd[1] * cd[1] + cd[2] * cd[2]) - boundingRadius(p);
+		return { distance: dist, safe: outside > 0 && outside < dist ? outside : dist, escaped, iterations: n };
+	}
+
+	/** Iterations a pixel footprint (fractal units) needs (ComputeIterationBudget, escape-time family). */
+	function iterationBudget(p, base, bailout, footprint) {
+		base = base > 2 ? base : 2;
+		if (!(footprint > 0)) return base;
+		const growth = Math.max(Math.abs(p), 1.5);
+		const needed = 2 * Math.log((bailout > 1 ? bailout : 1) / footprint) / Math.log(growth) + 20;
+		const capped = needed < 0 ? 0 : (needed > 1000 ? 1000 : needed);
+		let rounded = Math.ceil(capped / 50) * 50;
+		rounded = rounded < base ? base : rounded;
+		return rounded > 1000 ? 1000 : rounded;
+	}
+
+	/** MarchReferenceRay: where to put the reference along origin + t * dir (fractal units; Scale = 1). */
 	function marchReferenceRay(origin, dir, s) {
-		const result = { hit: false, hitDistance: 0, referenceDistance: 0, cameraDE: 0, inside: false };
+		const result = { hit: false, hitDistance: 0, referenceDistance: 0, inside: false, steps: 0 };
 		result.cameraDE = distanceEstimate(origin, s.power, s.bailout, s.iterations).safe;
 		let dist = 0, end = s.maxDistance;
 		// A ray that misses the bounding sphere hits nothing; one that crosses it is marched from where it enters.
-		const o = v3ToDoubles(origin), radius = boundingRadius(s.power) * 1.001;
-		const c = o[0] * o[0] + o[1] * o[1] + o[2] * o[2] - radius * radius;
-		if (c > 0) {
-			const b = o[0] * dir[0] + o[1] * dir[1] + o[2] * dir[2], disc = b * b - c;
-			if (b >= 0 || disc < 0) return result;
-			dist = -b - Math.sqrt(disc);
-			end = Math.min(end, -b + Math.sqrt(disc));
+		const radius = boundingRadius(s.power) * 1.001;
+		if (radius < 1e300) {
+			const o = v3ToDoubles(origin);
+			const c = o[0] * o[0] + o[1] * o[1] + o[2] * o[2] - radius * radius;
+			if (c > 0) {
+				const b = o[0] * dir[0] + o[1] * dir[1] + o[2] * dir[2], disc = b * b - c;
+				if (b >= 0 || disc < 0) return result;
+				const root = Math.sqrt(disc);
+				dist = -b - root;
+				end = end < -b + root ? end : -b + root;
+			}
 		}
 		for (let step = 0; step < s.maxSteps && dist < end; step++) {
 			const de = distanceEstimate(offsetDD(origin, dir, dist), s.power, s.bailout, s.iterations);
+			result.steps = step + 1;
 			const pixelRadius = dist * s.pixelRadiusPerUnitDistance;
 			if (!de.escaped || de.distance <= pixelRadius) {
 				result.hit = true;
 				result.hitDistance = dist;
 				break;
 			}
-			dist += Math.max(de.distance, 0.5 * pixelRadius);
+			dist += de.distance > 0.5 * pixelRadius ? de.distance : 0.5 * pixelRadius;
 		}
 		if (!result.hit) return result;
 		result.referenceDistance = result.hitDistance;
@@ -438,7 +730,7 @@ function makeLib() {
 		return result;
 	}
 
-	/** Nearest hit over all rays; the camera itself when nothing is hit or the hit is farther than 1000x the camera's distance. */
+	/** MarchReferenceFan: the nearest hit over all rays; the camera when nothing is hit or the hit is > 1000x farther than the camera's distance. */
 	function marchReferenceFan(origin, dirs, s) {
 		let best = null;
 		const limited = Object.assign({}, s);
@@ -453,68 +745,74 @@ function makeLib() {
 			}
 			if (best.hit) {
 				const reach = best.hitDistance > 0 ? best.hitDistance : s.pixelRadiusPerUnitDistance;
-				limited.maxDistance = Math.min(reach, s.maxDistance);
+				limited.maxDistance = reach < s.maxDistance ? reach : s.maxDistance;
 			}
 		}
-		const reference = Math.max(best.cameraDE, 1e-3);
+		const reference = best.cameraDE > 1e-3 ? best.cameraDE : 1e-3;
 		if (!best.hit || best.hitDistance > 1000 * reference) {
 			best.hit = false; best.referenceDistance = 0; best.inside = false;
 		}
 		return best;
 	}
 
-	/**
-	 * Complete reference for a camera: DE at the camera, iteration budget for its pixel footprint, the fan march that places
-	 * the reference point and its orbit.
-	 */
-	function buildReference(req) {
-		const origin = req.position; // [dd, dd, dd]
-		const bailout = req.bailout, p = req.power;
-		let cam = distanceEstimate(origin, p, bailout, req.baseIterations);
-		// A camera next to the surface may need a long orbit just to escape (the orbits there expand slowly), and its
-		// pixels, a few hundred times closer to the surface, need that many plus ~20 more: size the orbit from it.
-		for (let its = req.baseIterations; !cam.escaped && its < MAX_ITERATIONS; ) { its = Math.min(MAX_ITERATIONS, its * 2); cam = distanceEstimate(origin, p, bailout, its); }
-		const footprint = Math.max(cam.safe, 1e-30) * req.pixelRadiusPerUnitDistance;
-		const iterations = Math.min(MAX_ITERATIONS, Math.max(iterationBudget(p, req.baseIterations, bailout, footprint),
-			cam.escaped ? Math.ceil((cam.iterations + 60) * 1.3 / 50) * 50 : MAX_ITERATIONS));
-		const march = marchReferenceFan(origin, req.dirs, {
-			power: p, bailout, iterations,
-			maxSteps: req.maxSteps, maxDistance: req.maxDistance,
-			pixelRadiusPerUnitDistance: req.pixelRadiusPerUnitDistance,
-		});
-		const center = march.hit ? offsetDD(origin, req.dirs[march.dirIndex || 0], march.referenceDistance) : origin;
-		const orbit = generateReferenceOrbit(center, p, bailout, iterations);
-		return {
-			center, orbit: orbit.floats, count: orbit.count, iterations,
-			hit: march.hit, inside: march.inside, cameraDE: cam.safe, cameraEscaped: cam.escaped, cameraIterations: cam.iterations,
+	// Reference fan (FractalCamera.h BuildReferenceFan): the view centre first, then the 3x3 ring, then the rest of a
+	// 5x5 grid. The first REFERENCE_FAN_QUICK_COUNT rays are a complete coarse set.
+	const REFERENCE_FAN_COUNT = 25, REFERENCE_FAN_QUICK_COUNT = 9;
+	/** dirAt(px, py) gives the (unnormalised) world direction through full-resolution pixel coordinates (px, py). */
+	function buildReferenceFan(dirAt, width, height) {
+		const fractions = [0.1, 0.3, 0.5, 0.7, 0.9];
+		const used = new Set();
+		const out = [];
+		const add = (gx, gy) => {
+			const key = gy * 5 + gx;
+			if (used.has(key)) return;
+			used.add(key);
+			const d = dirAt(fractions[gx] * width, fractions[gy] * height);
+			const l = Math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+			out.push([d[0] / l, d[1] / l, d[2] / l]);
 		};
+		add(2, 2);
+		for (let gy = 0; gy < 5; gy += 2) for (let gx = 0; gx < 5; gx += 2) add(gx, gy);
+		for (let gy = 0; gy < 5; gy++) for (let gx = 0; gx < 5; gx++) add(gx, gy);
+		return out;
 	}
 
 	/**
-	 * Teleport: the camera `depth` in front of the surface met by the ray start + t * dir (null if there is none). The
-	 * surface is the boundary of the escaping points: a coarse DE march brackets it, then bisection in double-double
-	 * narrows it to a hundredth of `depth`. (A DE march alone converges too slowly towards a surface at 1e-24: the
-	 * estimate is conservative, so each step only closes a fraction of the gap.)
+	 * Complete reference for a camera (FFractalReferenceManager::Generate): the fan march (only the quick set when
+	 * `quick`) places the reference point, then its orbit with the series skip.
 	 */
-	function surfaceCamera(start, dir, depth, power, bailout) {
+	function buildReference(req) {
+		const origin = req.position, bailout = req.bailout, p = req.power;
+		const dirs = req.quick ? req.dirs.slice(0, REFERENCE_FAN_QUICK_COUNT) : req.dirs;
+		const march = marchReferenceFan(origin, dirs, {
+			power: p, bailout, iterations: req.iterations,
+			maxSteps: req.maxSteps, maxDistance: req.maxDistance,
+			pixelRadiusPerUnitDistance: req.pixelRadiusPerUnitDistance,
+		});
+		const center = offsetDD(origin, dirs[march.dirIndex || 0], march.referenceDistance);
+		const orbit = generateReferenceOrbit(center, p, bailout, req.iterations);
+		return { center, orbit: orbit.floats, count: orbit.count, hit: march.hit, inside: march.inside, cameraDE: march.cameraDE };
+	}
+
+	/**
+	 * Teleport: the camera about `depth` (distance estimate) in front of the surface met by the ray start + t * dir, or
+	 * null. The surface is the one the renderer draws with `iterations` (the boundary of the points escaping within
+	 * them): a coarse march brackets it, double-double bisection narrows it, then the camera steps back until the
+	 * distance estimate reaches `depth`.
+	 */
+	function surfaceCamera(start, dir, depth, power, bailout, iterations) {
 		const precision = depth * 0.01;
-		// Near a surface the orbits expand by only ~1.4x per iteration, so a point 1e-20 away needs ~150 iterations to escape
-		// and one at 1e-27 several hundred: judge escape with a long orbit or the "surface" found is far from the real one.
-		const iterations = depth < 1e-9 ? 1000 : Math.max(iterationBudget(power, 150, bailout, precision), 300);
 		const origin = [[start[0], 0], [start[1], 0], [start[2], 0]];
-		// position at dd parameter t along the ray (t a double-double, so a gap of 1e-24 survives)
 		const at = (t) => [ddAdd(origin[0], ddMulD(t, dir[0])), ddAdd(origin[1], ddMulD(t, dir[1])), ddAdd(origin[2], ddMulD(t, dir[2]))];
 		const escapes = (t) => distanceEstimate(at(t), power, bailout, iterations).escaped;
-
 		let t = 0;
 		const r = boundingRadius(power) * 1.001;
 		const c = start[0] * start[0] + start[1] * start[1] + start[2] * start[2] - r * r;
-		if (c > 0) {
+		if (r < 1e300 && c > 0) {
 			const b = start[0] * dir[0] + start[1] * dir[1] + start[2] * dir[2], disc = b * b - c;
 			if (b >= 0 || disc < 0) return null;
 			t = -b - Math.sqrt(disc);
 		}
-		// coarse march to within 1e-3 of the surface
 		let outside = null;
 		for (let i = 0; i < 400; i++) {
 			const de = distanceEstimate(at([t, 0]), power, bailout, 150);
@@ -525,7 +823,6 @@ function makeLib() {
 			if (t > 100) return null;
 		}
 		if (outside === null) return null;
-		// bracket: lo escapes, hi does not
 		let lo = [outside, 0], inc = 1e-3, hi = null;
 		for (let i = 0; i < 40 && !hi; i++) {
 			const probe = ddAddD(lo, inc);
@@ -533,22 +830,19 @@ function makeLib() {
 		}
 		if (!hi) return null;
 		for (let i = 0; i < 140; i++) {
-			if (hi[0] - lo[0] < precision) break;
-			const mid = ddMulD(ddAdd(lo, hi), 0.5);
+			if (ddToDouble(ddSub(hi, lo)) < precision) break;
+			const mid = ddMulPow2(ddAdd(lo, hi), 0.5);
 			if (escapes(mid)) lo = mid; else hi = mid;
 		}
-		// Step back until the distance estimate (the nearest part of the set in any direction, not just along the ray)
-		// reaches `depth`: the surface is fractal, so other filaments can be much closer than the one the ray found.
 		let fallback = null;
 		for (let back = depth, i = 0; i < 400; i++, back *= 1.08) {
-			const p = at(ddAddD(lo, -back));
-			const de = distanceEstimate(p, power, bailout, iterations);
+			const pos = at(ddAddD(lo, -back));
+			const de = distanceEstimate(pos, power, bailout, iterations);
 			if (!de.escaped || de.distance < depth) continue;
-			if (de.distance <= 8 * depth) return p;
-			if (!fallback || de.distance < fallback.de) fallback = { p, de: de.distance };
+			if (de.distance <= 8 * depth) return pos;
+			if (!fallback || de.distance < fallback.de) fallback = { pos, de: de.distance };
 		}
-		if (fallback) return fallback.p;
-		return null;
+		return fallback ? fallback.pos : null;
 	}
 
 	// ---------------------------------------------------------------------------------------------
@@ -579,39 +873,45 @@ function makeLib() {
 		if (neg) v = -v;
 		const unit = 10n ** BigInt(guard);
 		v = (v + unit / 2n) / unit;
-		let s = v.toString().padStart(decimals + 1, '0');
+		const s = v.toString().padStart(decimals + 1, '0');
 		const whole = s.slice(0, s.length - decimals);
 		const frac = s.slice(s.length - decimals);
 		return (neg && v !== 0n ? '-' : '') + whole + (decimals ? '.' + frac : '');
 	}
 
 	return {
-		ddAdd, ddSub, ddMul, ddDiv, ddSqrt, ddAddD, ddMulD, ddToDouble,
+		ddAdd, ddSub, ddMul, ddDiv, ddSqrt, ddAddD, ddMulD, ddToDouble, ddExp, ddLog, ddSinCos, ddAtan2, ddPow,
 		v3Add, v3Sub, v3Dot, v3AddDoubles, v3ToDoubles, offsetDD,
-		bulbStep, bulbPower, distanceEstimate, boundingRadius, referenceEscapeRadius, iterationBudget,
-		generateReferenceOrbit, marchReferenceFan, buildReference, surfaceCamera, formatDD,
-		ORBIT_STRIDE, MAX_ITERATIONS,
+		isIntegerPower, mandelbulbPowerDD, mandelbulbPowerD, bulbStep, distanceEstimate, boundingRadius, referenceEscapeRadius,
+		iterationBudget, generateReferenceOrbit, marchReferenceFan, buildReferenceFan, buildReference, surfaceCamera, formatDD,
+		ORBIT_STRIDE, MAX_ITERATIONS, REFERENCE_FAN_COUNT, REFERENCE_FAN_QUICK_COUNT,
 	};
 }
 
 </script>
 <script>
-const SHADER = `// Mandelbulb perturbation ray marcher (WGSL). A port of Plugins/FractalRenderer/Shaders (FractalPowerMap.ush,
-// FractalDE.ush, FractalRender.ush) for integer powers 2..16, without the linear series skip.
+const SHADER = `// Mandelbulb perturbation ray marcher: a WGSL port of Plugins/FractalRenderer/Shaders for the Mandelbulb
+// (FractalMathCommon.ush, FractalPowerMap.ush, FormulaMandelbulb.ush, FractalDE.ush, FractalRender.ush). Function names
+// keep the FP_ prefix of the originals so the two can be read side by side.
 //
 // Every sample is c = C_ref + dc with its orbit z_n = Z_n + d_n. Z_n is the reference orbit computed on the CPU in
-// double-double (lib.js); dc and d_n are f32. Each step evaluates g_p(Z + d) - g_p(Z) with exact identities (no
-// cancellation), and a pixel that gets closer to the origin than to the reference rebases onto orbit point 0.
+// double-double (lib.js) and dc, d_n are f32. Each step evaluates g_p(Z + d) - g_p(Z) with exact identities, a pixel that
+// leaves the reference rebases onto orbit point 0, and the linear series skip lets each pixel start where its
+// perturbation stops being linear. World units are fractal units here (Scale = 1).
+
+// Compiled as two pipelines: STATIC_POWER = 8 (the classic Mandelbulb, loops unrolled; the FP_STATIC_POWER_8 permutation)
+// and 0 (any power).
+override STATIC_POWER: i32 = 0;
 
 struct Params {
-	ray00: vec4<f32>,   // direction through pixel (0, 0) (xyz, unnormalised), hit threshold per unit distance (w)
-	rayDX: vec4<f32>,   // per-pixel step to the right, power (w)
-	rayDY: vec4<f32>,   // per-pixel step down, bailout (w)
-	camOff: vec4<f32>,  // camera - C_ref, max ray distance (w)
-	refC: vec4<f32>,    // float(C_ref) (only used without a reference orbit), bounding radius (w)
-	sizeI: vec4<i32>,   // width, height, orbit points, max iterations
-	marchI: vec4<i32>,  // max ray steps, integer power, 0, 0
-	misc: vec4<f32>,    // footprint above which plain float iteration is used, haze start, 0, 0
+	ray00: vec4<f32>,   // direction through pixel (0, 0), unnormalised (xyz); hit threshold per unit distance (w)
+	rayDX: vec4<f32>,   // per-pixel step to the right (xyz); power (w)
+	rayDY: vec4<f32>,   // per-pixel step down (xyz); bailout (w)
+	camOff: vec4<f32>,  // camera - C_ref (xyz); max ray distance (w)
+	refC: vec4<f32>,    // float(C_ref) (xyz); bounding radius (w)
+	sizeI: vec4<i32>,   // marched width, height, orbit length, max iterations
+	marchI: vec4<i32>,  // max ray steps, 0, 0, 0
+	misc: vec4<f32>,    // footprint above which plain float iteration is used (x); full-resolution pixels per marched pixel (zw)
 };
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -619,28 +919,93 @@ struct Params {
 @group(0) @binding(2) var Out: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(3) var<storage, read_write> Probe: array<f32>;
 
-const STRIDE: i32 = 4;
+const FP_PI: f32 = 3.14159265358979;
+const FP_TWO_PI: f32 = 6.28318530717959;
+const FP_HALF_PI: f32 = 1.57079632679490;
+const FP_TWO_OVER_PI: f32 = 0.636619772367581;
+
+// Orbit layout (lib.js generateReferenceOrbit): per point 3 float4 of reference data, then 3 series rows.
+const FP_ORBIT_STRIDE: i32 = 6;
+const FP_SKIP_ROW: i32 = 3;
 
 // ---------------------------------------------------------------------------------------------
-// Helpers (FractalMathCommon.ush)
+// FractalMathCommon.ush
 // ---------------------------------------------------------------------------------------------
 
-// Exact power of two s such that v * s is in [1, 2) (2^127 for v == 0).
-fn pow2Normalizer(v: f32) -> f32 {
-	return bitcast<f32>(0x7F000000u - (bitcast<u32>(v) & 0x7F800000u));
+// sin/cos with relative accuracy for tiny |x| (Cody-Waite reduction by pi/2, Cephes polynomials). Returns (sin, cos).
+fn FP_SinCos(x: f32) -> vec2<f32> {
+	let k = round(x * FP_TWO_OVER_PI);
+	var r = x - k * 1.5703125;
+	r = r - k * 4.837512969970703125e-4;
+	r = r - k * 7.54978995489188216e-8;
+	let r2 = r * r;
+	let sinR = r + r * r2 * (-1.6666654611e-1 + r2 * (8.3321608736e-3 + r2 * -1.9515295891e-4));
+	let cosR = 1.0 - 0.5 * r2 + r2 * r2 * (4.166664568298827e-2 + r2 * (-1.388731625493765e-3 + r2 * 2.443315711809948e-5));
+	let q = i32(k) & 3;
+	let s = select(sinR, cosR, (q & 1) != 0);
+	let c = select(cosR, sinR, (q & 1) != 0);
+	return vec2<f32>(select(s, -s, (q & 2) != 0), select(c, -c, ((q + 1) & 2) != 0));
 }
-// 1 / pow2Normalizer(v): the power of two with v's exponent (0 for v == 0).
-fn pow2Denormalizer(v: f32) -> f32 {
-	return bitcast<f32>(bitcast<u32>(v) & 0x7F800000u);
+
+// atan(t) for t in [0, 1], minimax in relative error.
+fn FP_AtanUnit(t: f32) -> f32 {
+	let z = t * t;
+	var p = 2.849885728e-03;
+	p = p * z - 1.606861316e-02;
+	p = p * z + 4.269149527e-02;
+	p = p * z - 7.504292578e-02;
+	p = p * z + 1.064093262e-01;
+	p = p * z - 1.420364380e-01;
+	p = p * z + 1.999261975e-01;
+	p = p * z - 3.333307207e-01;
+	p = p * z + 1.0;
+	return t * p;
+}
+
+// atan2 with relative accuracy for small angles. atan2(0, 0) = 0.
+fn FP_Atan2(y: f32, x: f32) -> f32 {
+	let ax = abs(x);
+	let ay = abs(y);
+	let swap = ay > ax;
+	let num = select(ay, ax, swap);
+	let den = select(ax, ay, swap);
+	var a = FP_AtanUnit(select(0.0, num / den, den > 0.0));
+	a = select(a, FP_HALF_PI - a, swap);
+	a = select(a, FP_PI - a, x < 0.0);
+	return select(a, -a, y < 0.0);
+}
+
+// log(1 + x) with relative accuracy for small |x|.
+fn FP_Log1p(x: f32) -> f32 {
+	if (abs(x) > 0.5) { return log(1.0 + x); }
+	let t = x / (2.0 + x);
+	let t2 = t * t;
+	let p = 0.333333333 + t2 * (0.2 + t2 * (0.142857143 + t2 * (0.111111111 + t2 * (0.0909090909 + t2 * (0.0769230769 + t2 * 0.0666666667)))));
+	return 2.0 * t + 2.0 * t * t2 * p;
+}
+
+// exp(x) - 1 with relative accuracy for small |x|.
+fn FP_Expm1(x: f32) -> f32 {
+	if (abs(x) > 1.0) { return exp(x) - 1.0; }
+	return x * (1.0 + x * (0.5 + x * (0.166666667 + x * (0.0416666667 + x * (0.00833333333 + x * (0.00138888889
+		+ x * (1.98412698e-4 + x * (2.48015873e-5 + x * (2.75573192e-6 + x * (2.75573192e-7 + x * 2.50521084e-8))))))))));
+}
+
+fn FP_Pow2Normalizer(v: f32) -> f32 { return bitcast<f32>(0x7F000000u - (bitcast<u32>(v) & 0x7F800000u)); }
+fn FP_Pow2Denormalizer(v: f32) -> f32 { return bitcast<f32>(bitcast<u32>(v) & 0x7F800000u); }
+
+// Integer power for the trig-free paths, 0 for non-integer powers.
+fn FP_IntegerPower(power: f32) -> i32 {
+	if (STATIC_POWER > 0) { return STATIC_POWER; }
+	if (power == floor(power) && power >= 2.0 && power <= 32.0) { return i32(power); }
+	return 0;
 }
 
 // (a + ib)^p for integer p >= 1 by binary powering.
-fn complexPowInt(a: f32, b: f32, p: i32) -> vec2<f32> {
+fn FP_ComplexPowInt(a: f32, b: f32, p: i32) -> vec2<f32> {
 	var ra = a;
 	var rb = b;
-	var bit = i32(firstLeadingBit(u32(p))) - 1;
-	loop {
-		if (bit < 0) { break; }
+	for (var bit = i32(firstLeadingBit(u32(p))) - 1; bit >= 0; bit = bit - 1) {
 		let na = ra * ra - rb * rb;
 		rb = 2.0 * ra * rb;
 		ra = na;
@@ -649,18 +1014,15 @@ fn complexPowInt(a: f32, b: f32, p: i32) -> vec2<f32> {
 			rb = ra * b + rb * a;
 			ra = ma;
 		}
-		bit = bit - 1;
 	}
 	return vec2<f32>(ra, rb);
 }
 
-// A rotation stored as (V, S) = (1 - cos a, sin a), raised to the integer power p (no cancellation for tiny angles).
-fn versSinPowInt(v: f32, s: f32, p: i32) -> vec2<f32> {
+// A rotation (V, S) = (1 - cos a, sin a) raised to the integer power p without cancellation.
+fn FP_VersSinPowInt(v: f32, s: f32, p: i32) -> vec2<f32> {
 	var rv = v;
 	var rs = s;
-	var bit = i32(firstLeadingBit(u32(p))) - 1;
-	loop {
-		if (bit < 0) { break; }
+	for (var bit = i32(firstLeadingBit(u32(p))) - 1; bit >= 0; bit = bit - 1) {
 		let ns = 2.0 * rs * (1.0 - rv);
 		rv = rv * (2.0 - rv) + rs * rs;
 		rs = ns;
@@ -669,377 +1031,464 @@ fn versSinPowInt(v: f32, s: f32, p: i32) -> vec2<f32> {
 			rv = rv + v - rv * v + rs * s;
 			rs = ms;
 		}
-		bit = bit - 1;
 	}
 	return vec2<f32>(rv, rs);
 }
 
-fn versineFromCosSin(c: f32, s: f32) -> f32 {
+fn FP_VersineFromCosSin(c: f32, s: f32) -> f32 {
 	if (c >= 0.0) { return s * s / (1.0 + c); }
 	return 1.0 - c;
 }
 
 // ---------------------------------------------------------------------------------------------
-// Mandelbulb power map (FractalPowerMap.ush, integer power)
+// FractalPowerMap.ush
 // ---------------------------------------------------------------------------------------------
 
-// g_p(W) with |W| = rw and 1/|W| = invRw; .w = |W|^(p-1).
-fn bulbPower(w: vec3<f32>, rw: f32, invRw: f32, pInt: i32) -> vec4<f32> {
-	let maxXY = max(abs(w.x), abs(w.y));
-	let xyScale = pow2Normalizer(maxXY);
-	let swx = w.x * xyScale;
-	let swy = w.y * xyScale;
-	let srho2 = swx * swx + swy * swy;
-	var invSRho = 0.0;
-	if (srho2 > 0.0) { invSRho = inverseSqrt(srho2); }
-	let rhoW = srho2 * invSRho * pow2Denormalizer(maxXY);
-	let t = complexPowInt(w.z * invRw, rhoW * invRw, pInt);
-	var bx = 1.0;
-	if (srho2 > 0.0) { bx = swx * invSRho; }
-	let q = complexPowInt(bx, swy * invSRho, pInt);
-	let rwPowM1 = complexPowInt(rw, 0.0, pInt - 1).x;
-	let rwPow = rwPowM1 * rw;
-	return vec4<f32>(rwPow * vec3<f32>(t.y * q.x, t.y * q.y, t.x), rwPowM1);
+struct FPPowerRef {
+	Z: vec3<f32>,
+	R: f32,
+	Rho: f32,
+	RPow: f32,
+	Phi: f32,
+	InvR: f32,
+	SinPT: f32,
+	CosPT: f32,
+	SinPP: f32,
+	CosPP: f32,
 }
 
-// g_p(Z + d) - g_p(Z) for the reference point stored at Orbit[base ..], W = Z + d. .w = |W|^(p-1).
-fn perturbedPowerDelta(base: i32, d: vec3<f32>, w: vec3<f32>, rw: f32, invRw: f32, pInt: i32) -> vec4<f32> {
+fn FP_LoadPowerRef(base: i32) -> FPPowerRef {
 	let a = Orbit[base];
 	let b = Orbit[base + 1];
 	let c = Orbit[base + 2];
-	let refZ = a.xyz;
-	let refR = a.w;
-	let refRho = b.x;
-	let refRPow = b.y;
-	let refInvR = b.w;
-	let sinPT = c.x;
-	let cosPT = c.y;
-	let sinPP = c.z;
-	let cosPP = c.w;
+	var r: FPPowerRef;
+	r.Z = a.xyz; r.R = a.w;
+	r.Rho = b.x; r.RPow = b.y; r.Phi = b.z; r.InvR = b.w;
+	r.SinPT = c.x; r.CosPT = c.y; r.SinPP = c.z; r.CosPP = c.w;
+	return r;
+}
 
-	// The reference is negligible next to the full point (after a rebase it is 0): evaluate directly.
-	if (refR <= 0.5 * rw) {
-		let gw = bulbPower(w, rw, invRw, pInt);
-		let gref = refRPow * vec3<f32>(sinPT * cosPP, sinPT * sinPP, cosPT);
+// g_p(W) evaluated directly, |W| = rw, 1/|W| = invRw; .w = |W|^(p-1).
+fn FP_MandelbulbPower(w: vec3<f32>, rw: f32, invRw: f32, power: f32, powerInt: i32) -> vec4<f32> {
+	if (powerInt > 0) {
+		let maxXY = max(abs(w.x), abs(w.y));
+		let xyScale = FP_Pow2Normalizer(maxXY);
+		let swx = w.x * xyScale;
+		let swy = w.y * xyScale;
+		let sRho2 = swx * swx + swy * swy;
+		let invSRho = select(0.0, inverseSqrt(sRho2), sRho2 > 0.0);
+		let rhoW = sRho2 * invSRho * FP_Pow2Denormalizer(maxXY);
+		let t = FP_ComplexPowInt(w.z * invRw, rhoW * invRw, powerInt);
+		let q = FP_ComplexPowInt(select(1.0, swx * invSRho, sRho2 > 0.0), swy * invSRho, powerInt);
+		var rwPowM1 = 1.0;
+		if (powerInt > 1) { rwPowM1 = FP_ComplexPowInt(rw, 0.0, powerInt - 1).x; }
+		let rwPow = rwPowM1 * rw;
+		return vec4<f32>(rwPow * vec3<f32>(t.y * q.x, t.y * q.y, t.x), rwPowM1);
+	}
+	let rho = sqrt(w.x * w.x + w.y * w.y);
+	let theta = FP_Atan2(rho, w.z);
+	let phi = FP_Atan2(w.y, w.x);
+	let rwPow = select(0.0, exp2(power * log2(rw)), rw > 0.0);
+	let st = FP_SinCos(power * theta);
+	let sp = FP_SinCos(power * phi);
+	return vec4<f32>(rwPow * vec3<f32>(st.x * sp.y, st.x * sp.x, st.y), rwPow * invRw);
+}
+
+// g_p(Z~ + D) - g_p(Z~) for the reference point Ref, W = Z~ + D; .w = |W|^(p-1).
+fn FP_PerturbedPowerDelta(rf: FPPowerRef, d: vec3<f32>, w: vec3<f32>, rw: f32, invRw: f32, power: f32, powerInt: i32) -> vec4<f32> {
+	// The reference is negligible next to the full point (after a rebase Ref = 0): evaluate directly.
+	if (rf.R <= 0.5 * rw) {
+		let gw = FP_MandelbulbPower(w, rw, invRw, power, powerInt);
+		let gref = rf.RPow * vec3<f32>(rf.SinPT * rf.CosPP, rf.SinPT * rf.SinPP, rf.CosPT);
 		return vec4<f32>(gw.xyz - gref, gw.w);
 	}
 
-	// (r/R)^p - 1 with s = dr/R, dr computed without cancellation, by binary powering on A = (1+s)^k - 1, B = (1+s)^k.
-	let s = (2.0 * dot(refZ, d) + dot(d, d)) / (rw + refR) * refInvR;
-	let onePlusS = 1.0 + s;
-	var pa = s;
-	var pb = onePlusS;
-	var bit = i32(firstLeadingBit(u32(pInt))) - 1;
-	loop {
-		if (bit < 0) { break; }
-		pa = pa * (pa + 2.0);
-		pb = pb * pb;
-		if (((pInt >> u32(bit)) & 1) != 0) {
-			pa = pa * onePlusS + s;
-			pb = pb * onePlusS;
+	let zz = rf.Z.z;
+	// Radial factor u = (r/R)^p - 1 with s = dr/R, dr computed without cancellation.
+	let s = (2.0 * dot(rf.Z, d) + dot(d, d)) / (rw + rf.R) * rf.InvR;
+	var u: f32;
+	var onePlusU: f32;
+	if (powerInt > 0) {
+		let base = 1.0 + s;
+		var a = s;
+		var b = base;
+		for (var bit = i32(firstLeadingBit(u32(powerInt))) - 1; bit >= 0; bit = bit - 1) {
+			a = a * (a + 2.0);
+			b = b * b;
+			if (((powerInt >> u32(bit)) & 1) != 0) {
+				a = a * base + s;
+				b = b * base;
+			}
 		}
-		bit = bit - 1;
+		u = a;
+		onePlusU = b;
+	} else {
+		u = FP_Expm1(power * FP_Log1p(s));
+		onePlusU = 1.0 + u;
 	}
-	let u = pa;
-	let onePlusU = pb;
 
-	// xy-plane quantities are rescaled by an exact power of two so products of small components never underflow.
-	let maxXY = max(max(abs(refZ.x), abs(refZ.y)), max(abs(w.x), abs(w.y)));
-	let xyScale = pow2Normalizer(maxXY);
-	let invXYScale = pow2Denormalizer(maxXY);
-	let sx = refZ.x * xyScale;
-	let sy = refZ.y * xyScale;
+	// xy-plane quantities rescaled by an exact power of two so that products of small components never underflow.
+	let maxXY = max(max(abs(rf.Z.x), abs(rf.Z.y)), max(abs(w.x), abs(w.y)));
+	let xyScale = FP_Pow2Normalizer(maxXY);
+	let invXYScale = FP_Pow2Denormalizer(maxXY);
+	let sx = rf.Z.x * xyScale;
+	let sy = rf.Z.y * xyScale;
 	let sdx = d.x * xyScale;
 	let sdy = d.y * xyScale;
 	let swx = w.x * xyScale;
 	let swy = w.y * xyScale;
-	let sRho = refRho * xyScale;
+	let sRho = rf.Rho * xyScale;
 	let sRhoW = sqrt(swx * swx + swy * swy);
 	let rhoW = sRhoW * invXYScale;
 
-	// Azimuth difference: the exact angle between (X, Y) and (wx, wy). On the axis phi_ref := 0.
-	let onAxis = refRho <= 0.0;
+	// Azimuth difference: exact angle between (X, Y) and (wx, wy). On the axis phi_ref := 0.
+	let onAxis = rf.Rho <= 0.0;
 	let ux = select(sx, 1.0, onAxis);
 	let uy = select(sy, 0.0, onAxis);
 	let crossP = ux * sdy - uy * sdx;
 	let dotP = ux * swx + uy * swy;
 
-	// rho_w - rho without cancellation, then the polar angle difference in the meridian half-plane.
 	let sdRho = ((2.0 * sx + sdx) * sdx + (2.0 * sy + sdy) * sdy) / max(sRhoW + sRho, 1.0e-30);
 	let dRho = sdRho * invXYScale;
-	let crossT = refZ.z * dRho - refRho * d.z;
-	let dotT = refRho * rhoW + refZ.z * w.z;
+	let crossT = zz * dRho - rf.Rho * d.z;
+	let dotT = rf.Rho * rhoW + zz * w.z;
 
-	// Trig-free: (1 - cos, sin) of dtheta and dphi from the normalised cross/dot products, multiplied by p.
-	let normT = refInvR * invRw;
-	let sinDT = crossT * normT;
-	let cosDT = dotT * normT;
-	let vsT = versSinPowInt(versineFromCosSin(cosDT, sinDT), sinDT, pInt);
+	if (powerInt > 0) {
+		let normT = rf.InvR * invRw;
+		let sinDT = crossT * normT;
+		let cosDT = dotT * normT;
+		let vsT = FP_VersSinPowInt(FP_VersineFromCosSin(cosDT, sinDT), sinDT, powerInt);
+		let sRhoU2 = ux * ux + uy * uy;
+		let normP = select(0.0, inverseSqrt(sRhoU2) / sRhoW, sRhoW > 0.0);
+		let sinDP = crossP * normP;
+		let cosDP = select(1.0, dotP * normP, sRhoW > 0.0);
+		let vsP = FP_VersSinPowInt(FP_VersineFromCosSin(cosDP, sinDP), sinDP, powerInt);
+		let dSinT = rf.CosPT * vsT.y - rf.SinPT * vsT.x;
+		let dCosT = -rf.SinPT * vsT.y - rf.CosPT * vsT.x;
+		let dSinP = rf.CosPP * vsP.y - rf.SinPP * vsP.x;
+		let dCosP = -rf.SinPP * vsP.y - rf.CosPP * vsP.x;
+		let sinTW = rf.SinPT + dSinT;
+		let cosTW = rf.CosPT + dCosT;
+		let sinPW = rf.SinPP + dSinP;
+		let cosPW = rf.CosPP + dCosP;
+		let fwi = vec3<f32>(sinTW * cosPW, sinTW * sinPW, cosTW);
+		let dfi = vec3<f32>(dSinT * cosPW + rf.SinPT * dCosP, dSinT * sinPW + rf.SinPT * dSinP, dCosT);
+		return vec4<f32>(rf.RPow * (u * fwi + dfi), rf.RPow * onePlusU * invRw);
+	}
 
-	let sRhoU2 = ux * ux + uy * uy;
-	var normP = 0.0;
-	if (sRhoW > 0.0) { normP = inverseSqrt(sRhoU2) / sRhoW; }
-	let sinDP = crossP * normP;
-	let cosDP = select(1.0, dotP * normP, sRhoW > 0.0);
-	let vsP = versSinPowInt(versineFromCosSin(cosDP, sinDP), sinDP, pInt);
+	var dPhi = FP_Atan2(crossP, dotP);
+	// Keep phi_ref + dphi inside (-pi, pi] like atan2 does (the seam of non-integer powers).
+	let phiW = rf.Phi + dPhi;
+	dPhi = dPhi + select(select(0.0, FP_TWO_PI, phiW <= -FP_PI), -FP_TWO_PI, phiW > FP_PI);
+	let dTheta = FP_Atan2(crossT, dotT);
 
-	let dSinT = cosPT * vsT.y - sinPT * vsT.x;
-	let dCosT = -sinPT * vsT.y - cosPT * vsT.x;
-	let dSinP = cosPP * vsP.y - sinPP * vsP.x;
-	let dCosP = -sinPP * vsP.y - cosPP * vsP.x;
-	let sinTW = sinPT + dSinT;
-	let cosTW = cosPT + dCosT;
-	let sinPW = sinPP + dSinP;
-	let cosPW = cosPP + dCosP;
+	let ab = FP_SinCos(0.5 * power * dTheta); // (SA, CA)
+	let bb = FP_SinCos(0.5 * power * dPhi);   // (SB, CB)
+	let sinTMid = rf.SinPT * ab.y + rf.CosPT * ab.x;
+	let cosTMid = rf.CosPT * ab.y - rf.SinPT * ab.x;
+	let sinPMid = rf.SinPP * bb.y + rf.CosPP * bb.x;
+	let cosPMid = rf.CosPP * bb.y - rf.SinPP * bb.x;
+	let dSinT = 2.0 * cosTMid * ab.x;
+	let dCosT = -2.0 * sinTMid * ab.x;
+	let dSinP = 2.0 * cosPMid * bb.x;
+	let dCosP = -2.0 * sinPMid * bb.x;
+	let sinTW = rf.SinPT + dSinT;
+	let cosTW = rf.CosPT + dCosT;
+	let sinPW = rf.SinPP + dSinP;
+	let cosPW = rf.CosPP + dCosP;
 	let fw = vec3<f32>(sinTW * cosPW, sinTW * sinPW, cosTW);
-	let df = vec3<f32>(dSinT * cosPW + sinPT * dCosP, dSinT * sinPW + sinPT * dSinP, dCosT);
-	return vec4<f32>(refRPow * (u * fw + df), refRPow * onePlusU * invRw);
+	let df = vec3<f32>(dSinT * cosPW + rf.SinPT * dCosP, dSinT * sinPW + rf.SinPT * dSinP, dCosT);
+	return vec4<f32>(rf.RPow * (u * fw + df), rf.RPow * onePlusU * invRw);
 }
 
 // ---------------------------------------------------------------------------------------------
-// Distance estimate (FractalDE.ush)
+// FractalDE.ush (Mandelbulb: adds c, escape-time family)
 // ---------------------------------------------------------------------------------------------
 
-struct DE {
-	dist: f32,
-	iters: i32,
-	escaped: bool,
-	smooth_: f32,
+struct FPDEResult {
+	Distance: f32,
+	Iterations: i32,
+	bEscaped: bool,
+	Skipped: i32,
+	Smooth: f32,
 }
 
-fn smoothIteration(n: i32, rw: f32, bailout: f32, power: f32, escaped: bool) -> f32 {
+fn FP_SmoothIteration(n: i32, rw: f32, bailout: f32, power: f32, escaped: bool) -> f32 {
 	if (!escaped) { return f32(n); }
 	let ratio = log(max(rw, 1.0001)) / log(max(bailout, 1.0001));
 	return f32(n) + 1.0 - log(max(ratio, 1.0)) / log(max(abs(power), 1.5));
 }
 
-fn finishDE(n: i32, rw: f32, drs: f32, escaped: bool) -> DE {
-	var r: DE;
-	let power = P.rayDX.w;
-	r.iters = n;
-	r.escaped = escaped;
-	r.smooth_ = smoothIteration(n, rw, P.rayDY.w, power, escaped);
-	r.dist = select(0.0, 0.5 * rw * log(max(rw, 1.0e-6)) / max(drs, 1.0e-37), escaped);
+// |W| from |W|^2 and 1/|W|; |W|^2 overflows float above ~1.8e19 (high exponents).
+fn FP_SafeLength(w: vec3<f32>, rw2: f32, invRw: f32) -> f32 {
+	if (rw2 > 3.0e38) { return length(w * 5.42101086e-20) * 1.84467441e19; }
+	return rw2 * invRw;
+}
+
+fn FP_FinalDistance(escaped: bool, rw: f32, drs: f32) -> f32 {
+	return select(0.0, 0.5 * rw * log(max(rw, 1.0e-6)) / max(drs, 1.0e-37), escaped);
+}
+
+fn FP_Result(n: i32, rw: f32, drs: f32, escaped: bool, skipped: i32) -> FPDEResult {
+	var r: FPDEResult;
+	r.Iterations = n;
+	r.bEscaped = escaped;
+	r.Skipped = skipped;
+	r.Smooth = FP_SmoothIteration(n, rw, P.rayDY.w, P.rayDX.w, escaped);
+	r.Distance = FP_FinalDistance(escaped, rw, drs);
 	return r;
 }
 
-// DE at c = C_ref + dc by perturbation.
-fn perturbedDE(dc: vec3<f32>) -> DE {
-	let pInt = P.marchI.y;
+// DE at c = C_ref + dc.
+fn FP_PerturbedDE(dc: vec3<f32>) -> FPDEResult {
 	let power = P.rayDX.w;
-	let bailout = P.rayDY.w;
-	let maxIt = P.sizeI.w;
-	let orbitLen = P.sizeI.z;
+	let powerInt = FP_IntegerPower(power);
+	let orbitLength = P.sizeI.z;
+	let maxIterations = P.sizeI.w;
 	var d = dc;
 	var m = 1;
 	var drs = 1.0;
 	var rw = 0.0;
 	var escaped = false;
 	var n = 1;
+	var skipped = 0;
+
+	// Linear series skip: while the perturbation stays linear d_m = A_m dc. Jump to the deepest m whose validity radius
+	// covers |dc| (radii are non-increasing in m).
+	{
+		let dcLength = 1.7320508 * max(max(abs(dc.x), abs(dc.y)), abs(dc.z));
+		var lo = 1;
+		var hi = orbitLength - 1;
+		loop {
+			if (lo >= hi) { break; }
+			let mid = (lo + hi + 1) >> 1u;
+			if (Orbit[FP_ORBIT_STRIDE * mid + FP_SKIP_ROW].w >= dcLength) { lo = mid; } else { hi = mid - 1; }
+		}
+		if (lo > 1) {
+			let row = FP_ORBIT_STRIDE * lo + FP_SKIP_ROW;
+			let a0 = Orbit[row];
+			let a1 = Orbit[row + 1];
+			let a2 = Orbit[row + 2];
+			d = vec3<f32>(dot(a0.xyz, dc), dot(a1.xyz, dc), dot(a2.xyz, dc));
+			drs = a1.w;
+			m = lo;
+			n = lo;
+			skipped = lo - 1;
+		}
+	}
+
 	loop {
-		if (n >= maxIt) { break; }
-		let refZ = Orbit[STRIDE * m].xyz;
+		if (n >= maxIterations) { break; }
+		let base = FP_ORBIT_STRIDE * m;
+		let refZ = Orbit[base].xyz;
 		let w = refZ + d;
 		let rw2 = dot(w, w);
-		var invRw = 0.0;
-		if (rw2 > 0.0) { invRw = inverseSqrt(rw2); }
-		rw = rw2 * invRw;
-		// |Z + d|^2 - Bailout^2 = 2 Z.d + d.d - margin, with the margin exact from the CPU.
-		if (dot(2.0 * refZ + d, d) > Orbit[STRIDE * m + 3].x) {
+		let invRw = select(0.0, inverseSqrt(rw2), rw2 > 0.0);
+		rw = FP_SafeLength(w, rw2, invRw);
+		// |Z + d|^2 - Bailout^2 = 2 Z.d + d.d - (Bailout^2 - |Z|^2), the margin exact from the CPU.
+		if (dot(2.0 * refZ + d, d) > Orbit[base + FP_SKIP_ROW + 2].w) {
 			escaped = true;
 			break;
 		}
-		// Left the reference (|z| < |d|) or ran out of orbit: rebase onto orbit point 0 (d := z).
-		if (rw2 < dot(d, d) || m >= orbitLen - 1) {
+		// Left the reference (|z| < |d|) or ran out of orbit: rebase onto orbit point 0.
+		var b = base;
+		if (rw2 < dot(d, d) || m >= orbitLength - 1) {
 			d = w;
 			m = 0;
+			b = 0;
 		}
-		let g = perturbedPowerDelta(STRIDE * m, d, w, rw, invRw, pInt);
+		let g = FP_PerturbedPowerDelta(FP_LoadPowerRef(b), d, w, rw, invRw, power, powerInt);
 		drs = power * g.w * drs + 1.0;
 		d = g.xyz + dc;
 		m = m + 1;
 		n = n + 1;
 	}
-	return finishDE(n, rw, drs, escaped);
+	return FP_Result(n, rw, drs, escaped, skipped);
 }
 
 // Plain float DE at an absolute position.
-fn directDE(c: vec3<f32>) -> DE {
-	let pInt = P.marchI.y;
+fn FP_DirectDE(c: vec3<f32>) -> FPDEResult {
 	let power = P.rayDX.w;
+	let powerInt = FP_IntegerPower(power);
 	let bailout2 = P.rayDY.w * P.rayDY.w;
-	let maxIt = P.sizeI.w;
+	let maxIterations = P.sizeI.w;
 	var z = c;
 	var drs = 1.0;
 	var rw = 0.0;
 	var escaped = false;
 	var n = 1;
 	loop {
-		if (n >= maxIt) { break; }
+		if (n >= maxIterations) { break; }
 		let rw2 = dot(z, z);
-		var invRw = 0.0;
-		if (rw2 > 0.0) { invRw = inverseSqrt(rw2); }
-		rw = rw2 * invRw;
+		let invRw = select(0.0, inverseSqrt(rw2), rw2 > 0.0);
+		rw = FP_SafeLength(z, rw2, invRw);
 		if (rw2 > bailout2) {
 			escaped = true;
 			break;
 		}
-		let g = bulbPower(z, rw, invRw, pInt);
+		let g = FP_MandelbulbPower(z, rw, invRw, power, powerInt);
 		drs = power * g.w * drs + 1.0;
 		z = g.xyz + c;
 		n = n + 1;
 	}
-	return finishDE(n, rw, drs, escaped);
+	return FP_Result(n, rw, drs, escaped, 0);
 }
 
-// Hybrid estimate: plain float where the pixel footprint is large (exact enough, cheaper) or while there is no
-// reference, perturbation otherwise.
-fn distanceEstimate(dc: vec3<f32>, pixelRadius: f32) -> DE {
-	var r: DE;
-	if (P.sizeI.z < 2 || pixelRadius > P.misc.x) {
-		r = directDE(P.refC.xyz + dc);
-	} else {
-		r = perturbedDE(dc);
+// ---------------------------------------------------------------------------------------------
+// FractalRender.ush
+// ---------------------------------------------------------------------------------------------
+
+// Plain float where the pixel footprint is large enough for absolute float coordinates (the hybrid switch) or while
+// there is no reference orbit, perturbation otherwise.
+fn FP_DistanceEstimate(dc: vec3<f32>, pixelRadius: f32) -> FPDEResult {
+	if (P.sizeI.z < 2 || (P.misc.x > 0.0 && pixelRadius > P.misc.x)) {
+		return FP_DirectDE(P.refC.xyz + dc);
 	}
-	return r;
+	return FP_PerturbedDE(dc);
 }
 
-// ---------------------------------------------------------------------------------------------
-// March and shading (FractalRender.ush)
-// ---------------------------------------------------------------------------------------------
-
-struct March {
-	t: f32,
-	steps: i32,
-	status: i32, // 1 hit, 2 left the scene, 3 out of steps
-	smooth_: f32,
-	escaped: bool,
-	iters: i32,
+struct FPMarchResult {
+	Distance: f32,
+	Steps: i32,
+	Status: i32,          // 1 hit, 2 left the scene, 3 out of steps
+	TotalIterations: i32,
+	TotalSkipped: i32,
+	LastIterations: i32,
+	LastSmooth: f32,
+	bLastEscaped: bool,
 }
 
-fn pixelDirection(px: vec2<f32>) -> vec3<f32> {
-	return normalize(P.ray00.xyz + px.x * P.rayDX.xyz + px.y * P.rayDY.xyz);
+// Direction through the centre of the marched pixel; the basis is in full-resolution pixels.
+fn FP_PixelRayDirection(pixel: vec2<f32>) -> vec3<f32> {
+	let full = (pixel + 0.5) * P.misc.zw - 0.5;
+	return normalize(P.ray00.xyz + full.x * P.rayDX.xyz + full.y * P.rayDY.xyz);
 }
 
-fn marchRay(dir: vec3<f32>) -> March {
-	var r: March;
-	r.t = 0.0;
-	r.steps = 0;
-	r.status = 3;
-	r.smooth_ = 0.0;
-	r.escaped = false;
-	r.iters = 0;
+fn FP_MarchRay(dir: vec3<f32>) -> FPMarchResult {
+	var r: FPMarchResult;
+	r.Distance = 0.0;
+	r.Steps = 0;
+	r.Status = 3;
+	r.TotalIterations = 0;
+	r.TotalSkipped = 0;
+	r.LastIterations = 0;
+	r.LastSmooth = 0.0;
+	r.bLastEscaped = false;
 	var t = 0.0;
 	var tEnd = P.camOff.w;
-	// Bounding sphere: the escape-time estimate overshoots far from the set. A ray that misses the sphere hits
-	// nothing; one that crosses it is marched from where it enters.
-	let radius = P.refC.w * 1.001;
-	let o = P.refC.xyz + P.camOff.xyz;
-	let c = dot(o, o) - radius * radius;
-	if (c > 0.0) {
-		let b = dot(o, dir);
-		let disc = b * b - c;
-		if (b >= 0.0 || disc < 0.0) {
-			r.status = 2;
-			return r;
+	// Bounding sphere of the set: a ray that misses it hits nothing, one that crosses it is marched from where it enters.
+	{
+		let radius = P.refC.w * 1.001;
+		let o = P.refC.xyz + P.camOff.xyz;
+		let c = dot(o, o) - radius * radius;
+		if (c > 0.0) {
+			let b = dot(o, dir);
+			let disc = b * b - c;
+			if (b >= 0.0 || disc < 0.0) {
+				r.Status = 2;
+				return r;
+			}
+			let root = sqrt(disc);
+			t = -b - root;
+			tEnd = min(tEnd, -b + root);
 		}
-		let root = sqrt(disc);
-		t = -b - root;
-		tEnd = min(tEnd, -b + root);
 	}
 	loop {
-		if (r.steps >= P.marchI.x) { break; }
-		if (t >= tEnd) { r.status = 2; break; }
-		r.steps = r.steps + 1;
-		let pr = t * P.ray00.w;
-		let de = distanceEstimate(P.camOff.xyz + dir * t, pr);
-		r.smooth_ = de.smooth_;
-		r.escaped = de.escaped;
-		r.iters = de.iters;
-		if (de.dist <= pr) { r.status = 1; break; }
-		t = t + max(de.dist, pr * 0.5);
+		if (r.Steps >= P.marchI.x) { break; }
+		if (t >= tEnd) { r.Status = 2; break; }
+		r.Steps = r.Steps + 1;
+		let pixelRadius = t * P.ray00.w;
+		let de = FP_DistanceEstimate(P.camOff.xyz + dir * t, pixelRadius);
+		r.TotalIterations = r.TotalIterations + de.Iterations;
+		r.TotalSkipped = r.TotalSkipped + de.Skipped;
+		r.LastIterations = de.Iterations;
+		r.LastSmooth = de.Smooth;
+		r.bLastEscaped = de.bEscaped;
+		if (de.Distance <= pixelRadius) { r.Status = 1; break; }
+		t = t + max(de.Distance, pixelRadius * 0.5);
 	}
-	r.t = t;
+	r.Distance = t;
 	return r;
 }
 
-fn palette(t: f32) -> vec3<f32> {
+fn FP_Palette(t: f32) -> vec3<f32> {
 	return vec3<f32>(0.42, 0.52, 0.66) + vec3<f32>(0.30, 0.28, 0.26) * cos(6.2831853 * (t + vec3<f32>(0.00, 0.12, 0.30)));
 }
 
-fn background(dir: vec3<f32>) -> vec3<f32> {
-	let h = clamp(0.5 + 0.5 * dir.y, 0.0, 1.0);
-	return mix(vec3<f32>(0.105, 0.135, 0.215), vec3<f32>(0.030, 0.042, 0.085), h);
-}
-
-fn hazeColor(bg: vec3<f32>) -> vec3<f32> {
-	return mix(bg, vec3<f32>(0.50, 0.64, 0.86), 0.6);
-}
-
-// Gradient of the distance estimate at the hit (tetrahedron taps).
-fn surfaceNormal(dir: vec3<f32>, t: f32, pr: f32) -> vec3<f32> {
-	let eps = max(pr, 1.0e-30);
+fn FP_SurfaceNormal(dir: vec3<f32>, t: f32, pixelRadius: f32) -> vec3<f32> {
+	let eps = max(pixelRadius, 1.0e-6 * max(t, 1.0e-30));
 	let dch = P.camOff.xyz + dir * t;
 	let k0 = vec3<f32>(1.0, -1.0, -1.0);
 	let k1 = vec3<f32>(-1.0, -1.0, 1.0);
 	let k2 = vec3<f32>(-1.0, 1.0, -1.0);
 	let k3 = vec3<f32>(1.0, 1.0, 1.0);
-	let g = k0 * distanceEstimate(dch + eps * k0, pr).dist
-		+ k1 * distanceEstimate(dch + eps * k1, pr).dist
-		+ k2 * distanceEstimate(dch + eps * k2, pr).dist
-		+ k3 * distanceEstimate(dch + eps * k3, pr).dist;
+	let g = k0 * FP_DistanceEstimate(dch + eps * k0, pixelRadius).Distance
+		+ k1 * FP_DistanceEstimate(dch + eps * k1, pixelRadius).Distance
+		+ k2 * FP_DistanceEstimate(dch + eps * k2, pixelRadius).Distance
+		+ k3 * FP_DistanceEstimate(dch + eps * k3, pixelRadius).Distance;
 	let l2 = dot(g, g);
-	if (l2 > 0.0) { return g * inverseSqrt(l2); }
-	return -dir;
+	return select(-dir, g * inverseSqrt(l2), l2 > 0.0);
 }
 
-fn shade(r: March, dir: vec3<f32>) -> vec3<f32> {
-	let bg = background(dir);
-	let stepFactor = clamp(f32(r.steps) / max(f32(P.marchI.x), 1.0), 0.0, 1.0);
-	if (r.status == 2) {
-		return mix(bg, vec3<f32>(0.35, 0.55, 0.85), 0.25 * stepFactor * stepFactor);
+// Share of the iteration limit at which a hit starts to fade into haze (fully hazed at the limit).
+const FP_HAZE_START: f32 = 0.55;
+
+fn FP_HazeColor(background: vec3<f32>) -> vec3<f32> {
+	return mix(background, vec3<f32>(0.50, 0.64, 0.86), 0.6);
+}
+
+// The scene behind the fractal (Unreal draws the level's sky there): a cool vertical gradient.
+fn Background(dir: vec3<f32>) -> vec3<f32> {
+	let h = clamp(0.5 + 0.5 * dir.z, 0.0, 1.0);
+	return mix(vec3<f32>(0.105, 0.135, 0.215), vec3<f32>(0.030, 0.042, 0.085), h);
+}
+
+fn FP_Shade(r: FPMarchResult, dir: vec3<f32>, background: vec3<f32>) -> vec3<f32> {
+	let stepFactor = clamp(f32(r.Steps) / max(f32(P.marchI.x), 1.0), 0.0, 1.0);
+	if (r.Status == 2) {
+		return mix(background, vec3<f32>(0.35, 0.55, 0.85), 0.25 * stepFactor * stepFactor);
 	}
-	let pr = r.t * P.ray00.w;
-	var n = surfaceNormal(dir, r.t, pr);
-	if (dot(n, dir) > 0.0) { n = -n; }
+	let pixelRadius = r.Distance * P.ray00.w;
+	var n = FP_SurfaceNormal(dir, r.Distance, pixelRadius);
+	n = select(n, -n, dot(n, dir) > 0.0);
 	let headlight = clamp(dot(n, -dir), 0.0, 1.0);
 	let key = clamp(dot(n, normalize(vec3<f32>(0.5, 0.7, 0.4))), 0.0, 1.0);
 	let light = 0.12 + 0.5 * headlight + 0.3 * key;
 	var ao = 1.0 - 0.7 * sqrt(stepFactor);
-	if (r.status == 3) { ao = ao * 0.6; }
-	let albedo = palette(log2(1.0 + r.smooth_) * 0.22);
+	if (r.Status == 3) { ao = ao * 0.6; }
+	let albedo = FP_Palette(log2(1.0 + r.LastSmooth) * 0.22);
 	var color = albedo * light * ao;
-	// Detail limit: fade into haze as the orbit uses up the iteration limit.
-	var used = 1.0;
-	if (r.escaped) { used = r.smooth_ / max(f32(P.sizeI.w), 1.0); }
-	color = mix(color, hazeColor(bg), smoothstep(P.misc.y, 1.0, used));
-	let fog = 1.0 - exp(-r.t * 0.06);
-	return mix(color, bg, clamp(fog, 0.0, 1.0));
+	let used = select(1.0, r.LastSmooth / max(f32(P.sizeI.w), 1.0), r.bLastEscaped);
+	color = mix(color, FP_HazeColor(background), smoothstep(FP_HAZE_START, 1.0, used));
+	let fog = 1.0 - exp(-r.Distance * 0.25);
+	return mix(color, background, clamp(fog, 0.0, 1.0));
 }
 
 @compute @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 	if (id.x >= u32(P.sizeI.x) || id.y >= u32(P.sizeI.y)) { return; }
-	let dir = pixelDirection(vec2<f32>(f32(id.x), f32(id.y)));
-	let r = marchRay(dir);
-	textureStore(Out, vec2<i32>(id.xy), vec4<f32>(shade(r, dir), 1.0));
+	let dir = FP_PixelRayDirection(vec2<f32>(f32(id.x), f32(id.y)));
+	let r = FP_MarchRay(dir);
+	textureStore(Out, vec2<i32>(id.xy), vec4<f32>(FP_Shade(r, dir, Background(dir)), 1.0));
 }
 
-// One thread: distance estimate at the camera (drives the movement speed and the reference upkeep) and a march of the
-// centre ray (what the crosshair looks at).
+// One thread: the distance at the camera (capped by the bounding sphere, FDistanceEstimate::SafeDistance) and a march
+// of the centre ray, read back by the page for the speed, the HUD and the reference upkeep.
 @compute @workgroup_size(1)
 fn probe() {
-	let de = distanceEstimate(P.camOff.xyz, 0.0);
-	let dir = pixelDirection(vec2<f32>(f32(P.sizeI.x) * 0.5, f32(P.sizeI.y) * 0.5));
-	let r = marchRay(dir);
-	// Distance to the set, capped by the distance to the bounding sphere (the estimate overshoots far away).
+	let de = FP_DistanceEstimate(P.camOff.xyz, 0.0);
 	let outside = length(P.refC.xyz + P.camOff.xyz) - P.refC.w;
-	Probe[0] = select(de.dist, min(de.dist, outside), outside > 0.0);
-	Probe[1] = select(0.0, 1.0, de.escaped);
-	Probe[2] = select(-1.0, r.t, r.status == 1);
-	Probe[3] = f32(r.steps);
-	Probe[4] = f32(de.iters);
-	Probe[5] = f32(r.status);
+	let full = vec2<f32>(f32(P.sizeI.x), f32(P.sizeI.y)) * P.misc.zw * 0.5 - 0.5;
+	let dir = normalize(P.ray00.xyz + full.x * P.rayDX.xyz + full.y * P.rayDY.xyz);
+	let r = FP_MarchRay(dir);
+	Probe[0] = select(de.Distance, min(de.Distance, outside), outside > 0.0);
+	Probe[1] = select(0.0, 1.0, de.bEscaped);
+	Probe[2] = select(-1.0, r.Distance, r.Status == 1);
+	Probe[3] = f32(r.Steps);
+	Probe[4] = f32(de.Iterations);
+	Probe[5] = f32(r.Status);
+	Probe[6] = f32(r.TotalIterations);
+	Probe[7] = f32(r.TotalSkipped);
 }
 `;
 const PRESENT = `// Presents the texture the compute pass rendered on the canvas (full-screen triangle).
@@ -1072,55 +1521,55 @@ const Lib = makeLib();
 const $ = (id) => document.getElementById(id);
 const canvas = $('view');
 
-const MAX_DEPTH_LOG = 27;           // the precision limit of double-double positions
-const MAX_ORBIT_POINTS = 1002;      // iteration budget cap + 1 + zero point
-const POWER_MIN = 2, POWER_MAX = 16;
+// ---------------------------------------------------------------------------------------------
+// Settings (FFractalParameter, FractalFormulaTypes.h preset, FractalPlayerController)
+// ---------------------------------------------------------------------------------------------
+const MAX_DEPTH_LOG = 27;          // precision limit of double-double positions
 const BAILOUT = 10;
 const BASE_ITERATIONS = 150;
-const MAX_RAY_STEPS = 150, MAX_RAY_DISTANCE = 500;
-const FOV_Y = 70 * Math.PI / 180;
-const TAN_HALF = Math.tan(FOV_Y / 2);
-const DIRECT_FOOTPRINT = 1e-4;      // above this pixel footprint plain float iteration is exact enough
-const ASYNC_RATIO = 50, SYNC_RATIO = 5000; // reference offset / surface distance at which a new reference is built / the old one is dropped
-const HAZE_START = 0.55;
+const MAX_RAY_STEPS = 150;
+const MAX_RAY_DISTANCE = 500;
+const DIRECT_FOOTPRINT = 1e-4;     // fractal-space pixel footprint above which plain float iteration is used
+const POWER_MIN = 1, POWER_MAX = 16, POWER_DEFAULT = 8;
+const FOV_H = 90 * Math.PI / 180;  // Unreal's default horizontal field of view
+const TAN_HALF_H = Math.tan(FOV_H / 2);
+const ASYNC_RATIO = 50, SYNC_RATIO = 5000; // reference offset / surface distance (FFractalReferenceManager)
+const MIN_CAMERA_DISTANCE = 1e-30;
+const TARGET_FRAME_RATES = [0, 30, 45, 60, 90, 120, 144];
+const MIN_RESOLUTION_SCALE = 0.3;
+const START = { pos: [0.0, -2.35, 0.0], dir: [0, 1, 0] }; // v1.1: 2350 cm from the origin at the default scale, facing it
+// World units (Unreal centimetres): fractal = world * scale. The scale starts at the user scale (v1.1's 0.001) and the
+// zoom band rescales it around the camera so that the surface stays 2..8 world units away (target 4); speeds and
+// accelerations are defined in world units (FractalPlayerController, UFractalControlSubsystem::ZoomAroundCamera).
+const USER_SCALE = 0.001, MIN_FRACTAL_SCALE = 1e-30;
+const ZOOM_IN_BELOW = 2, ZOOM_OUT_ABOVE = 8, ZOOM_TARGET = 4;
 
-// Deep-zoom presets: where to aim (lab scenes of the desktop renderer) and how far from the surface to stand.
+// Deep-zoom presets (lab scenes of the desktop renderer); the camera ends up about `depth` from the surface.
 const PRESETS = [
 	{ label: '1e-6', depth: 1e-6, start: [0.6, 0.8, 1.6], dir: [-0.3, -0.45, -0.85] },
-	{ label: '1e-12', depth: 1e-12, start: [2.0, 0.3, 0.2], dir: [-1, -0.12, -0.07] },
-	{ label: '1e-18', depth: 1e-18, start: [0.6, 0.8, 1.6], dir: [-0.3, -0.45, -0.85] },
-	{ label: '1e-24', depth: 1e-24, start: [-1.3, 1.2, -1.1], dir: [0.6, -0.55, 0.5] },
+	{ label: '1e-10', depth: 1e-10, start: [2.0, 0.3, 0.2], dir: [-1, -0.12, -0.07] },
+	{ label: '1e-14', depth: 1e-14, start: [0.3, -1.6, -1.5], dir: [-0.15, 0.7, 0.7] },
 ];
 
 const S = {
-	pos: [[2.4, 0], [0.4, 0], [0.3, 0]],
-	right: [0, 1, 0], up: [0, 0, 1], fwd: [-1, 0, 0],
-	vel: [0, 0, 0],
-	power: 8, speedFactor: 0.8, scale: 1, autofly: false,
-	camDE: 2, camEscaped: true, lastGoodDE: 2, centerHit: -1, probeSteps: 0, probeIters: 0,
-	ref: null, refPending: false, refId: 0, probeValid: false,
-	keys: new Set(), locked: false, dragging: false,
-	frameMs: 16, started: false,
+	pos: null, right: null, up: null, fwd: null, vel: [0, 0, 0],
+	power: POWER_DEFAULT, powerVel: 0, rollVel: 0, speedPercent: 50, scale: USER_SCALE,
+	camDE: 2, camEscaped: true, lastGoodDE: 2, centerHit: -1, probeIters: 0, probeValid: false, rayIters: 0, raySkipped: 0,
+	ref: null, refPending: false, refId: 0, lastRequest: null, lastRequestTime: -1,
+	targetFps: 0, resolutionScale: 1, measuredMs: 0, sinceResolutionChange: 0,
+	nativeRes: false, keys: new Set(), mouse: new Set(), locked: false, dragging: false,
+	started: false, autofly: false, mode: '', iterations: BASE_ITERATIONS,
 };
 
 // ---------------------------------------------------------------------------------------------
 // Camera
 // ---------------------------------------------------------------------------------------------
-function resetCamera() {
-	S.pos = [[2.4, 0], [0.4, 0], [0.3, 0]];
-	lookAlong([-2.4, -0.4, -0.3]);
-	S.vel = [0, 0, 0];
-	S.power = 8;
-	S.ref = null;
-	S.camDE = 2; S.lastGoodDE = 2;
-	updatePowerLabel();
-}
 function norm(v) { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; }
 function cross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
 function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 function lookAlong(dir) {
 	S.fwd = norm(dir);
-	let up = Math.abs(S.fwd[2]) > 0.95 ? [0, 1, 0] : [0, 0, 1];
+	const up = Math.abs(S.fwd[2]) > 0.95 ? [0, 1, 0] : [0, 0, 1];
 	S.right = norm(cross(S.fwd, up));
 	S.up = cross(S.right, S.fwd);
 }
@@ -1137,13 +1586,70 @@ function yaw(t) { const r = rotate(S.fwd, S.right, t); S.fwd = r[0]; S.right = r
 function pitch(t) { const r = rotate(S.fwd, S.up, t); S.fwd = r[0]; S.up = r[1]; }
 function roll(t) { const r = rotate(S.right, S.up, t); S.right = r[0]; S.up = r[1]; }
 
-function speedLimit() {
-	const de = S.camEscaped ? S.camDE : S.lastGoodDE * 0.5;
-	return Math.min(de * S.speedFactor, 6);
+function resetToStart() {
+	S.pos = START.pos.map((v) => [v, 0]);
+	lookAlong(START.dir);
+	S.vel = [0, 0, 0]; S.powerVel = 0; S.rollVel = 0;
+	S.speedPercent = 50;
+	S.scale = USER_SCALE;
+	setPower(POWER_DEFAULT);
+	S.camDE = 1.2; S.lastGoodDE = 1.2; S.probeValid = false;
 }
 
-function step(dt) {
+// Full-resolution ray basis (BuildRayBasis): direction through pixel centre (px, py), forward component 1.
+function dirAt(px, py, W, H) {
+	const tanV = TAN_HALF_H * H / W;
+	const x = (px / W) * 2 - 1, y = 1 - (py / H) * 2;
+	return [0, 1, 2].map((c) => S.fwd[c] + x * TAN_HALF_H * S.right[c] + y * tanV * S.up[c]);
+}
+function pixelRadiusPerUnitDistance() { return 0.5 * (2 * TAN_HALF_H * canvas.height / canvas.width) / canvas.height; }
+
+// ---------------------------------------------------------------------------------------------
+// Controller (FractalPlayerController)
+// ---------------------------------------------------------------------------------------------
+// 0% = stationary, 100% = 0.01 s to the surface; logarithmic in the time to the surface (ComputeSpeedFromPercent).
+function speedFromPercent(percent, distance) {
+	percent = Math.max(0, Math.min(100, percent));
+	if (percent <= 0) return 0;
+	const logMin = Math.log(0.01), logMax = Math.log(1000);
+	const time = Math.exp(logMax + (logMin - logMax) * Math.pow(percent / 100, 0.25));
+	return Math.max(0.1, Math.min(1000, distance / Math.max(time, 0.01)));
+}
+// Moves a velocity towards input * maxRate; decays at stopRate without input (StepAdjustVelocity).
+function stepAdjustVelocity(v, input, maxRate, rate, opposingRate, stopRate, dt) {
+	if (Math.abs(input) < 1e-8) return v > 0 ? Math.max(0, v - stopRate * dt) : Math.min(0, v + stopRate * dt);
+	const target = input * maxRate;
+	const r = (input > 0 && v < 0) || (input < 0 && v > 0) ? opposingRate : rate;
+	return v < target ? Math.min(target, v + r * dt) : Math.max(target, v - r * dt);
+}
+
+function controllerTick(dt) {
 	const k = S.keys;
+	// roll (Q/E): 90 deg/s, accelerates at 180 deg/s^2, stops at 360 deg/s^2
+	const rollIn = (k.has('KeyE') ? 1 : 0) - (k.has('KeyQ') ? 1 : 0);
+	S.rollVel = stepAdjustVelocity(S.rollVel, rollIn, 90, 180, 180, 360, dt);
+	if (S.rollVel) roll(S.rollVel * dt * Math.PI / 180);
+	// power (hold right / left mouse button while the pointer is captured): 2 units/s, ramps at 0.5, stops at 4
+	const powerIn = (S.mouse.has(2) ? 1 : 0) - (S.mouse.has(0) ? 1 : 0);
+	S.powerVel = stepAdjustVelocity(S.powerVel, S.locked ? powerIn : 0, 2, 0.5, 4, 4, dt);
+	if (S.powerVel) setPower(S.power + S.powerVel * dt);
+	if (k.has('ArrowLeft')) yaw(-1.4 * dt);
+	if (k.has('ArrowRight')) yaw(1.4 * dt);
+	if (k.has('ArrowUp')) pitch(1.0 * dt);
+	if (k.has('ArrowDown')) pitch(-1.0 * dt);
+	orthonormalize();
+
+	// Zoom band (UpdateZoom): rescale world units around the camera when the surface is nearer than 2 or (below the user
+	// scale) farther than 8 world units. Velocities are kept in fractal units, so the rescale is invisible.
+	let distance = S.camDE / S.scale;
+	if ((distance > 0 && distance < ZOOM_IN_BELOW) || (distance > ZOOM_OUT_ABOVE && S.scale < USER_SCALE * (1 - 1e-9))) {
+		S.scale = Math.max(MIN_FRACTAL_SCALE, Math.min(USER_SCALE, S.scale * distance / ZOOM_TARGET));
+		distance = S.camDE / S.scale;
+	}
+	const unit = S.scale; // fractal units per world unit
+	let v = S.vel.map((x) => x / unit);
+	const maxSpeed = speedFromPercent(S.speedPercent, distance);
+	const accel = Math.max(0.2 * maxSpeed, 2.0);
 	let mx = 0, my = 0, mz = 0;
 	if (k.has('KeyW') || S.autofly) mz += 1;
 	if (k.has('KeyS')) mz -= 1;
@@ -1151,35 +1657,76 @@ function step(dt) {
 	if (k.has('KeyA')) mx -= 1;
 	if (k.has('Space')) my += 1;
 	if (k.has('ShiftLeft') || k.has('ShiftRight')) my -= 1;
-	const rollIn = (k.has('KeyE') ? 1 : 0) - (k.has('KeyQ') ? 1 : 0);
-	if (rollIn) roll(rollIn * 1.2 * dt);
-	if (k.has('ArrowLeft')) yaw(-1.4 * dt);
-	if (k.has('ArrowRight')) yaw(1.4 * dt);
-	if (k.has('ArrowUp')) pitch(1.0 * dt);
-	if (k.has('ArrowDown')) pitch(-1.0 * dt);
-	orthonormalize();
-
-	const sp = speedLimit();
-	const want = [0, 0, 0];
-	for (let i = 0; i < 3; i++) want[i] = (S.fwd[i] * mz + S.right[i] * mx + S.up[i] * my) * sp;
-	const a = 1 - Math.exp(-9 * dt);
-	for (let i = 0; i < 3; i++) S.vel[i] += (want[i] - S.vel[i]) * a;
+	const input = [0, 1, 2].map((c) => S.fwd[c] * mz + S.right[c] * mx + S.up[c] * my);
+	const inLen = Math.hypot(input[0], input[1], input[2]);
+	if (inLen > 1e-6) {
+		const n = input.map((x) => x / Math.max(inLen, 1)); // clamped to unit length
+		const nl = Math.hypot(n[0], n[1], n[2]);
+		const delta = Math.max(accel * dt * nl, 2.0 * dt);
+		v = v.map((x, c) => x + (n[c] / nl) * delta);
+		const speed = Math.hypot(v[0], v[1], v[2]);
+		const along = dot(v, n);
+		if (speed > 0 && along < 0) { // brake the component opposing the input
+			const brake = Math.min(Math.max(4.0 * speed, 1.0) * dt, Math.abs(along));
+			v = v.map((x, c) => x + n[c] * brake);
+		}
+	} else {
+		const speed = Math.hypot(v[0], v[1], v[2]);
+		const decel = Math.max(3.0 * speed, 0.3) * dt; // UFloatingPawnMovement deceleration
+		const f = speed > decel ? (speed - decel) / speed : 0;
+		v = v.map((x) => x * f);
+	}
+	const speed = Math.hypot(v[0], v[1], v[2]);
+	if (speed > maxSpeed) v = v.map((x) => x * maxSpeed / speed);
+	S.maxSpeedWorld = maxSpeed;
+	S.vel = v.map((x) => x * unit);
 	S.pos = Lib.v3AddDoubles(S.pos, [S.vel[0] * dt, S.vel[1] * dt, S.vel[2] * dt]);
 }
 
+function setPower(p) {
+	p = Math.max(POWER_MIN, Math.min(POWER_MAX, p));
+	if (p === S.power) return;
+	S.power = p;
+	$('pow').textContent = p.toFixed(2);
+}
+
 // ---------------------------------------------------------------------------------------------
-// Reference orbit (Web Worker): double-double reference point, its orbit, the iteration budget
+// Adaptive resolution (UFractalControlSubsystem::UpdateAdaptiveResolution), opt-in
+// ---------------------------------------------------------------------------------------------
+function updateAdaptiveResolution(dt, frameMs) {
+	const blend = 1 - Math.exp(-dt / 0.3);
+	S.measuredMs = S.measuredMs > 0 ? S.measuredMs + (frameMs - S.measuredMs) * blend : frameMs;
+	if (S.targetFps <= 0) { S.resolutionScale = 1; return; }
+	S.sinceResolutionChange += dt;
+	if (S.sinceResolutionChange < 0.25) return;
+	const ratio = S.measuredMs / (1000 / S.targetFps);
+	let scale = S.resolutionScale;
+	if (ratio > 1.05) scale *= Math.max(0.7, Math.min(0.99, Math.sqrt(1 / ratio)));
+	else if (ratio < 0.85 && scale < 1) scale *= Math.min(Math.sqrt(1 / ratio), 1.06);
+	scale = Math.max(MIN_RESOLUTION_SCALE, Math.min(1, scale));
+	if (scale > 0.97) scale = 1;
+	if (Math.abs(scale - S.resolutionScale) > 0.005) { S.resolutionScale = scale; S.sinceResolutionChange = 0; }
+}
+function stepTargetFrameRate(direction) {
+	let index = 0;
+	for (let i = 0; i < TARGET_FRAME_RATES.length; i++) if (Math.abs(TARGET_FRAME_RATES[i] - S.targetFps) < Math.abs(TARGET_FRAME_RATES[index] - S.targetFps)) index = i;
+	S.targetFps = TARGET_FRAME_RATES[Math.max(0, Math.min(TARGET_FRAME_RATES.length - 1, index + direction))];
+}
+
+// ---------------------------------------------------------------------------------------------
+// Reference (FFractalReferenceManager): built in a Web Worker
 // ---------------------------------------------------------------------------------------------
 const workerSource = `const Lib = (${makeLib.toString()})();
 onmessage = (e) => {
 	const m = e.data;
 	try {
 		if (m.type === 'reference') {
+			const t0 = performance.now();
 			const r = Lib.buildReference(m.req);
-			postMessage({ type: 'reference', id: m.id, power: m.req.power, center: r.center, orbit: r.orbit, count: r.count,
-				iterations: r.iterations, hit: r.hit, cameraDE: r.cameraDE }, [r.orbit.buffer]);
+			postMessage({ type: 'reference', id: m.id, power: m.req.power, iterations: m.req.iterations, center: r.center, orbit: r.orbit,
+				count: r.count, hit: r.hit, cameraDE: r.cameraDE, ms: performance.now() - t0 }, [r.orbit.buffer]);
 		} else if (m.type === 'teleport') {
-			const pos = Lib.surfaceCamera(m.start, m.dir, m.depth, m.power, m.bailout);
+			const pos = Lib.surfaceCamera(m.start, m.dir, m.depth, m.power, m.bailout, m.iterations);
 			postMessage({ type: 'teleport', id: m.id, pos, dir: m.dir, depth: m.depth });
 		}
 	} catch (err) { postMessage({ type: 'error', message: String(err && err.stack || err) }); }
@@ -1191,12 +1738,10 @@ worker.onmessage = (e) => {
 	const m = e.data;
 	if (m.type === 'reference') {
 		S.refPending = false;
-		if (m.id !== S.refId) return;
-		if (m.power !== S.power) return;
+		if (m.id !== S.refId || m.power !== S.power) return;
 		gpu.uploadOrbit(m.orbit, m.count);
-		S.ref = { center: m.center, count: m.count, iterations: m.iterations, power: m.power, hit: m.hit, cameraDE: m.cameraDE };
-		// Until the GPU probes the camera with this reference, the worker's double-double estimate is the only trustworthy one
-		// (a probe taken in plain float mode is garbage at depth).
+		S.ref = { center: m.center, count: m.count, iterations: m.iterations, power: m.power, hit: m.hit, cameraDE: m.cameraDE, ms: m.ms };
+		// Until the GPU probes the camera with this reference, the worker's double-double estimate is the trustworthy one.
 		if (!S.probeValid && m.cameraDE > 0) { S.camDE = m.cameraDE; S.lastGoodDE = m.cameraDE; S.camEscaped = true; }
 	} else if (m.type === 'teleport') {
 		if (m.id !== teleportId) return;
@@ -1206,56 +1751,49 @@ worker.onmessage = (e) => {
 		S.camDE = m.depth; S.lastGoodDE = m.depth; S.camEscaped = true; S.probeValid = false;
 		hideHint();
 	} else if (m.type === 'error') {
-		showHint('Worker error: ' + m.message);
+		showHint('Reference worker error: ' + m.message);
 	}
 };
 
-function fanDirections() {
-	const out = [];
-	const add = (fx, fy) => {
-		const nx = 2 * fx - 1, ny = 1 - 2 * fy;
-		out.push(norm([
-			S.fwd[0] + nx * TAN_HALF * aspect() * S.right[0] + ny * TAN_HALF * S.up[0],
-			S.fwd[1] + nx * TAN_HALF * aspect() * S.right[1] + ny * TAN_HALF * S.up[1],
-			S.fwd[2] + nx * TAN_HALF * aspect() * S.right[2] + ny * TAN_HALF * S.up[2]]));
-	};
-	add(0.5, 0.5);
-	for (const fy of [0.1, 0.5, 0.9]) for (const fx of [0.1, 0.5, 0.9]) if (!(fx === 0.5 && fy === 0.5)) add(fx, fy);
-	return out;
-}
-function aspect() { return canvas.width / Math.max(canvas.height, 1); }
-function hitThreshold() { return TAN_HALF / Math.max(canvas.height, 1); } // half a full-resolution pixel, per unit distance
-
-function requestReference() {
-	S.refPending = true;
-	S.refId++;
-	worker.postMessage({ type: 'reference', id: S.refId, req: {
-		position: S.pos, dirs: fanDirections(), power: S.power, bailout: BAILOUT, baseIterations: BASE_ITERATIONS,
-		pixelRadiusPerUnitDistance: hitThreshold(), maxSteps: MAX_RAY_STEPS, maxDistance: MAX_RAY_DISTANCE,
-	} });
-}
-
-function referenceOffset() { // |camera - C_ref| in fractal units
+function referenceOffset() {
 	if (!S.ref) return Infinity;
 	const d = Lib.v3ToDoubles(Lib.v3Sub(S.pos, S.ref.center));
 	return Math.hypot(d[0], d[1], d[2]);
 }
-function referenceRatio() { return referenceOffset() / Math.max(S.camDE, 1e-30); }
-function referenceUsable() { return !!S.ref && S.ref.power === S.power && referenceRatio() <= SYNC_RATIO; }
+// FFractalReferenceManager floors the surface distance at 1e-3 world units (a camera inside the set has none).
+function surfaceDistance() { return Math.max(S.camDE, 1e-3 * S.scale, MIN_CAMERA_DISTANCE); }
+function referenceUsable() { return !!S.ref && S.ref.power === S.power && referenceOffset() / surfaceDistance() <= SYNC_RATIO; }
 
-function maintainReference() {
+// Iterations for the current view: the footprint budget of the desktop renderer (ComputeIterationBudget), sized from the
+// pixel footprint at the surface distance. Hits that need most of it fade into haze (the limit of detail).
+function wantedIterations() {
+	return Lib.iterationBudget(S.power, BASE_ITERATIONS, BAILOUT, surfaceDistance() * pixelRadiusPerUnitDistance());
+}
+
+// EvaluateNeed: sync (quick fan, the view waits on plain float) when there is no usable reference, async when the
+// reference has drifted, the iteration count changed, or the camera moved or turned.
+function maintainReference(now) {
 	if (S.refPending) return;
-	let need = false;
-	if (!S.ref || S.ref.power !== S.power) need = true;
-	else if (referenceRatio() > ASYNC_RATIO) need = true;
-	else {
-		// The orbit has to outlast the camera's own: when the probe escaped only at the iteration limit, or needs most of it.
-		const formula = Lib.iterationBudget(S.power, BASE_ITERATIONS, BAILOUT, Math.max(S.camDE, 1e-30) * hitThreshold());
-		const probed = S.camEscaped ? Math.ceil((S.probeIters + 60) * 1.3 / 50) * 50 : Lib.MAX_ITERATIONS;
-		const budget = Math.min(Lib.MAX_ITERATIONS, Math.max(formula, probed));
-		if (budget > S.ref.iterations) need = true;
+	const iterations = wantedIterations();
+	let need = null;
+	if (!referenceUsable()) need = 'sync';
+	else if (now - S.lastRequestTime >= 50) {
+		const L = S.lastRequest;
+		const moved = L ? Math.hypot(...Lib.v3ToDoubles(Lib.v3Sub(S.pos, L.pos))) : Infinity;
+		const turned = L ? Math.acos(Math.max(-1, Math.min(1, dot(S.fwd, L.fwd)))) : Infinity;
+		if (referenceOffset() / surfaceDistance() > ASYNC_RATIO || S.ref.iterations !== iterations || moved > 0.01 * surfaceDistance() || turned > 0.01) need = 'async';
 	}
-	if (need) requestReference();
+	if (!need) return;
+	S.refPending = true;
+	S.refId++;
+	S.lastRequestTime = now;
+	S.lastRequest = { pos: S.pos, fwd: S.fwd.slice() };
+	const W = canvas.width, H = canvas.height;
+	worker.postMessage({ type: 'reference', id: S.refId, req: {
+		position: S.pos, dirs: Lib.buildReferenceFan((px, py) => dirAt(px, py, W, H), W, H), quick: need === 'sync',
+		power: S.power, bailout: BAILOUT, iterations, pixelRadiusPerUnitDistance: pixelRadiusPerUnitDistance(),
+		maxSteps: MAX_RAY_STEPS, maxDistance: MAX_RAY_DISTANCE,
+	} });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1263,14 +1801,15 @@ function maintainReference() {
 // ---------------------------------------------------------------------------------------------
 const gpu = {
 	device: null, ctx: null, format: null, uniform: null, orbit: null, probe: null, readback: null, readbackBusy: false,
-	pipeMain: null, pipeProbe: null, pipePresent: null, bgMain: null, bgProbe: null, bgPresent: null, tex: null, sampler: null,
+	pipes: {}, pipePresent: null, bg: {}, bgPresent: null, tex: null, sampler: null,
 	uf: new Float32Array(32), ui: null, w: 0, h: 0, orbitCount: 0,
 
 	async init() {
 		if (!navigator.gpu) throw new Error('WebGPU is not available in this browser.');
-		const adapter = await navigator.gpu.requestAdapter();
+		const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
 		if (!adapter) throw new Error('No WebGPU adapter was found. Check that hardware acceleration is on.');
 		const device = this.device = await adapter.requestDevice();
+		this.adapterName = adapter.info ? [adapter.info.vendor, adapter.info.architecture, adapter.info.description].filter(Boolean).join(' ') : '';
 		device.lost.then((i) => showHint('The GPU device was lost: ' + i.message));
 		device.addEventListener('uncapturederror', (ev) => showHint('GPU error: ' + ev.error.message));
 		this.ctx = canvas.getContext('webgpu');
@@ -1282,84 +1821,91 @@ const gpu = {
 		const info = await module.getCompilationInfo();
 		const errors = info.messages.filter((m) => m.type === 'error');
 		if (errors.length) throw new Error('Shader compile error:\n' + errors.map((m) => `line ${m.lineNum}: ${m.message}`).join('\n'));
-		this.pipeMain = await device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'main' } });
-		this.pipeProbe = await device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'probe' } });
+		// Two permutations, as in Unreal: power 8 as a constant, and any power.
+		for (const [name, power] of [['p8', 8], ['any', 0]]) {
+			const constants = { STATIC_POWER: power };
+			this.pipes[name] = {
+				main: await device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'main', constants } }),
+				probe: await device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'probe', constants } }),
+			};
+		}
 		const pmod = device.createShaderModule({ code: PRESENT });
 		this.pipePresent = await device.createRenderPipelineAsync({
 			layout: 'auto', vertex: { module: pmod, entryPoint: 'vs' },
 			fragment: { module: pmod, entryPoint: 'fs', targets: [{ format: this.format }] }, primitive: { topology: 'triangle-list' },
 		});
 		this.uniform = device.createBuffer({ size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-		this.orbit = device.createBuffer({ size: MAX_ORBIT_POINTS * 4 * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+		this.orbit = device.createBuffer({ size: (Lib.MAX_ITERATIONS + 2) * Lib.ORBIT_STRIDE * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
 		this.probe = device.createBuffer({ size: 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
 		this.readback = device.createBuffer({ size: 32, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
 		this.sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
-		this.bgProbe = device.createBindGroup({ layout: this.pipeProbe.getBindGroupLayout(0), entries: [
-			{ binding: 0, resource: { buffer: this.uniform } }, { binding: 1, resource: { buffer: this.orbit } }, { binding: 3, resource: { buffer: this.probe } }] });
-		this.uploadOrbit(new Float32Array(16 * 4), 0);
+		for (const name of Object.keys(this.pipes)) {
+			this.bg[name] = { probe: device.createBindGroup({ layout: this.pipes[name].probe.getBindGroupLayout(0), entries: [
+				{ binding: 0, resource: { buffer: this.uniform } }, { binding: 1, resource: { buffer: this.orbit } }, { binding: 3, resource: { buffer: this.probe } }] }) };
+		}
+		this.uploadOrbit(new Float32Array(Lib.ORBIT_STRIDE * 4), 0);
 	},
 
 	uploadOrbit(floats, count) {
-		this.device.queue.writeBuffer(this.orbit, 0, floats.buffer, floats.byteOffset, Math.max(count, 1) * 16 * 4);
+		this.device.queue.writeBuffer(this.orbit, 0, floats.buffer, floats.byteOffset, Math.max(count, 1) * Lib.ORBIT_STRIDE * 16);
 		this.orbitCount = count;
 	},
 
 	resize() {
-		const dpr = Math.min(window.devicePixelRatio || 1, 2);
+		const dpr = S.nativeRes ? Math.min(window.devicePixelRatio || 1, 2) : 1;
 		const cw = Math.max(1, Math.floor(canvas.clientWidth * dpr)), ch = Math.max(1, Math.floor(canvas.clientHeight * dpr));
 		if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
-		const w = Math.max(1, Math.floor(cw * S.scale)), h = Math.max(1, Math.floor(ch * S.scale));
+		const w = Math.max(1, Math.round(cw * S.resolutionScale)), h = Math.max(1, Math.round(ch * S.resolutionScale));
 		if (w === this.w && h === this.h && this.tex) return;
 		this.w = w; this.h = h;
 		if (this.tex) this.tex.destroy();
 		this.tex = this.device.createTexture({ size: [w, h], format: 'rgba8unorm', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC });
 		const view = this.tex.createView();
-		this.bgMain = this.device.createBindGroup({ layout: this.pipeMain.getBindGroupLayout(0), entries: [
-			{ binding: 0, resource: { buffer: this.uniform } }, { binding: 1, resource: { buffer: this.orbit } }, { binding: 2, resource: view }] });
+		for (const name of Object.keys(this.pipes)) {
+			this.bg[name].main = this.device.createBindGroup({ layout: this.pipes[name].main.getBindGroupLayout(0), entries: [
+				{ binding: 0, resource: { buffer: this.uniform } }, { binding: 1, resource: { buffer: this.orbit } }, { binding: 2, resource: view }] });
+		}
 		this.bgPresent = this.device.createBindGroup({ layout: this.pipePresent.getBindGroupLayout(0), entries: [
 			{ binding: 0, resource: view }, { binding: 1, resource: this.sampler }] });
 	},
 
 	writeUniforms() {
 		const f = this.uf, i = this.ui;
-		const W = this.w, H = this.h;
-		const tx = TAN_HALF * aspect();
-		// direction through the centre of marched pixel (0, 0), and the per-pixel steps (the forward component stays 1)
-		const nx0 = (0.5 / W) * 2 - 1, ny0 = 1 - (0.5 / H) * 2;
-		const dx = (2 / W) * tx, dy = -(2 / H) * TAN_HALF;
+		const W = canvas.width, H = canvas.height;
+		const d00 = dirAt(0.5, 0.5, W, H), d10 = dirAt(1.5, 0.5, W, H), d01 = dirAt(0.5, 1.5, W, H);
 		const usable = referenceUsable();
 		const center = usable ? S.ref.center : S.pos;
 		const off = Lib.v3ToDoubles(Lib.v3Sub(S.pos, center));
 		const cf = Lib.v3ToDoubles(center);
 		for (let c = 0; c < 3; c++) {
-			f[c] = S.fwd[c] + nx0 * tx * S.right[c] + ny0 * TAN_HALF * S.up[c];
-			f[4 + c] = dx * S.right[c];
-			f[8 + c] = dy * S.up[c];
-			f[12 + c] = off[c];
-			f[16 + c] = cf[c];
+			f[c] = d00[c]; f[4 + c] = d10[c] - d00[c]; f[8 + c] = d01[c] - d00[c];
+			f[12 + c] = off[c]; f[16 + c] = cf[c];
 		}
-		f[3] = hitThreshold(); f[7] = S.power; f[11] = BAILOUT; f[15] = MAX_RAY_DISTANCE;
+		f[3] = pixelRadiusPerUnitDistance(); f[7] = S.power; f[11] = BAILOUT; f[15] = MAX_RAY_DISTANCE;
 		f[19] = Lib.boundingRadius(S.power);
-		const budget = usable ? S.ref.iterations : Math.min(BASE_ITERATIONS, 150);
-		i[20] = W; i[21] = H; i[22] = usable ? S.ref.count : 0; i[23] = budget;
-		i[24] = MAX_RAY_STEPS; i[25] = S.power; i[26] = 0; i[27] = 0;
-		f[28] = window.FRACTAL_DEBUG && window.FRACTAL_DEBUG.forceDirect ? 1e30 : DIRECT_FOOTPRINT; f[29] = HAZE_START;
+		if (!isFinite(f[19])) f[19] = 1e30;
+		const iterations = usable ? S.ref.iterations : BASE_ITERATIONS;
+		i[20] = this.w; i[21] = this.h; i[22] = usable ? S.ref.count : 0; i[23] = iterations;
+		i[24] = MAX_RAY_STEPS; i[25] = 0; i[26] = 0; i[27] = 0;
+		f[28] = window.FRACTAL_DEBUG && window.FRACTAL_DEBUG.forceDirect ? 1e30 : DIRECT_FOOTPRINT; f[29] = 0;
+		f[30] = W / this.w; f[31] = H / this.h;
 		this.device.queue.writeBuffer(this.uniform, 0, this.uf);
-		S.mode = usable ? (S.ref.hit ? 'perturbation' : 'perturbation (camera reference)') : 'plain float (waiting for reference)';
-		S.iterations = budget;
+		S.mode = usable ? (S.ref.hit ? 'perturbation' : 'perturbation, camera reference') : 'plain float, building reference';
+		S.iterations = iterations;
+		return usable;
 	},
 
 	frame() {
 		const device = this.device;
 		this.resize();
-		this.writeUniforms();
+		const usable = this.writeUniforms();
+		const pipe = S.power === 8 ? 'p8' : 'any';
 		const enc = device.createCommandEncoder();
 		const cp = enc.beginComputePass();
-		cp.setPipeline(this.pipeMain); cp.setBindGroup(0, this.bgMain);
+		cp.setPipeline(this.pipes[pipe].main); cp.setBindGroup(0, this.bg[pipe].main);
 		cp.dispatchWorkgroups(Math.ceil(this.w / 8), Math.ceil(this.h / 8));
 		const wantProbe = !this.readbackBusy;
-		const probeUsable = referenceUsable();
-		if (wantProbe) { cp.setPipeline(this.pipeProbe); cp.setBindGroup(0, this.bgProbe); cp.dispatchWorkgroups(1); }
+		if (wantProbe) { cp.setPipeline(this.pipes[pipe].probe); cp.setBindGroup(0, this.bg[pipe].probe); cp.dispatchWorkgroups(1); }
 		cp.end();
 		const rp = enc.beginRenderPass({ colorAttachments: [{ view: this.ctx.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }] });
 		rp.setPipeline(this.pipePresent); rp.setBindGroup(0, this.bgPresent); rp.draw(3); rp.end();
@@ -1371,10 +1917,11 @@ const gpu = {
 				const v = new Float32Array(this.readback.getMappedRange().slice(0));
 				this.readback.unmap();
 				this.readbackBusy = false;
-				// A probe taken without a usable reference is plain float: only trusted where the surface is far (large distance).
-				S.probeValid = probeUsable;
-				if (probeUsable || (v[1] > 0.5 && v[0] > 1e-4)) {
-					S.camDE = v[0]; S.camEscaped = v[1] > 0.5; S.centerHit = v[2]; S.probeSteps = v[3]; S.probeIters = v[4];
+				// A probe taken without a usable reference is plain float: only trusted where the surface is far.
+				S.probeValid = usable;
+				if (usable || (v[1] > 0.5 && v[0] > 1e-4)) {
+					S.camDE = v[0]; S.camEscaped = v[1] > 0.5; S.centerHit = v[2]; S.probeIters = v[4];
+					S.rayIters = v[6]; S.raySkipped = v[7];
 					if (S.camEscaped && v[0] > 0) S.lastGoodDE = v[0];
 				}
 			}, () => { this.readbackBusy = false; });
@@ -1391,7 +1938,7 @@ function sci(x, digits) {
 	return x.toExponential(digits === undefined ? 2 : digits).replace('e+', 'e').replace('e-0', 'e-');
 }
 function fmtLen(x) { return x >= 0.01 ? x.toFixed(3) : sci(x); }
-function decimalsFor() { return Math.max(4, Math.min(30, Math.ceil(-Math.log10(Math.max(S.camDE, 1e-33))) + 4)); }
+function decimalsFor() { return Math.max(4, Math.min(30, Math.ceil(-Math.log10(surfaceDistance())) + 4)); }
 
 const gaugeEl = $('gauge');
 function buildGauge() {
@@ -1405,100 +1952,97 @@ function buildGauge() {
 	svg += '<rect id="g-fill" x="0" y="11" width="0" height="6" fill="var(--accent)" opacity="0.85"/>';
 	svg += '<circle id="g-dot" cx="0" cy="14" r="4" fill="var(--accent)" stroke="var(--bg)" stroke-width="1.5"/>';
 	gaugeEl.innerHTML = svg;
-	// labels live outside the stretched svg so the text is not distorted
 	const host = gaugeEl.parentElement;
 	for (const e of [0, 9, 18, 27]) {
 		const t = document.createElement('div');
-		t.className = 'label';
-		t.style.cssText = `position:absolute;top:18px;left:calc(12px + (100% - 24px) * ${e / MAX_DEPTH_LOG});transform:translateX(${e === 0 ? '0' : e === MAX_DEPTH_LOG ? '-100%' : '-50%'});font:400 9.5px var(--font-mono);letter-spacing:0;text-transform:none`;
+		t.className = 'gauge-label';
+		t.style.left = `calc(12px + (100% - 24px) * ${e / MAX_DEPTH_LOG})`;
+		t.style.transform = `translateX(${e === 0 ? '0' : e === MAX_DEPTH_LOG ? '-100%' : '-50%'})`;
 		t.textContent = e === 0 ? '1x' : '1e' + e + 'x';
 		host.appendChild(t);
 	}
 }
-function updateGauge() {
-	const depth = Math.max(0, Math.min(MAX_DEPTH_LOG, -Math.log10(Math.max(S.camDE / 2, 1e-40))));
-	const x = (depth / MAX_DEPTH_LOG) * 1000;
-	const fill = $('g-fill'), dot = $('g-dot');
-	if (fill) { fill.setAttribute('width', x); dot.setAttribute('cx', x); }
-}
 
-let hudTimer = 0, fpsAccum = 0, fpsFrames = 0, fpsShown = 0, slowSince = 0;
+let hudTimer = 0, fpsAccum = 0, fpsFrames = 0, fpsShown = 0;
 function updateHud(now) {
 	if (now - hudTimer < 100) return;
 	hudTimer = now;
 	const dec = decimalsFor();
 	const axis = ['x', 'y', 'z'];
 	$('r-de').textContent = S.camEscaped ? fmtLen(S.camDE) : 'inside the set';
-	$('r-mag').textContent = sci(2 / Math.max(S.camDE, 1e-40), 2) + 'x';
+	$('r-mag').textContent = sci(2 / surfaceDistance(), 2) + 'x';
 	$('r-ahead').textContent = S.centerHit >= 0 ? fmtLen(S.centerHit) : 'no surface in range';
-	const sp = Math.hypot(S.vel[0], S.vel[1], S.vel[2]);
-	$('r-speed').textContent = sci(sp, 2) + ' /s  (' + (S.speedFactor * 100).toFixed(0) + '%/s)';
+	$('r-speed').textContent = S.speedPercent.toFixed(0) + '%  (' + sci(Math.hypot(...S.vel), 2) + ' /s)';
+	$('r-target').textContent = S.targetFps ? S.targetFps + ' fps' : 'off';
+	$('r-res').textContent = gpu.w + ' x ' + gpu.h + (S.resolutionScale < 1 ? ` (${Math.round(S.resolutionScale * 100)}%)` : '');
 	$('r-pos').innerHTML = S.pos.map((c, i) => `<div><span>${axis[i]}</span>${Lib.formatDD(c, dec)}</div>`).join('');
-	$('r-face').innerHTML = `<div><span>f</span>${S.fwd.map((v) => v.toFixed(4)).join('  ')}</div>`;
-	const usable = referenceUsable();
+	$('r-face').innerHTML = `<div><span>f</span>${S.fwd.map((v) => v.toFixed(4)).join('  ')}</div><div><span>u</span>${S.up.map((v) => v.toFixed(4)).join('  ')}</div>`;
 	const m = $('r-mode');
-	m.textContent = S.mode || '-';
-	m.className = usable || !S.started ? 'state-ok' : 'state-wait';
-	$('r-iter').textContent = S.iterations + (S.camEscaped ? '  (camera escapes at ' + S.probeIters + ')' : '  (camera inside the set)');
-	$('r-orbit').textContent = S.ref ? S.ref.count + (S.refPending ? '  rebuilding' : '') : (S.refPending ? 'building' : '-');
-	$('r-ref').textContent = S.ref ? sci(referenceRatio(), 1) + 'x surface distance' : '-';
-	$('r-res').textContent = gpu.w + ' x ' + gpu.h + (S.scale < 1 ? ` (${Math.round(S.scale * 100)}%)` : '');
-	$('r-fps').textContent = fpsShown.toFixed(0) + ' fps, ' + S.frameMs.toFixed(1) + ' ms';
-	updateGauge();
+	m.textContent = S.mode;
+	m.className = referenceUsable() ? 'state-ok' : 'state-wait';
+	const skipShare = S.rayIters + S.raySkipped > 0 ? S.raySkipped / (S.rayIters + S.raySkipped) : 0;
+	$('r-iter').textContent = S.iterations + (S.camEscaped && S.probeValid ? `, camera escapes at ${S.probeIters}` : '');
+	$('r-skip').textContent = (skipShare * 100).toFixed(0) + '% of iterations skipped';
+	$('r-orbit').textContent = S.ref ? S.ref.count + ' (' + S.ref.ms.toFixed(0) + ' ms)' + (S.refPending ? ', rebuilding' : '') : (S.refPending ? 'building' : '-');
+	$('r-ref').textContent = S.ref ? sci(referenceOffset() / surfaceDistance(), 1) + 'x surface distance' : '-';
+	$('r-fps').textContent = fpsShown.toFixed(0) + ' fps, ' + S.measuredMs.toFixed(1) + ' ms';
+	const depth = Math.max(0, Math.min(MAX_DEPTH_LOG, -Math.log10(Math.max(S.camDE / 2, 1e-40))));
+	const x = (depth / MAX_DEPTH_LOG) * 1000;
+	$('g-fill').setAttribute('width', x); $('g-dot').setAttribute('cx', x);
 }
 
 function showHint(text) { const h = $('hint'); h.textContent = text; h.hidden = false; }
 function hideHint() { $('hint').hidden = true; }
-function updatePowerLabel() { $('pow').textContent = S.power; }
 
 // ---------------------------------------------------------------------------------------------
 // Input
 // ---------------------------------------------------------------------------------------------
-function setPower(p) {
-	p = Math.max(POWER_MIN, Math.min(POWER_MAX, p));
-	if (p === S.power) return;
-	S.power = p; S.ref = null; updatePowerLabel();
-}
 function teleport(preset) {
 	teleportId++;
-	showHint('Finding the surface at double-double precision...');
-	const dir = norm(preset.dir);
-	worker.postMessage({ type: 'teleport', id: teleportId, start: preset.start, dir, depth: preset.depth, power: S.power, bailout: BAILOUT });
+	showHint('Finding the surface in double-double precision...');
+	worker.postMessage({ type: 'teleport', id: teleportId, start: preset.start, dir: norm(preset.dir), depth: preset.depth, power: S.power, bailout: BAILOUT,
+		iterations: Lib.iterationBudget(S.power, BASE_ITERATIONS, BAILOUT, preset.depth * pixelRadiusPerUnitDistance()) });
+}
+function toggleAutofly() {
+	S.autofly = !S.autofly;
+	$('autofly').setAttribute('aria-pressed', S.autofly ? 'true' : 'false');
 }
 
 function bindInput() {
 	window.addEventListener('keydown', (e) => {
-		if (e.code === 'Tab') return;
-		if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
-		if (e.repeat) { S.keys.add(e.code); return; }
+		if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown'].includes(e.code)) e.preventDefault();
+		const first = !S.keys.has(e.code);
 		S.keys.add(e.code);
-		if (e.code === 'KeyR') { teleportId++; resetCamera(); hideHint(); }
-		else if (e.code === 'KeyZ') setPower(S.power - 1);
-		else if (e.code === 'KeyX') setPower(S.power + 1);
+		if (!first) return;
+		if (e.code === 'KeyR') { teleportId++; resetToStart(); hideHint(); }
 		else if (e.code === 'KeyF') toggleAutofly();
-		else if (e.code === 'KeyH') $('start').hidden = !$('start').hidden;
+		else if (e.code === 'KeyH') $('help').hidden = false;
+		else if (e.code === 'PageUp') stepTargetFrameRate(1);
+		else if (e.code === 'PageDown') stepTargetFrameRate(-1);
 	});
-	window.addEventListener('keyup', (e) => S.keys.delete(e.code));
-	window.addEventListener('blur', () => S.keys.clear());
+	window.addEventListener('keyup', (e) => { S.keys.delete(e.code); if (e.code === 'KeyH') $('help').hidden = true; });
+	window.addEventListener('blur', () => { S.keys.clear(); S.mouse.clear(); });
 	window.addEventListener('wheel', (e) => {
 		if (e.target !== canvas) return;
-		S.speedFactor = Math.max(0.05, Math.min(30, S.speedFactor * Math.exp(-e.deltaY * 0.0012)));
+		S.speedPercent = Math.max(0, Math.min(100, S.speedPercent - Math.sign(e.deltaY) * 5)); // 5% per notch
 		e.preventDefault();
 	}, { passive: false });
-
-	canvas.addEventListener('mousedown', () => {
-		S.dragging = true;
-		if (!S.locked && canvas.requestPointerLock) { try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (_) {} }
+	canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+	canvas.addEventListener('mousedown', (e) => {
+		S.mouse.add(e.button);
+		if (!S.locked) {
+			S.dragging = true;
+			if (canvas.requestPointerLock) { try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (_) {} }
+		}
 	});
-	window.addEventListener('mouseup', () => { S.dragging = false; });
-	document.addEventListener('pointerlockchange', () => { S.locked = document.pointerLockElement === canvas; });
+	window.addEventListener('mouseup', (e) => { S.mouse.delete(e.button); S.dragging = false; });
+	document.addEventListener('pointerlockchange', () => { S.locked = document.pointerLockElement === canvas; S.mouse.clear(); });
 	window.addEventListener('mousemove', (e) => {
 		if (!S.locked && !S.dragging) return;
 		const k = S.locked ? 0.0022 : 0.004;
 		yaw(e.movementX * k); pitch(-e.movementY * k);
 	});
-	// touch: one finger looks, two fingers fly forward
-	let last = null;
+	let last = null; // touch: one finger looks, two fingers fly forward
 	canvas.addEventListener('touchstart', (e) => { e.preventDefault(); last = e.touches[0]; if (e.touches.length > 1) S.keys.add('KeyW'); }, { passive: false });
 	canvas.addEventListener('touchmove', (e) => {
 		e.preventDefault();
@@ -1508,16 +2052,18 @@ function bindInput() {
 	}, { passive: false });
 	canvas.addEventListener('touchend', (e) => { if (e.touches.length < 2) S.keys.delete('KeyW'); if (!e.touches.length) last = null; });
 
-	$('pow-down').onclick = () => setPower(S.power - 1);
-	$('pow-up').onclick = () => setPower(S.power + 1);
+	$('pow-down').onclick = () => setPower(Math.ceil(S.power - 1));
+	$('pow-up').onclick = () => setPower(Math.floor(S.power + 1));
 	$('autofly').onclick = toggleAutofly;
-	$('res').onchange = (e) => { S.scale = parseFloat(e.target.value); };
+	$('fps-down').onclick = () => stepTargetFrameRate(-1);
+	$('fps-up').onclick = () => stepTargetFrameRate(1);
+	$('native').onchange = (e) => { S.nativeRes = e.target.checked; };
 	$('help-btn').onclick = () => { $('start').hidden = false; };
 	$('go').onclick = () => { $('start').hidden = true; S.started = true; canvas.focus(); };
 	const box = $('presets');
 	const overview = document.createElement('button');
-	overview.textContent = 'Overview';
-	overview.onclick = () => { teleportId++; resetCamera(); hideHint(); };
+	overview.textContent = 'Start';
+	overview.onclick = () => { teleportId++; resetToStart(); hideHint(); };
 	box.appendChild(overview);
 	for (const p of PRESETS) {
 		const b = document.createElement('button');
@@ -1526,10 +2072,6 @@ function bindInput() {
 		box.appendChild(b);
 	}
 }
-function toggleAutofly() {
-	S.autofly = !S.autofly;
-	$('autofly').setAttribute('aria-pressed', S.autofly ? 'true' : 'false');
-}
 
 // ---------------------------------------------------------------------------------------------
 // Main loop
@@ -1537,33 +2079,29 @@ function toggleAutofly() {
 let lastT = 0;
 function loop(now) {
 	requestAnimationFrame(loop);
-	const dtMs = lastT ? now - lastT : 16;
+	const frameMs = lastT ? now - lastT : 16;
 	lastT = now;
-	const dt = Math.min(dtMs / 1000, 0.05);
-	S.frameMs += (dtMs - S.frameMs) * 0.1;
-	fpsAccum += dtMs; fpsFrames++;
+	const dt = Math.min(frameMs / 1000, 0.05);
+	fpsAccum += frameMs; fpsFrames++;
 	if (fpsAccum >= 500) { fpsShown = fpsFrames * 1000 / fpsAccum; fpsAccum = 0; fpsFrames = 0; }
-	if (!$('start').hidden && !S.started) { /* the view is live behind the start card; the camera stays put */ }
-	else step(dt);
-	maintainReference();
+	updateAdaptiveResolution(frameMs / 1000, frameMs);
+	if (S.started) controllerTick(dt);
+	maintainReference(now);
 	gpu.frame();
 	updateHud(now);
-	if (fpsShown && fpsShown < 20 && S.scale === 1 && S.started) {
-		slowSince = slowSince || now;
-		if (now - slowSince > 4000 && $('hint').hidden) showHint('Running slowly. A lower render resolution in the panel on the right helps.');
-	} else slowSince = 0;
 }
 
 async function main() {
 	buildGauge();
 	bindInput();
-	resetCamera();
+	resetToStart();
+	$('pow').textContent = S.power.toFixed(2);
 	try {
 		await gpu.init();
 	} catch (err) {
 		const f = $('fail');
 		f.hidden = false;
-		f.textContent = String(err && err.message || err) + '\n\nThis page needs WebGPU: Chrome or Edge 113+, Safari 18+, or a recent Firefox.';
+		f.textContent = String(err && err.message || err) + '\n\nThis page needs WebGPU: Chrome or Edge 113+, Safari 26+, or Firefox 141+ on Windows.';
 		$('go').hidden = true;
 		return;
 	}

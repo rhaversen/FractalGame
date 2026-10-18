@@ -33,6 +33,12 @@ it. The renderer uses perturbation from a high-precision reference orbit, so the
 magnifications of about 10^27 instead of breaking up where 32-bit floats run out (around 10^4 to 10^5). See
 `PERTURBATION_IMPLEMENTATION_NOTES.md` for how it works and how it was verified.
 
+## Browser prototype
+
+`Web/` holds a WebGPU port of the renderer for the Mandelbulb (integer powers 2 to 16): the same perturbation maths with
+a double-double reference orbit, in one self-contained page. See `Web/README.md`; `python3 Web/build.py` writes
+`Web/dist/mandelbulb.html`.
+
 ## Development
 
 ### Prerequisites

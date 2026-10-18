@@ -1,0 +1,174 @@
+<title>Mandelbulb Deep Zoom</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap">
+<style>
+/* Layout: the fractal fills the viewport; readouts are translucent panels pinned to its corners, and a depth gauge runs
+   along the bottom edge on a log scale from the full bulb (1) down to the precision limit (1e-27). */
+:root {
+	--bg: #070a12;
+	--panel: rgba(9, 13, 23, 0.74);
+	--line: rgba(150, 182, 224, 0.2);
+	--fg: #dbe6f5;
+	--dim: #8496b0;
+	--accent: #6fd3e6;
+	--accent-ink: #04141a;
+	--warn: #f0b45a;
+	--bad: #ff8585;
+	--font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+	--font-ui: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+	--font-display: "Instrument Serif", Georgia, serif;
+	color-scheme: dark;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+	margin: 0; overflow: hidden; background: var(--bg); color: var(--fg);
+	font: 13px/1.45 var(--font-ui);
+	padding-left: max(16px, env(safe-area-inset-left, 0px));
+	padding-right: max(16px, env(safe-area-inset-right, 0px));
+	box-sizing: border-box;
+}
+#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; background: var(--bg); touch-action: none; cursor: crosshair; }
+.hud { position: fixed; z-index: 2; pointer-events: none; }
+.panel {
+	background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+	backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+	padding: 10px 12px; min-width: 0;
+}
+.hud-left { left: max(16px, env(safe-area-inset-left, 0px)); top: calc(12px + env(safe-area-inset-top, 0px)); width: min(330px, calc(100vw - 32px)); display: grid; gap: 8px; }
+.hud-right { right: max(16px, env(safe-area-inset-right, 0px)); top: calc(12px + env(safe-area-inset-top, 0px)); width: min(250px, calc(100vw - 32px)); display: grid; gap: 8px; pointer-events: auto; }
+.hud-bottom { left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+h1 { margin: 0; font: italic 400 25px/1.1 var(--font-display); letter-spacing: 0.1px; text-wrap: balance; }
+h1 small { display: block; font: 500 10.5px/1.6 var(--font-ui); letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); font-style: normal; margin-top: 2px; }
+.label { font: 500 10.5px/1.4 var(--font-ui); letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); }
+.rows { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin-top: 6px; }
+.rows dt { color: var(--dim); }
+.rows dd { margin: 0; font: 400 12px/1.45 var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; overflow-wrap: anywhere; min-width: 0; }
+.coord { font: 400 11.5px/1.5 var(--font-mono); font-variant-numeric: tabular-nums; margin-top: 6px; overflow-wrap: anywhere; }
+.coord span { color: var(--dim); display: inline-block; width: 1.4em; }
+.state-ok { color: var(--accent); } .state-wait { color: var(--warn); } .state-bad { color: var(--bad); }
+.controls { display: grid; gap: 8px; margin-top: 8px; }
+.row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+button, select {
+	font: 500 12px/1 var(--font-ui); letter-spacing: 0.04em; color: var(--fg); background: rgba(20, 28, 46, 0.9);
+	border: 1px solid var(--line); border-radius: 4px; padding: 7px 9px; cursor: pointer; min-height: 30px;
+}
+button:hover, select:hover { border-color: rgba(111, 211, 230, 0.55); }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.power { font: 500 13px var(--font-mono); min-width: 2.2em; text-align: center; }
+.gauge { height: 34px; position: relative; padding: 6px 12px 0; }
+.gauge svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.gauge text { font: 400 9.5px var(--font-mono); fill: var(--dim); }
+.cross { position: fixed; z-index: 1; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; }
+.cross::before, .cross::after { content: ""; position: absolute; background: rgba(219, 230, 245, 0.55); }
+.cross::before { left: -7px; top: -0.5px; width: 14px; height: 1px; }
+.cross::after { top: -7px; left: -0.5px; height: 14px; width: 1px; }
+#hint { position: fixed; z-index: 3; left: 50%; transform: translateX(-50%); bottom: calc(64px + env(safe-area-inset-bottom, 0px)); pointer-events: none; max-width: calc(100vw - 32px); text-align: center; }
+#start {
+	position: fixed; z-index: 5; inset: 0; display: grid; place-items: center; padding: 16px; box-sizing: border-box;
+	background: radial-gradient(ellipse at 50% 40%, rgba(7, 10, 18, 0.35), rgba(7, 10, 18, 0.82));
+}
+#start .card { width: min(520px, 100%); max-height: 100%; overflow: auto; background: rgba(9, 13, 23, 0.92); border: 1px solid var(--line); border-radius: 8px; padding: 20px 22px; display: grid; gap: 14px; }
+#start p { margin: 0; color: var(--fg); max-width: 62ch; }
+.keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; }
+.keys dt { font: 500 11.5px var(--font-mono); color: var(--accent); white-space: nowrap; }
+.keys dd { margin: 0; color: var(--dim); }
+#go { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-size: 13px; padding: 10px 14px; justify-self: start; }
+#fail { color: var(--bad); font: 400 12px/1.5 var(--font-mono); white-space: pre-wrap; margin: 0; }
+@media (max-width: 760px) {
+	.hud-left { width: min(300px, calc(100vw - 32px)); }
+	.hud-right { top: auto; bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+	.hide-narrow { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+
+<canvas id="view" aria-label="Mandelbulb, rendered live"></canvas>
+<div class="cross" aria-hidden="true"></div>
+
+<section class="hud hud-left" aria-label="Readouts">
+	<div class="panel">
+		<h1>Mandelbulb<small>Perturbation rendering in WebGPU</small></h1>
+	</div>
+	<div class="panel">
+		<div class="label">Camera</div>
+		<dl class="rows">
+			<dt>Surface distance</dt><dd id="r-de">-</dd>
+			<dt>Magnification</dt><dd id="r-mag">-</dd>
+			<dt>Ahead</dt><dd id="r-ahead">-</dd>
+			<dt>Speed</dt><dd id="r-speed">-</dd>
+		</dl>
+		<div class="coord" id="r-pos" aria-label="Position"></div>
+		<div class="coord" id="r-face" aria-label="Facing"></div>
+	</div>
+	<div class="panel hide-narrow">
+		<div class="label">Renderer</div>
+		<dl class="rows">
+			<dt>Mode</dt><dd id="r-mode">-</dd>
+			<dt>Iterations</dt><dd id="r-iter">-</dd>
+			<dt>Orbit points</dt><dd id="r-orbit">-</dd>
+			<dt>Reference offset</dt><dd id="r-ref">-</dd>
+			<dt>Resolution</dt><dd id="r-res">-</dd>
+			<dt>Frame</dt><dd id="r-fps">-</dd>
+		</dl>
+	</div>
+</section>
+
+<section class="hud hud-right" aria-label="Controls">
+	<div class="panel">
+		<div class="label">Power</div>
+		<div class="row" style="margin-top:6px">
+			<button id="pow-down" aria-label="Lower power">-</button>
+			<span class="power" id="pow">8</span>
+			<button id="pow-up" aria-label="Raise power">+</button>
+			<button id="autofly" aria-pressed="false" title="Fly forward at the speed limit (F)">Auto-fly</button>
+		</div>
+		<div class="label" style="margin-top:10px">Jump to depth</div>
+		<div class="row" style="margin-top:6px" id="presets"></div>
+		<div class="label" style="margin-top:10px">Render resolution</div>
+		<div class="row" style="margin-top:6px">
+			<select id="res" aria-label="Render resolution">
+				<option value="1" selected>Native</option>
+				<option value="0.75">75%</option>
+				<option value="0.5">50%</option>
+			</select>
+			<button id="help-btn">Controls</button>
+		</div>
+	</div>
+</section>
+
+<div class="hud hud-bottom">
+	<div class="panel gauge" aria-label="Depth gauge">
+		<svg id="gauge" viewBox="0 0 1000 24" preserveAspectRatio="none" role="img" aria-label="Magnification on a log scale from 1 to 1e27"></svg>
+	</div>
+</div>
+<div id="hint" class="panel state-wait" hidden></div>
+
+<div id="start">
+	<div class="card">
+		<h1>Mandelbulb<small>Deep zoom, computed in your browser</small></h1>
+		<p>Fly into the Mandelbulb until single pixels are a trillionth of the original object. A 32-bit GPU cannot do that on its own: it runs out of precision near 1e-5. This page keeps one reference orbit in double-double arithmetic on the CPU and lets the GPU follow every pixel as a small offset from it.</p>
+		<dl class="keys">
+			<dt>W A S D</dt><dd>Move. Space rises, Shift sinks.</dd>
+			<dt>Mouse</dt><dd>Look (click the view first; drag if the pointer is not captured).</dd>
+			<dt>Q / E</dt><dd>Roll.</dd>
+			<dt>Wheel</dt><dd>Speed limit, as a share of the distance to the surface per second.</dd>
+			<dt>Z / X</dt><dd>Lower / raise the power (integer, 2 to 16).</dd>
+			<dt>F</dt><dd>Auto-fly forward. R resets. H shows this list.</dd>
+		</dl>
+		<p id="fail" hidden></p>
+		<button id="go">Start flying</button>
+	</div>
+</div>
+
+<script>
+/*__LIB__*/
+</script>
+<script>
+const SHADER = `/*__SHADER__*/`;
+const PRESENT = `/*__PRESENT__*/`;
+/*__APP__*/
+</script>

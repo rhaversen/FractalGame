@@ -62,6 +62,17 @@ inline FDistanceEstimate DistanceEstimate(EFractalFormula Formula, const TFracta
 	return VisitFormula(Formula, [&](auto F) { return BoundedDistanceEstimate<decltype(F), T>(Position, Params); });
 }
 
+/**
+ * Distance estimate at a double-double fractal-space position for the given zoom (fractal units per world unit). The one
+ * place that picks the precision: double resolves world-unit distances while a world unit is >= 1e-9 fractal units,
+ * deeper needs double-double. Shared by the reference manager (when to regenerate) and the movement speed (distance to
+ * the surface), so the CPU side has a single estimator, which the GPU mirrors.
+ */
+inline FDistanceEstimate DistanceEstimateAtScale(EFractalFormula Formula, const FDDVec3& Position, double Scale, const FFormulaParams& Params)
+{
+	return Scale > 1.0e-9 ? DistanceEstimate(Formula, ToDoubleVec(Position), Params) : DistanceEstimate(Formula, Position, Params);
+}
+
 template <typename T>
 inline FReferenceMarchResult MarchReferenceRay(EFractalFormula Formula, const TFractalVec3<T>& Origin, const double Dir[3], double Scale,
 	const FReferenceMarchSettings& Settings)

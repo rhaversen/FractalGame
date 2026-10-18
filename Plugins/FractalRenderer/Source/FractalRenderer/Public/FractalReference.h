@@ -77,9 +77,6 @@ public:
 	/** Latest published reference (may be null). */
 	TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> GetCurrent() const;
 
-	/** Distance estimate at a fractal-space position, in world units (CPU, the exact formula the GPU draws). */
-	static double EstimateDistanceWorld(FractalMath::EFractalFormula Formula, const FractalMath::FDDVec3& Position, double Scale, const FractalMath::FFormulaParams& Params);
-
 	/** Builds a reference (also used by the worker); bQuick marches only the coarse set of view rays. */
 	static TSharedPtr<const FFractalReferenceData, ESPMode::ThreadSafe> Generate(const FFractalReferenceRequest& Request, uint64 Version, bool bQuick);
 

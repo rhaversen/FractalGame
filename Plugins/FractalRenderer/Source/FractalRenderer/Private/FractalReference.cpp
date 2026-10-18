@@ -83,15 +83,6 @@ double FFractalReferenceManager::DistanceWorld(const FDDVec3& A, const FDDVec3& 
 	return FMath::Sqrt(D.X * D.X + D.Y * D.Y + D.Z * D.Z) / Scale;
 }
 
-double FFractalReferenceManager::EstimateDistanceWorld(FractalMath::EFractalFormula Formula, const FDDVec3& Position, double Scale, const FractalMath::FFormulaParams& Params)
-{
-	// Double resolves world-unit distances while a world unit is >= 1e-9 fractal units; deeper needs double-double.
-	const FractalMath::FDistanceEstimate DE = Scale > 1.0e-9
-		? FractalMath::DistanceEstimate(Formula, ToDoubleVec(Position), Params)
-		: FractalMath::DistanceEstimate(Formula, Position, Params);
-	return DE.Distance / Scale;
-}
-
 FFractalReferenceManager::ENeed FFractalReferenceManager::EvaluateNeed(const FFractalReferenceData* Ref, const FFractalReferenceRequest& Request, double Now) const
 {
 	if (!Ref)

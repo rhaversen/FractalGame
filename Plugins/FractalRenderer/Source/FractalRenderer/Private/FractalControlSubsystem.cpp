@@ -204,10 +204,7 @@ FFractalDistanceInfo UFractalControlSubsystem::GetDistanceAtWorld(FVector WorldP
 	Params.MaxIterations = FractalMath::ComputeIterationBudget(Formula, Params.Power, FractalParameters.MaxIterations, Params.Bailout, CameraMapping.Scale);
 
 	const FDDVec3 Position = CameraMapping.WorldToFractal(WorldPosition);
-	// Double resolves world-unit distances while a world unit is >= 1e-9 fractal units; deeper needs double-double.
-	const FractalMath::FDistanceEstimate DE = CameraMapping.Scale > 1.0e-9
-		? FractalMath::DistanceEstimate(Formula, FractalMath::ToDoubleVec(Position), Params)
-		: FractalMath::DistanceEstimate(Formula, Position, Params);
+	const FractalMath::FDistanceEstimate DE = FractalMath::DistanceEstimateAtScale(Formula, Position, CameraMapping.Scale, Params);
 
 	FFractalDistanceInfo Info;
 	Info.FractalDistance = DE.Distance;

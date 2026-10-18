@@ -329,12 +329,28 @@ const gpu = {
 		if (errors.length) throw new Error('Shader compile error:\n' + errors.map((m) => `line ${m.lineNum}: ${m.message}`).join('\n'));
 		// Two permutations, as in Unreal: power 8 as a constant, and any power.
 		this.bench = !!window.FRACTAL_BENCH;
+		// Explicit bind group layouts: a layout derived from the shader ('auto') depends on which bindings an implementation
+		// considers used, e.g. whether it strips code behind a constant-false override, and a mismatch invalidates every pass.
+		const C = GPUShaderStage.COMPUTE;
+		const uniform = (binding) => ({ binding, visibility: C, buffer: { type: 'uniform' } });
+		const storage = (binding, type) => ({ binding, visibility: C, buffer: { type } });
+		const mainLayout = device.createBindGroupLayout({ entries: [
+			uniform(0), storage(1, 'read-only-storage'),
+			{ binding: 2, visibility: C, storageTexture: { access: 'write-only', format: 'rgba8unorm' } },
+			storage(4, 'storage'),
+			{ binding: 6, visibility: C, texture: { sampleType: 'unfilterable-float' } }] });
+		const coneLayout = device.createBindGroupLayout({ entries: [
+			uniform(0), storage(1, 'read-only-storage'), storage(4, 'storage'),
+			{ binding: 5, visibility: C, storageTexture: { access: 'write-only', format: 'r32float' } }] });
+		const probeLayout = device.createBindGroupLayout({ entries: [uniform(0), storage(1, 'read-only-storage'), storage(3, 'storage')] });
+		this.layouts = { main: mainLayout, cone: coneLayout, probe: probeLayout };
+		const pipelineLayout = (l) => device.createPipelineLayout({ bindGroupLayouts: [l] });
 		for (const [name, power] of [['p8', 8], ['any', 0]]) {
 			const constants = { STATIC_POWER: power, BENCH: this.bench ? 1 : 0, RELAX: OPTS.relax, CONE_TILE: OPTS.cone };
 			this.pipes[name] = {
-				cone: OPTS.cone > 0 ? await device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'cone', constants } }) : null,
-				main: await device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'main', constants } }),
-				probe: await device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'probe', constants } }),
+				cone: OPTS.cone > 0 ? await device.createComputePipelineAsync({ layout: pipelineLayout(coneLayout), compute: { module, entryPoint: 'cone', constants } }) : null,
+				main: await device.createComputePipelineAsync({ layout: pipelineLayout(mainLayout), compute: { module, entryPoint: 'main', constants } }),
+				probe: await device.createComputePipelineAsync({ layout: pipelineLayout(probeLayout), compute: { module, entryPoint: 'probe', constants } }),
 			};
 		}
 		const pmod = device.createShaderModule({ code: PRESENT });
@@ -349,7 +365,7 @@ const gpu = {
 		this.stats = device.createBuffer({ size: 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
 		this.sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 		for (const name of Object.keys(this.pipes)) {
-			this.bg[name] = { probe: device.createBindGroup({ layout: this.pipes[name].probe.getBindGroupLayout(0), entries: [
+			this.bg[name] = { probe: device.createBindGroup({ layout: this.layouts.probe, entries: [
 				{ binding: 0, resource: { buffer: this.uniform } }, { binding: 1, resource: { buffer: this.orbit } }, { binding: 3, resource: { buffer: this.probe } }] }) };
 		}
 		this.uploadOrbit(new Float32Array(Lib.ORBIT_STRIDE * 4), 0);
@@ -376,13 +392,13 @@ const gpu = {
 		this.coneTex = this.device.createTexture({ size: this.tiles, format: 'r32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING });
 		const coneView = this.coneTex.createView();
 		for (const name of Object.keys(this.pipes)) {
-			this.bg[name].main = this.device.createBindGroup({ layout: this.pipes[name].main.getBindGroupLayout(0), entries: [
+			this.bg[name].main = this.device.createBindGroup({ layout: this.layouts.main, entries: [
 				{ binding: 0, resource: { buffer: this.uniform } }, { binding: 1, resource: { buffer: this.orbit } }, { binding: 2, resource: view },
 				{ binding: 4, resource: { buffer: this.stats } }, { binding: 6, resource: coneView }] });
 			if (this.pipes[name].cone) {
-				const entries = [{ binding: 0, resource: { buffer: this.uniform } }, { binding: 1, resource: { buffer: this.orbit } }, { binding: 5, resource: coneView }];
-				if (this.bench) entries.push({ binding: 4, resource: { buffer: this.stats } });
-				this.bg[name].cone = this.device.createBindGroup({ layout: this.pipes[name].cone.getBindGroupLayout(0), entries });
+				this.bg[name].cone = this.device.createBindGroup({ layout: this.layouts.cone, entries: [
+					{ binding: 0, resource: { buffer: this.uniform } }, { binding: 1, resource: { buffer: this.orbit } },
+					{ binding: 4, resource: { buffer: this.stats } }, { binding: 5, resource: coneView }] });
 			}
 		}
 		this.bgPresent = this.device.createBindGroup({ layout: this.pipePresent.getBindGroupLayout(0), entries: [

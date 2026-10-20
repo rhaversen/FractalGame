@@ -167,7 +167,13 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 				HazeBase = CameraDE.Iterations;
 			}
 		}
-		Request.Params.MaxIterations = Iterations;
+		// Keep the current count unless it is too short or much longer than needed: every change rebuilds the
+		// reference, and the budget moves with the camera (it would flip at rounding steps while flying).
+		if (Iterations > HeldIterations || Iterations < 0.6 * HeldIterations)
+		{
+			HeldIterations = Iterations;
+		}
+		Request.Params.MaxIterations = HeldIterations;
 	}
 	{
 		double Fan[FractalMath::ReferenceFanCount][3];

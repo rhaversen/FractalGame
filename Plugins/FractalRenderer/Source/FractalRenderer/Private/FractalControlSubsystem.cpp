@@ -200,8 +200,12 @@ FFractalDistanceInfo UFractalControlSubsystem::GetDistanceAtWorld(FVector WorldP
 	FractalMath::FFormulaParams Params;
 	Params.Power = FractalParameters.FractalPower;
 	Params.Bailout = FractalParameters.BailoutRadius;
-	// Enough iterations to resolve distances down to about one world unit.
-	Params.MaxIterations = FractalMath::ComputeIterationBudget(Formula, Params.Power, FractalParameters.MaxIterations, Params.Bailout, CameraMapping.Scale);
+	// Escape-time formulas: up to MaxOrbitIterations, as for the view (next to the surface at depth the orbit runs far
+	// past the formula budget before it escapes; the estimate stops at the escape, so this costs nothing further out).
+	// Folding formulas: enough iterations to resolve distances down to about one world unit.
+	Params.MaxIterations = FractalMath::FormulaFamily(Formula) == FractalMath::EFractalFamily::EscapeTime
+		? FractalMath::MaxOrbitIterations
+		: FractalMath::ComputeIterationBudget(Formula, Params.Power, FractalParameters.MaxIterations, Params.Bailout, CameraMapping.Scale);
 
 	const FDDVec3 Position = CameraMapping.WorldToFractal(WorldPosition);
 	const FractalMath::FDistanceEstimate DE = FractalMath::DistanceEstimateAtScale(Formula, Position, CameraMapping.Scale, Params);

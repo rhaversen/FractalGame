@@ -39,4 +39,5 @@ private:
 	FCriticalSection StateMutex;
 
 	FFractalReferenceManager ReferenceManager;
+	int32 HeldIterations = 0; // iteration limit of the view (render thread), changed with hysteresis
 };

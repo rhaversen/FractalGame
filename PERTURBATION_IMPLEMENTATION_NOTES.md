@@ -558,7 +558,10 @@ so at depth the budget (150) ran out before the camera's own orbit escaped and t
 now also gets `ComputeOrbitIterationBudget(n, D, pixel angle)`: the camera escapes after `n` iterations with distance
 `D`, so its orbit grows by `(2/D)^(1/n)` per iteration and the surface pixels, `1/pixel angle` times closer, need
 `ln(1/pixel angle)/ln(growth)` more; twice that plus 20 is budgeted (cap 3000). The haze is measured from the camera's
-escape count (`HazeBase`), so only detail finer than the pixels fades.
+escape count (`HazeBase`), so only detail finer than the pixels fades. The count changes with hysteresis (kept unless the budget exceeds
+it or drops below 60% of it), since every change rebuilds the reference and the budget moves with the camera. The
+movement-speed estimate (`GetDistanceAtWorld`) also runs up to `MaxOrbitIterations` for escape-time formulas: with the
+formula budget the camera's orbit did not escape at depth, which read as distance 0.
 
 ### 12.3 Series tolerance 1e-6
 

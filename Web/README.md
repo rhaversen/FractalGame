@@ -1,5 +1,8 @@
 # Mandelbulb Deep Zoom (browser port)
 
+> **Status: frozen reference.** The Unreal project is the deliverable; this port is kept as a reference and is not
+> developed further.
+
 The Mandelbulb renderer of FractalGame in WebGPU. It is a 1:1 port of the desktop pipeline for this one fractal:
 
 | Desktop (Unreal) | Browser |

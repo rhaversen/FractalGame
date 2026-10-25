@@ -194,6 +194,27 @@ void UFractalControlSubsystem::ResetView(FVector FractalOriginWorld)
 	PushCameraMapping();
 }
 
+void UFractalControlSubsystem::PlaceCamera(const FVector3d& CameraWorld, const FDDVec3& FractalPosition, double InUserScale, double InScale)
+{
+	if (InUserScale > 0.0 && FMath::IsFinite(InUserScale))
+	{
+		UserScale = InUserScale;
+	}
+	CameraMapping.Origin = FractalPosition;
+	CameraMapping.Anchor = CameraWorld;
+	CameraMapping.Scale = (InScale > 0.0 && FMath::IsFinite(InScale)) ? FMath::Clamp(InScale, MinFractalScale, UserScale) : UserScale;
+	PushCameraMapping();
+}
+
+FFractalRenderStats UFractalControlSubsystem::GetRenderStats() const
+{
+	if (TSharedPtr<FFractalSceneViewExtension, ESPMode::ThreadSafe> Extension = GetFractalViewExtension())
+	{
+		return Extension->GetRenderStats();
+	}
+	return FFractalRenderStats();
+}
+
 FFractalDistanceInfo UFractalControlSubsystem::GetDistanceAtWorld(FVector WorldPosition) const
 {
 	const FractalMath::EFractalFormula Formula = ToFractalFormula(FractalParameters.FractalType);

@@ -62,6 +62,12 @@ void FFractalSceneViewExtension::SetCameraMapping(const FFractalCameraMapping& I
 	CameraMapping = InMapping;
 }
 
+FFractalRenderStats FFractalSceneViewExtension::GetRenderStats() const
+{
+	FScopeLock Lock(&StatsMutex);
+	return RenderStats;
+}
+
 FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
@@ -232,6 +238,17 @@ FScreenPassTexture FFractalSceneViewExtension::RenderFractal_RenderThread(
 	const FIntPoint MarchExtent = bReducedResolution
 		? FIntPoint(FMath::Max(1, FMath::CeilToInt(OutputExtent.X * ResolutionScale)), FMath::Max(1, FMath::CeilToInt(OutputExtent.Y * ResolutionScale)))
 		: OutputExtent;
+	{
+		FScopeLock Lock(&StatsMutex);
+		RenderStats.Iterations = Request.Params.MaxIterations;
+		RenderStats.OrbitLength = OrbitLength;
+		RenderStats.ReferenceVersion = Reference.IsValid() ? Reference->Version : 0;
+		RenderStats.ReferenceMilliseconds = Reference.IsValid() ? Reference->GenerationMilliseconds : 0.0;
+		RenderStats.bReferenceHit = Reference.IsValid() && Reference->bHit;
+		RenderStats.MarchExtent = MarchExtent;
+		RenderStats.FrameNumber = View.Family ? View.Family->FrameNumber : RenderStats.FrameNumber + 1;
+	}
+
 	FRDGTextureRef MarchTexture = OutputTexture;
 	if (bReducedResolution)
 	{

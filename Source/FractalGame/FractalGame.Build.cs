@@ -13,6 +13,7 @@ public class FractalGame : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"InputCore",
+			"RHI",
 			"FractalRenderer",
 		});
 	}

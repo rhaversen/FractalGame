@@ -38,6 +38,8 @@ public:
 	FRotator ViewRotation = FRotator::ZeroRotator;  // degrees
 	bool bShowDebug = true;
 	bool bShowHelp = false;
+	bool bRecording = false;                        // flight recorder running (F9 pauses)
+	int32 MarkCount = 0;                            // marks saved this run (M)
 
 	EFractalType CurrentFractalType = EFractalType::Mandelbulb;
 	float CurrentPower = 8.0f;

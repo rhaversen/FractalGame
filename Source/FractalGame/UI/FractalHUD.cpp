@@ -107,6 +107,13 @@ void AFractalHUD::DrawTopLeftInfo(float X, float Y, float UIScale)
 		: FString::Printf(TEXT("%.0f %%  target %s"), ResolutionScale * 100.0f, *TargetText);
 	DrawCompactStatBar(X, CurrentY, BarWidth, BarHeight, TEXT("RESOLUTION"), ResolutionScale, FrameText,
 					   FLinearColor(0.9f, 0.5f, 1.0f, 0.9f), UIScale);
+	CurrentY += LineSpacing;
+
+	// Flight recorder: a blinking dot while it logs, and the marks of this run.
+	const bool bDotVisible = !bRecording || FMath::Fmod(GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.0, 1.0) < 0.6;
+	const FString RecordText = FString::Printf(TEXT("%s %s   MARKS %d  [M]"), bDotVisible ? TEXT("•") : TEXT(" "),
+		bRecording ? TEXT("REC") : TEXT("PAUSED [F9]"), MarkCount);
+	DrawText(RecordText, FVector2D(X, CurrentY), bRecording ? FLinearColor(1.0f, 0.3f, 0.3f, 0.95f) : FLinearColor(0.6f, 0.6f, 0.7f, 0.9f), UIScale * 0.95f);
 }
 
 void AFractalHUD::DrawTopRightInfo(float X, float Y, float UIScale)
@@ -290,7 +297,7 @@ void AFractalHUD::DrawFractalParameters(float X, float Y, float UIScale)
 void AFractalHUD::DrawControlsPanel(float CenterX, float CenterY, float UIScale)
 {
 	const float PanelWidth = 850.0f * UIScale;
-	const float PanelHeight = 750.0f * UIScale;
+	const float PanelHeight = 880.0f * UIScale;
 	const float X = CenterX - PanelWidth / 2;
 	const float Y = CenterY - PanelHeight / 2;
 	const float Padding = 45.0f * UIScale;
@@ -504,6 +511,12 @@ void AFractalHUD::DrawOtherControls(float X, float Y, float KeySize, float KeySp
 	const FLinearColor RateColor = FLinearColor(0.9f, 0.5f, 1.0f, 1.0f);
 	DrawLabeledKey(X + (KeySize + KeySpacing) * 3, Y, KeySize, TEXT("PGUP"), TEXT("TARGET\nFPS +"), RateColor, UIScale);
 	DrawLabeledKey(X + (KeySize + KeySpacing) * 4, Y, KeySize, TEXT("PGDN"), TEXT("TARGET\nFPS -"), RateColor, UIScale);
+
+	// Flight recorder, in a second row under the first keys.
+	const FLinearColor RecordColor = FLinearColor(1.0f, 0.4f, 0.4f, 1.0f);
+	const float SecondRowY = Y + KeySize + 60.0f * UIScale;
+	DrawLabeledKey(X, SecondRowY, KeySize, TEXT("M"), TEXT("MARK\nSPOT"), RecordColor, UIScale);
+	DrawLabeledKey(X + KeySize + KeySpacing, SecondRowY, KeySize, TEXT("F9"), TEXT("REC\nPAUSE"), RecordColor, UIScale);
 }
 
 void AFractalHUD::DrawPanel(float X, float Y, float Width, float Height, const FLinearColor& Color)

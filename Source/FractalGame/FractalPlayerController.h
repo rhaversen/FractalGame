@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
 #include "FractalParameter.h"
+#include "FractalFlightRecorder.h"
 #include "FractalPlayerController.generated.h"
 
 class UFractalControlSubsystem;
@@ -59,6 +60,24 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal")
 	float ScaleAdjustDeceleration = 2.0f; // How fast it slows down
 
+	// --- Flight recorder (console commands; M marks, F9 pauses recording) ---
+
+	/** Saves a mark with a note, e.g. FractalMark "holes at the rim". */
+	UFUNCTION(Exec)
+	void FractalMark(const FString& Note);
+
+	/** Flies back to a mark exactly. Session: a folder name under Saved/FlightLogs; empty = this run, else the latest with marks. */
+	UFUNCTION(Exec)
+	void FractalGoToMark(int32 Mark, const FString& Session);
+
+	/** Lists the marks of a session (same session rules as FractalGoToMark). */
+	UFUNCTION(Exec)
+	void FractalListMarks(const FString& Session);
+
+	/** Pauses or resumes the flight log. */
+	UFUNCTION(Exec)
+	void FractalToggleRecording();
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void OnPossess(APawn* InPawn) override;
@@ -97,6 +116,20 @@ private:
 	double UpdateZoom(UFractalControlSubsystem& Fractal, double CameraDistance) const;
 
 	UFractalControlSubsystem* GetFractalSubsystem() const;
+
+	/** Current view and render state, as the flight recorder stores it. */
+	FFractalFlightState CaptureFlightState(const UFractalControlSubsystem& Fractal, double DistanceCm) const;
+
+	/** Puts the camera at a recorded state (fractal, power, scales, exact position, rotation, speed setting). */
+	void ApplyFlightState(const FFractalFlightState& State);
+
+	void MarkFromKey();
+	void ShowMessage(const FString& Message, FColor Color = FColor::Yellow) const;
+
+	FFractalFlightRecorder FlightRecorder;
+
+	// Unzoomed camera-to-surface distance of the last tick (cm), for marks taken between ticks
+	double LastDistanceCm = 0.0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fractal Movement", meta = (AllowPrivateAccess = "true"))
 	float RollSpeedDegPerSec = 90.0f;

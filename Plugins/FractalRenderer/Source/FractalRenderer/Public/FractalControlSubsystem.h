@@ -4,6 +4,7 @@
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "FractalParameter.h"
 #include "FractalReference.h"
+#include "FractalSceneViewExtension.h"
 #include "FractalControlSubsystem.generated.h"
 
 /** Distance from a point to the fractal surface (CPU estimate, same formula and precision as the renderer). */
@@ -149,6 +150,15 @@ public:
 	static FString FormatCoordinate(const FractalMath::FDD& Value, int32 Decimals);
 
 	const FFractalCameraMapping& GetCameraMapping() const { return CameraMapping; }
+
+	/**
+	 * Puts the camera, which is at CameraWorld, at FractalPosition with the given scales (restores a recorded view
+	 * exactly: the position is double-double and nothing is rounded through world units).
+	 */
+	void PlaceCamera(const FVector3d& CameraWorld, const FractalMath::FDDVec3& FractalPosition, double InUserScale, double InScale);
+
+	/** Statistics of the last frame the renderer drew (iteration limit, reference rebuilds, march size). */
+	FFractalRenderStats GetRenderStats() const;
 
 private:
 	UPROPERTY()

@@ -21,9 +21,29 @@ Mac builds are not currently provided, but you can build from source following t
 | Mouse forward / back thumb button (hold) | Increase / decrease the fractal's scale |
 | Tab | Next fractal |
 | Page Up / Page Down | Raise / lower the target frame rate (off by default, 30, 45, 60, 90, 120, 144 fps); optional: the renderer lowers its internal resolution to hold it, which trades sharpness for speed (the hit threshold and detail do not change) |
+| M | Mark the current spot (flight recorder, below) |
+| F9 | Pause / resume the flight recorder |
 | R | Reset position, speed and fractal parameters |
 | H (hold) | Show the controls |
 | Esc | Quit |
+
+### Flight recorder
+
+While playing, the game logs the flight to `Saved/FlightLogs/<start time>/flight.csv` four times a second: frame rate,
+worst frame and GPU time, the iteration limit, reference rebuilds, zoom, distance, speed and the exact position and
+rotation. **M** marks a bad spot: a row in `marks.csv` (frame times over the last second) and `mark_NNN.png`. The
+files are flushed after every row, so they survive a crash. A cooked game writes them under
+`Saved/Cooked/Windows/FractalGame/Saved/FlightLogs` instead. Console commands (`~`):
+
+| Command | |
+| --- | --- |
+| `FractalMark "note"` | Mark with a note |
+| `FractalListMarks [session]` | List the marks of this run, or of the newest run that has marks |
+| `FractalGoToMark <n> [session]` | Return to mark n exactly (the position is stored as double-double) |
+| `FractalToggleRecording` | Same as F9 |
+
+`session` is a folder name under `Saved/FlightLogs`; `-ExecCmds="FractalGoToMark 3 2026-10-25_02-47-06"` opens the game
+at a mark.
 
 Fractals: Mandelbulb, Burning Ship, Julia Set, Mandelbox, Inverted Menger, Quaternion (Julia), Sierpinski Tetrahedron
 and Kaleidoscopic IFS.

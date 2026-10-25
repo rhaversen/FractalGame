@@ -6,10 +6,12 @@
 #include "Camera/PlayerCameraManager.h"
 #include "Math/RotationMatrix.h"
 #include "Components/InputComponent.h"
+#include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "GameFramework/FloatingPawnMovement.h"
 #include "GameFramework/Pawn.h"
+#include "Misc/Paths.h"
 
 namespace
 {
@@ -243,10 +245,15 @@ void AFractalPlayerController::Tick(float DeltaTime)
 		Move->Velocity = Move->Velocity.GetSafeNormal() * MaxAllowedSpeed;
 	}
 
+	LastDistanceCm = DistanceInfo.FractalDistance / Fractal->GetUserScale();
+	FlightRecorder.Tick(DeltaTime, CaptureFlightState(*Fractal, LastDistanceCm));
+
 	// Update HUD. Distances and speeds are converted to the unzoomed scale (version 1.1 units) so that they keep
 	// their meaning at any zoom depth.
 	if (AFractalHUD* HUD = Cast<AFractalHUD>(GetHUD()))
 	{
+		HUD->bRecording = FlightRecorder.IsRecording();
+		HUD->MarkCount = FlightRecorder.GetMarkCount();
 		const double ZoomFactor = Fractal->GetZoomFactor();
 		const double EquivalentDistance = DistanceInfo.FractalDistance / Fractal->GetUserScale();
 
@@ -327,6 +334,8 @@ void AFractalPlayerController::SetupInputComponent()
 	InputComponent->BindAction(TEXT("CycleFractalType"), IE_Pressed, this, &AFractalPlayerController::CycleFractalType);
 	InputComponent->BindAction(TEXT("TargetFrameRateUp"), IE_Pressed, this, &AFractalPlayerController::RaiseTargetFrameRate);
 	InputComponent->BindAction(TEXT("TargetFrameRateDown"), IE_Pressed, this, &AFractalPlayerController::LowerTargetFrameRate);
+	InputComponent->BindAction(TEXT("FlightMark"), IE_Pressed, this, &AFractalPlayerController::MarkFromKey);
+	InputComponent->BindAction(TEXT("FlightToggleRecording"), IE_Pressed, this, &AFractalPlayerController::FractalToggleRecording);
 }
 
 void AFractalPlayerController::MoveForward(float Value)
@@ -576,4 +585,126 @@ UFractalControlSubsystem* AFractalPlayerController::GetFractalSubsystem() const
 {
 	const UGameInstance* GameInstance = GetGameInstance();
 	return GameInstance ? GameInstance->GetSubsystem<UFractalControlSubsystem>() : nullptr;
+}
+
+FFractalFlightState AFractalPlayerController::CaptureFlightState(const UFractalControlSubsystem& Fractal, double DistanceCm) const
+{
+	FFractalFlightState State;
+	State.FractalType = CurrentFractalType;
+	State.Power = CurrentPower;
+	State.UserScale = Fractal.GetUserScale();
+	State.Scale = Fractal.GetFractalScale();
+	State.Position = Fractal.GetCameraFractalPositionDD();
+	State.SpeedPercent = SpeedPercentage;
+	State.DistanceCm = DistanceCm;
+	State.ResolutionScale = Fractal.GetResolutionScale();
+	State.TargetFrameRate = Fractal.GetTargetFrameRate();
+	State.Render = Fractal.GetRenderStats();
+	if (const APawn* P = GetPawn())
+	{
+		State.Rotation = P->GetActorQuat();
+		if (const UFloatingPawnMovement* Move = P->FindComponentByClass<UFloatingPawnMovement>())
+		{
+			State.SpeedCmPerSecond = Move->Velocity.Size() * Fractal.GetZoomFactor();
+		}
+	}
+	return State;
+}
+
+void AFractalPlayerController::ApplyFlightState(const FFractalFlightState& State)
+{
+	APawn* P = GetPawn();
+	UFractalControlSubsystem* Fractal = GetFractalSubsystem();
+	if (!P || !Fractal)
+	{
+		return;
+	}
+
+	CurrentFractalType = State.FractalType;
+	CurrentPower = State.Power;
+	CurrentScaleMultiplier = static_cast<float>(State.UserScale);
+	CurrentPowerVelocity = 0.0f;
+	CurrentScaleVelocity = 0.0f;
+	CurrentRollVelocity = 0.0f;
+	SpeedPercentage = State.SpeedPercent;
+	UpdateFractalParameters();
+
+	P->SetActorRotation(State.Rotation);
+	if (UFloatingPawnMovement* Move = P->FindComponentByClass<UFloatingPawnMovement>())
+	{
+		Move->Velocity = FVector::ZeroVector;
+	}
+
+	// The camera sits at the pawn's origin; the camera manager reports the new placement only next frame.
+	Fractal->PlaceCamera(P->GetActorLocation(), State.Position, State.UserScale, State.Scale);
+	bCameraLocationStale = true;
+}
+
+void AFractalPlayerController::ShowMessage(const FString& Message, FColor Color) const
+{
+	UE_LOG(LogTemp, Log, TEXT("%s"), *Message);
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 4.0f, Color, Message);
+	}
+}
+
+void AFractalPlayerController::MarkFromKey()
+{
+	FractalMark(FString());
+}
+
+void AFractalPlayerController::FractalMark(const FString& Note)
+{
+	const UFractalControlSubsystem* Fractal = GetFractalSubsystem();
+	if (!Fractal)
+	{
+		return;
+	}
+	const int32 Mark = FlightRecorder.AddMark(CaptureFlightState(*Fractal, LastDistanceCm), Note);
+	if (Mark > 0)
+	{
+		ShowMessage(FString::Printf(TEXT("Mark %d saved%s%s"), Mark, Note.IsEmpty() ? TEXT("") : TEXT(": "), *Note), FColor::Green);
+	}
+	else
+	{
+		ShowMessage(TEXT("Could not save the mark (see the log)"), FColor::Red);
+	}
+}
+
+void AFractalPlayerController::FractalGoToMark(int32 Mark, const FString& Session)
+{
+	FFractalFlightState State;
+	FString Note;
+	FString Source;
+	if (!FFractalFlightRecorder::LoadMark(Mark, Session, FlightRecorder.GetSessionDirectory(), State, Note, Source))
+	{
+		ShowMessage(FString::Printf(TEXT("Mark %d not found in %s"), Mark, *Source), FColor::Red);
+		return;
+	}
+	ApplyFlightState(State);
+	ShowMessage(FString::Printf(TEXT("At mark %d from %s%s%s"), Mark, *FPaths::GetPath(Source), Note.IsEmpty() ? TEXT("") : TEXT(": "), *Note), FColor::Green);
+}
+
+void AFractalPlayerController::FractalListMarks(const FString& Session)
+{
+	FString Source;
+	const TArray<FString> Lines = FFractalFlightRecorder::ListMarks(Session, FlightRecorder.GetSessionDirectory(), Source);
+	if (Lines.Num() == 0)
+	{
+		ShowMessage(FString::Printf(TEXT("No marks in %s"), *Source), FColor::Red);
+		return;
+	}
+	// On screen the newest message is on top, so add them in reverse to read top-down.
+	for (int32 I = Lines.Num() - 1; I >= 0; --I)
+	{
+		ShowMessage(Lines[I], FColor::Cyan);
+	}
+	ShowMessage(FString::Printf(TEXT("Marks in %s:"), *FPaths::GetPath(Source)), FColor::White);
+}
+
+void AFractalPlayerController::FractalToggleRecording()
+{
+	FlightRecorder.SetRecording(!FlightRecorder.IsRecording());
+	ShowMessage(FlightRecorder.IsRecording() ? TEXT("Flight recording on") : TEXT("Flight recording paused"));
 }

@@ -190,7 +190,7 @@ inline bool PowerMapJacobian(const TFractalVec3<double>& Z, double Power, double
 	}
 	const double CT = Z.Z / R, ST = Rho / R;
 	const double CP = Rho > 0.0 ? Z.X / Rho : 1.0, SP = Rho > 0.0 ? Z.Y / Rho : 0.0;
-	double CPT, SPT, CPP, SPP;
+	double CPT, SPT, CPPhi, SPPhi;
 	if (IsIntegerPower(Power))
 	{
 		// (cos theta + i sin theta)^p and (cos phi + i sin phi)^p
@@ -205,18 +205,18 @@ inline bool PowerMapJacobian(const TFractalVec3<double>& Z, double Power, double
 			const double NA = ARe * ARe - AIm * AIm; AIm = 2.0 * ARe * AIm; ARe = NA;
 			const double NB = BRe * BRe - BIm * BIm; BIm = 2.0 * BRe * BIm; BRe = NB;
 		}
-		CPT = TRe; SPT = TIm; CPP = QRe; SPP = QIm;
+		CPT = TRe; SPT = TIm; CPPhi = QRe; SPPhi = QIm;
 	}
 	else
 	{
 		const double Theta = std::atan2(Rho, Z.Z), Phi = Rho > 0.0 ? std::atan2(Z.Y, Z.X) : 0.0;
 		CPT = std::cos(Power * Theta); SPT = std::sin(Power * Theta);
-		CPP = std::cos(Power * Phi); SPP = std::sin(Power * Phi);
+		CPPhi = std::cos(Power * Phi); SPPhi = std::sin(Power * Phi);
 	}
 	const double K = Power * std::pow(R, Power - 1.0);
 	const double Az = ST > 1.0e-300 ? SPT / ST : Power * (CT >= 0.0 ? 1.0 : -1.0);
 	const double Er[3] = {ST * CP, ST * SP, CT}, Et[3] = {CT * CP, CT * SP, -ST}, Ep[3] = {-SP, CP, 0.0};
-	const double Er2[3] = {SPT * CPP, SPT * SPP, CPT}, Et2[3] = {CPT * CPP, CPT * SPP, -SPT}, Ep2[3] = {-SPP, CPP, 0.0};
+	const double Er2[3] = {SPT * CPPhi, SPT * SPPhi, CPT}, Et2[3] = {CPT * CPPhi, CPT * SPPhi, -SPT}, Ep2[3] = {-SPPhi, CPPhi, 0.0};
 	for (int I = 0; I < 3; ++I)
 	{
 		for (int J = 0; J < 3; ++J)

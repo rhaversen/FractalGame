@@ -1,4 +1,5 @@
 #include "FractalReference.h"
+#include "FractalMath/FractalCamera.h"
 #include "Tasks/Task.h"
 #include "Misc/ScopeLock.h"
 #include "HAL/PlatformProcess.h"
